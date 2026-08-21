@@ -7,6 +7,7 @@
 
 #define MAX_ENEMIES 48
 #define MAX_ENEMY_PROJECTILES 128
+#define MAX_PLAYER_PROJECTILES 32
 #define MAX_COMBAT_PARTICLES 96
 #define MAX_LOCK_TARGETS 6
 
@@ -48,6 +49,19 @@ typedef struct {
     float life;
     bool active;
 } EnemyProjectile;
+
+// Homes toward the enemy slot it was fired at; keeps flying straight if that
+// enemy dies first, so travel time is a real window rather than a guarantee.
+typedef struct {
+    Vector3 position;
+    Vector3 velocity;
+    float speed;
+    float damage;
+    float life;
+    int targetEnemy;
+    bool charged;
+    bool active;
+} PlayerProjectile;
 
 typedef struct {
     Vector3 position;
@@ -120,6 +134,7 @@ typedef struct {
     Color hotColor;
     Enemy enemies[MAX_ENEMIES];
     EnemyProjectile projectiles[MAX_ENEMY_PROJECTILES];
+    PlayerProjectile playerProjectiles[MAX_PLAYER_PROJECTILES];
     CombatParticle particles[MAX_COMBAT_PARTICLES];
     BeamTrace beams[MAX_LOCK_TARGETS];
 
@@ -144,7 +159,8 @@ bool CanGameplayBoost(const GameplaySystem *game);
 GameplayEvents UpdateGameplay(GameplaySystem *game, float dt, float virtualPlayerZ,
                               float worldSpeed, bool boosting);
 void UpdateGameplayCamera(const GameplaySystem *game, Camera3D *camera, float dt, bool boosting);
-void DrawGameplay3D(const GameplaySystem *game, Shader craftShader, int objectClassLoc);
+void DrawGameplay3D(const GameplaySystem *game, Shader craftShader, int objectClassLoc,
+                    int enemyTypeLoc);
 void DrawGameplayHUD(const GameplaySystem *game, Camera3D camera, int screenWidth, int screenHeight);
 
 #endif // GAMEPLAY_H

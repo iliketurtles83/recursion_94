@@ -9,6 +9,10 @@
 #define PLAYER_MAX_X 10.0f
 #define PLAYER_MIN_Y 0.8f
 #define PLAYER_MAX_Y 7.0f
+#define PLAYER_BOLT_SPEED 85.0f
+#define PLAYER_BALL_SPEED 52.0f
+#define PLAYER_HOMING_TURN_RATE 7.5f
+#define PLAYER_PROJECTILE_LIFE 3.0f
 
 static float ClampFloat(float value, float minimum, float maximum) {
     if (value < minimum) return minimum;
@@ -79,6 +83,13 @@ static int FindFreeEnemy(GameplaySystem *game) {
 static int FindFreeProjectile(GameplaySystem *game) {
     for (int i = 0; i < MAX_ENEMY_PROJECTILES; i++) {
         if (!game->projectiles[i].active) return i;
+    }
+    return -1;
+}
+
+static int FindFreePlayerProjectile(GameplaySystem *game) {
+    for (int i = 0; i < MAX_PLAYER_PROJECTILES; i++) {
+        if (!game->playerProjectiles[i].active) return i;
     }
     return -1;
 }
@@ -187,6 +198,31 @@ static int EnemySlot(const GameplaySystem *game, const Enemy *enemy) {
     return enemy ? (int)(enemy - game->enemies) : -1;
 }
 
+// Player shot with real flight time; homes toward targetSlot but keeps going
+// straight if that enemy is gone by the time it arrives (no free retargeting).
+static void SpawnPlayerProjectile(GameplaySystem *game, Vector3 origin, int targetSlot,
+                                  float speed, float damage, bool charged) {
+    int slot = FindFreePlayerProjectile(game);
+    if (slot < 0) return;
+
+    Vector3 aim = game->enemies[targetSlot].position;
+    float dx = aim.x - origin.x;
+    float dy = aim.y - origin.y;
+    float dz = aim.z - origin.z;
+    float length = sqrtf(dx * dx + dy * dy + dz * dz);
+    if (length < 0.001f) length = 1.0f;
+
+    PlayerProjectile *projectile = &game->playerProjectiles[slot];
+    projectile->active = true;
+    projectile->position = origin;
+    projectile->velocity = (Vector3){ dx / length * speed, dy / length * speed, dz / length * speed };
+    projectile->speed = speed;
+    projectile->damage = damage;
+    projectile->life = PLAYER_PROJECTILE_LIFE;
+    projectile->targetEnemy = targetSlot;
+    projectile->charged = charged;
+}
+
 static void SpawnBoss(GameplaySystem *game, float virtualPlayerZ, GameplayEvents *events) {
     BossState *boss = &game->boss;
     uint32_t encounterSeed = game->runSeed ^
@@ -196,6 +232,7 @@ static void SpawnBoss(GameplaySystem *game, float virtualPlayerZ, GameplayEvents
     // another formation stacked on top of regular enemies.
     for (int i = 0; i < MAX_ENEMIES; i++) game->enemies[i].active = false;
     for (int i = 0; i < MAX_ENEMY_PROJECTILES; i++) game->projectiles[i].active = false;
+    for (int i = 0; i < MAX_PLAYER_PROJECTILES; i++) game->playerProjectiles[i].active = false;
     ClearLocks(game);
 
     boss->active = true;
@@ -471,23 +508,38 @@ static void FireTap(GameplaySystem *game, GameplayEvents *events) {
     }
 
     int tierAtFire = game->weaponTier;
+    Vector3 muzzle = game->player.position;
+    muzzle.z -= 1.2f;
     for (int beam = 0; beam < targetCount; beam++) {
         int enemyIndex = targets[beam];
-        Vector3 end = game->enemies[enemyIndex].position;
-        game->beams[beam] = (BeamTrace){ end, 0.10f + (float)beam * 0.015f };
+        Vector3 aim = game->enemies[enemyIndex].position;
+        float dx = aim.x - muzzle.x, dy = aim.y - muzzle.y, dz = aim.z - muzzle.z;
+        float invLen = 1.0f / fmaxf(sqrtf(dx * dx + dy * dy + dz * dz), 0.001f);
+        Vector3 flash = { muzzle.x + dx * invLen * 2.2f, muzzle.y + dy * invLen * 2.2f,
+                          muzzle.z + dz * invLen * 2.2f };
+        game->beams[beam] = (BeamTrace){ flash, 0.09f + (float)beam * 0.015f };
         float damage = (beam == 0 && tierAtFire >= 3) ? 2.0f : 1.0f;
-        DamageEnemy(game, &game->enemies[enemyIndex], damage, false, events);
+        float speed = PLAYER_BOLT_SPEED + (float)tierAtFire * 4.0f;
+        SpawnPlayerProjectile(game, muzzle, enemyIndex, speed, damage, false);
     }
     events->tapShots++;
 }
 
 static void FireCharge(GameplaySystem *game, GameplayEvents *events) {
+    Vector3 muzzle = game->player.position;
+    muzzle.z -= 1.2f;
     int beam = 0;
     for (int i = 0; i < MAX_ENEMIES && beam < MAX_LOCK_TARGETS; i++) {
         Enemy *enemy = &game->enemies[i];
         if (!enemy->active || !enemy->locked) continue;
-        game->beams[beam++] = (BeamTrace){ enemy->position, 0.18f };
-        DamageEnemy(game, enemy, game->weaponTier >= 3 ? 3.0f : 2.0f, true, events);
+        float dx = enemy->position.x - muzzle.x, dy = enemy->position.y - muzzle.y,
+              dz = enemy->position.z - muzzle.z;
+        float invLen = 1.0f / fmaxf(sqrtf(dx * dx + dy * dy + dz * dz), 0.001f);
+        Vector3 flash = { muzzle.x + dx * invLen * 2.8f, muzzle.y + dy * invLen * 2.8f,
+                          muzzle.z + dz * invLen * 2.8f };
+        game->beams[beam++] = (BeamTrace){ flash, 0.16f };
+        SpawnPlayerProjectile(game, muzzle, i, PLAYER_BALL_SPEED,
+                              game->weaponTier >= 3 ? 3.0f : 2.0f, true);
     }
     if (beam == 0) {
         game->beams[0] = (BeamTrace){
@@ -697,6 +749,54 @@ static void UpdateProjectiles(GameplaySystem *game, float dt, GameplayEvents *ev
     }
 }
 
+static void UpdatePlayerProjectiles(GameplaySystem *game, float dt, GameplayEvents *events) {
+    for (int i = 0; i < MAX_PLAYER_PROJECTILES; i++) {
+        PlayerProjectile *projectile = &game->playerProjectiles[i];
+        if (!projectile->active) continue;
+        projectile->life -= dt;
+
+        Enemy *target = projectile->targetEnemy >= 0 ? &game->enemies[projectile->targetEnemy] : NULL;
+        bool trackingLive = target != NULL && target->active;
+        if (trackingLive) {
+            float dx = target->position.x - projectile->position.x;
+            float dy = target->position.y - projectile->position.y;
+            float dz = target->position.z - projectile->position.z;
+            float len = sqrtf(dx * dx + dy * dy + dz * dz);
+            if (len > 0.001f) {
+                Vector3 desired = { dx / len * projectile->speed, dy / len * projectile->speed,
+                                    dz / len * projectile->speed };
+                float turn = 1.0f - expf(-PLAYER_HOMING_TURN_RATE * dt);
+                projectile->velocity.x += (desired.x - projectile->velocity.x) * turn;
+                projectile->velocity.y += (desired.y - projectile->velocity.y) * turn;
+                projectile->velocity.z += (desired.z - projectile->velocity.z) * turn;
+            }
+        }
+
+        projectile->position.x += projectile->velocity.x * dt;
+        projectile->position.y += projectile->velocity.y * dt;
+        projectile->position.z += projectile->velocity.z * dt;
+
+        if (trackingLive) {
+            float dx = target->position.x - projectile->position.x;
+            float dy = target->position.y - projectile->position.y;
+            float dz = target->position.z - projectile->position.z;
+            float hitRadius = 0.55f + target->size.x * 0.28f + (projectile->charged ? 0.25f : 0.0f);
+            if (dx * dx + dy * dy + dz * dz <= hitRadius * hitRadius) {
+                DamageEnemy(game, target, projectile->damage, projectile->charged, events);
+                SpawnBurst(game, projectile->position,
+                          projectile->charged ? game->hotColor : game->secondaryColor,
+                          projectile->charged ? 6 : 3);
+                projectile->active = false;
+                continue;
+            }
+        }
+
+        if (projectile->life <= 0.0f || projectile->position.z < -220.0f) {
+            projectile->active = false;
+        }
+    }
+}
+
 static void UpdateEffects(GameplaySystem *game, float dt) {
     for (int i = 0; i < MAX_COMBAT_PARTICLES; i++) {
         CombatParticle *particle = &game->particles[i];
@@ -770,6 +870,7 @@ GameplayEvents UpdateGameplay(GameplaySystem *game, float dt, float virtualPlaye
         if (game->enemies[i].active) UpdateEnemy(game, &game->enemies[i], dt, worldSpeed, &events);
     }
     UpdateProjectiles(game, dt, &events);
+    UpdatePlayerProjectiles(game, dt, &events);
     return events;
 }
 
@@ -801,14 +902,6 @@ void UpdateGameplayCamera(const GameplaySystem *game, Camera3D *camera, float dt
     camera->fovy = Approach(camera->fovy, targetFov, 4.0f, dt);
 }
 
-static Color EnemyColor(const GameplaySystem *game, const Enemy *enemy) {
-    if (enemy->type == ENEMY_BOSS_CORE) return game->hotColor;
-    if (enemy->type == ENEMY_BOSS_NODE) return game->secondaryColor;
-    if (enemy->type == ENEMY_CHASER) return game->hotColor;
-    if (enemy->type == ENEMY_SPLITTER) return game->secondaryColor;
-    return game->secondaryColor;
-}
-
 static Color MixColor(Color a, Color b, float amount, unsigned char alpha) {
     amount = ClampFloat(amount, 0.0f, 1.0f);
     return (Color){
@@ -816,6 +909,19 @@ static Color MixColor(Color a, Color b, float amount, unsigned char alpha) {
         (unsigned char)((float)a.g + ((float)b.g - (float)a.g) * amount),
         (unsigned char)((float)a.b + ((float)b.b - (float)a.b) * amount), alpha
     };
+}
+
+// Each type gets its own hue so silhouettes read apart at a glance instead
+// of Chaser/boss and Drifter/Splitter/node collapsing onto the same colors.
+static Color EnemyColor(const GameplaySystem *game, const Enemy *enemy) {
+    switch (enemy->type) {
+        case ENEMY_DRIFTER: return game->primaryColor;
+        case ENEMY_CHASER: return game->hotColor;
+        case ENEMY_SPLITTER: return game->secondaryColor;
+        case ENEMY_BOSS_NODE: return MixColor(game->primaryColor, game->secondaryColor, 0.5f, 255);
+        case ENEMY_BOSS_CORE: return MixColor(game->hotColor, game->secondaryColor, 0.45f, 255);
+        default: return game->secondaryColor;
+    }
 }
 
 static Color ScaleColor(Color color, float scale, int lift) {
@@ -1329,7 +1435,8 @@ static void DrawEnemy(const GameplaySystem *game, const Enemy *enemy, float runT
     }
 }
 
-void DrawGameplay3D(const GameplaySystem *game, Shader craftShader, int objectClassLoc) {
+void DrawGameplay3D(const GameplaySystem *game, Shader craftShader, int objectClassLoc,
+                    int enemyTypeLoc) {
     int objectClass = 0;
     if (objectClassLoc >= 0) {
         SetShaderValue(craftShader, objectClassLoc, &objectClass, SHADER_UNIFORM_INT);
@@ -1386,7 +1493,12 @@ void DrawGameplay3D(const GameplaySystem *game, Shader craftShader, int objectCl
         }
     }
     for (int i = 0; i < MAX_ENEMIES; i++) {
-        if (game->enemies[i].active) DrawEnemy(game, &game->enemies[i], game->runTime);
+        if (!game->enemies[i].active) continue;
+        if (enemyTypeLoc >= 0) {
+            int enemyType = (int)game->enemies[i].type;
+            SetShaderValue(craftShader, enemyTypeLoc, &enemyType, SHADER_UNIFORM_INT);
+        }
+        DrawEnemy(game, &game->enemies[i], game->runTime);
     }
     objectClass = 2;
     if (objectClassLoc >= 0) {
@@ -1407,6 +1519,26 @@ void DrawGameplay3D(const GameplaySystem *game, Shader craftShader, int objectCl
         DrawSphereEx((Vector3){ projectile->position.x, projectile->position.y,
                                 projectile->position.z + 0.08f },
                      0.075f, 5, 8, (Color){ 245, 250, 255, 255 });
+    }
+    for (int i = 0; i < MAX_PLAYER_PROJECTILES; i++) {
+        const PlayerProjectile *bolt = &game->playerProjectiles[i];
+        if (!bolt->active) continue;
+        Color core = bolt->charged ? game->hotColor : game->secondaryColor;
+        float pulse = 0.85f + 0.15f * sinf(game->runTime * (bolt->charged ? 14.0f : 22.0f) + (float)i);
+        float radius = (bolt->charged ? 0.32f : 0.16f) * pulse;
+        Vector3 trail = { bolt->position.x - bolt->velocity.x * (bolt->charged ? 0.05f : 0.035f),
+                          bolt->position.y - bolt->velocity.y * (bolt->charged ? 0.05f : 0.035f),
+                          bolt->position.z - bolt->velocity.z * (bolt->charged ? 0.05f : 0.035f) };
+        DrawCylinderEx(trail, bolt->position, radius * 0.18f, radius * 0.85f, 8,
+                       (Color){ core.r, core.g, core.b, 130 });
+        DrawSphereEx(bolt->position, radius * 1.6f, 6, 10,
+                     (Color){ core.r, core.g, core.b, 90 });
+        DrawSphereEx(bolt->position, radius, 6, 10, core);
+        DrawSphereEx(bolt->position, radius * 0.42f, 5, 8, (Color){ 245, 250, 255, 255 });
+        if (bolt->charged) {
+            DrawCircle3D(bolt->position, radius * 2.1f, (Vector3){ 0.0f, 0.0f, 1.0f },
+                        game->runTime * 200.0f, (Color){ core.r, core.g, core.b, 120 });
+        }
     }
     for (int i = 0; i < MAX_COMBAT_PARTICLES; i++) {
         const CombatParticle *particle = &game->particles[i];

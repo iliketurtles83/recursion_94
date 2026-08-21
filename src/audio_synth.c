@@ -73,6 +73,13 @@ static float SoftClip(float value) {
     return shaped;
 }
 
+// Stronger, separately-tunable drive for drum hits so they keep analog bite
+// instead of relying on the subtle master soft clip alone.
+static float Drive(float value, float amount) {
+    float driven = value * (1.0f + amount);
+    return driven / (1.0f + amount * fabsf(driven));
+}
+
 static float ProcessSVF(SVFilter *filter, float input) {
     filter->low += filter->cutoff * filter->band;
     float high = input - filter->low - filter->resonance * filter->band;
@@ -102,6 +109,13 @@ static void TriggerStep(SynthSystem *synth, float intensity, float bossIntensity
         synth->barCount++;
         if ((synth->barCount & 1) == 0) SetPadChord(synth, synth->barCount >> 1);
     }
+
+    // Seeded (not real-time random) micro timing and velocity drift so the
+    // grid stays deterministic per seed but no longer feels quantize-perfect.
+    uint32_t humanizeSeed = SynthHash(synth->runSeed ^ ((uint32_t)synth->barCount * 0x2f6e2b1u) ^
+                                      ((uint32_t)step * 0x9e3779b1u));
+    synth->stepJitter = (Hash01(humanizeSeed) - 0.5f) * 0.010f;
+    synth->hitVelocity = 0.82f + Hash01(humanizeSeed ^ 0x55u) * 0.32f;
 
     if ((step & 3) == 0) {
         synth->kickTime = 0.0f;
@@ -156,21 +170,27 @@ static void NativeAudioCallback(void *buffer, unsigned int frames) {
         float bossIntensity = synth->bossIntensity;
         synth->beatPulse = fmaxf(0.0f, synth->beatPulse - dt * 3.8f);
 
+        float stepInterval = secondsPerStep + synth->stepJitter;
         synth->stepTimer += dt;
-        if (synth->stepTimer >= secondsPerStep) {
-            synth->stepTimer -= secondsPerStep;
+        if (synth->stepTimer >= stepInterval) {
+            synth->stepTimer -= stepInterval;
             TriggerStep(synth, intensity, bossIntensity);
         }
+
+        synth->resonanceLfoPhase += dt * (0.07f + Hash01(synth->runSeed ^ 0x27u) * 0.05f);
+        if (synth->resonanceLfoPhase >= 1.0f) synth->resonanceLfoPhase -= 1.0f;
+        float resonanceLfo = sinf(synth->resonanceLfoPhase * 2.0f * PI) * 0.5f + 0.5f;
 
         float kick = 0.0f;
         float kickEnvelope = 0.0f;
         if (synth->kickTrigger) {
             synth->kickTime += dt;
             if (synth->kickTime < 0.34f) {
-                kickEnvelope = expf(-synth->kickTime * 9.8f);
+                float attack = fminf(synth->kickTime / 0.004f, 1.0f);
+                kickEnvelope = expf(-synth->kickTime * 9.8f) * attack;
                 float pitch = 44.0f + 92.0f * expf(-synth->kickTime * 29.0f);
-                kick = AdvanceSine(&synth->kickPhase, pitch, dt) * kickEnvelope;
-                kick = SoftClip(kick * 1.55f);
+                kick = AdvanceSine(&synth->kickPhase, pitch, dt) * kickEnvelope * synth->hitVelocity;
+                kick = Drive(kick * 1.55f, 0.35f);
             } else {
                 synth->kickTrigger = false;
             }
@@ -185,9 +205,10 @@ static void NativeAudioCallback(void *buffer, unsigned int frames) {
         synth->bassEnv = fmaxf(0.0f, synth->bassEnv - dt * (3.7f - intensity * 1.1f));
         synth->bassFilter.cutoff = 0.026f + synth->bassEnv *
                                   (0.070f + intensity * 0.075f + bossIntensity * 0.040f);
-        synth->bassFilter.resonance = 0.52f - intensity * 0.10f;
+        synth->bassFilter.resonance = 0.40f + resonanceLfo * 0.30f - intensity * 0.08f;
         float bassSource = saw * 0.26f + pulse * 0.05f + sub * 0.69f;
-        float bass = ProcessSVF(&synth->bassFilter, bassSource) * synth->bassEnv;
+        float bassSidechain = 1.0f - kickEnvelope * (0.32f + intensity * 0.08f);
+        float bass = ProcessSVF(&synth->bassFilter, bassSource) * synth->bassEnv * bassSidechain;
 
         synth->padLfoPhase += dt * (0.045f + Hash01(synth->runSeed ^ 0x51u) * 0.025f);
         if (synth->padLfoPhase >= 1.0f) synth->padLfoPhase -= 1.0f;
@@ -197,7 +218,7 @@ static void NativeAudioCallback(void *buffer, unsigned int frames) {
         for (int voice = 0; voice < 3; voice++) {
             synth->padFrequency[voice] +=
                 (synth->padTargetFrequency[voice] - synth->padFrequency[voice]) * 0.000025f;
-            float detune = 0.0023f + (float)voice * 0.00045f + intensity * 0.0008f;
+            float detune = 0.030f + (float)voice * 0.011f + intensity * 0.014f;
             int phaseIndex = voice * 2;
             synth->padPhase[phaseIndex] += synth->padFrequency[voice] * (1.0f - detune) * dt;
             synth->padPhase[phaseIndex + 1] += synth->padFrequency[voice] * (1.0f + detune) * dt;
@@ -230,7 +251,7 @@ static void NativeAudioCallback(void *buffer, unsigned int frames) {
         float arpSaw = synth->arpPhase * 2.0f - 1.0f;
         float arpTriangle = 1.0f - 4.0f * fabsf(synth->arpPhase - 0.5f);
         synth->arpFilter.cutoff = 0.030f + synth->arpEnv * (0.085f + intensity * 0.065f);
-        synth->arpFilter.resonance = 0.45f;
+        synth->arpFilter.resonance = 0.30f + resonanceLfo * 0.28f;
         float arpWave = ProcessSVF(&synth->arpFilter, arpSaw * 0.28f + arpTriangle * 0.72f);
         float arp = arpWave * synth->arpEnv *
                     (intensity * 0.14f + bossIntensity * 0.050f) * sidechain;
@@ -241,7 +262,8 @@ static void NativeAudioCallback(void *buffer, unsigned int frames) {
             float noise = NextNoise(synth);
             float highNoise = noise - synth->previousNoise * 0.82f;
             synth->previousNoise = noise;
-            hat = highNoise * expf(-synth->hatTime * (intensity > 0.72f ? 34.0f : 60.0f));
+            hat = Drive(highNoise * expf(-synth->hatTime * (intensity > 0.72f ? 34.0f : 60.0f)) *
+                        synth->hitVelocity, 0.85f);
         }
 
         synth->openHatTime += dt;
@@ -250,7 +272,8 @@ static void NativeAudioCallback(void *buffer, unsigned int frames) {
             float noise = NextNoise(synth);
             float metallic = noise - synth->previousNoise * 0.74f;
             synth->previousNoise = noise;
-            openHat = metallic * expf(-synth->openHatTime * (10.0f - intensity * 1.2f));
+            openHat = Drive(metallic * expf(-synth->openHatTime * (10.0f - intensity * 1.2f)) *
+                            synth->hitVelocity, 0.60f);
         }
 
         synth->clapTime += dt;
@@ -258,7 +281,7 @@ static void NativeAudioCallback(void *buffer, unsigned int frames) {
         if (synth->clapTime < 0.19f) {
             float burst = expf(-synth->clapTime * 18.0f);
             float flutter = 0.55f + 0.45f * sinf(synth->clapTime * 2.0f * PI * 34.0f);
-            clap = NextNoise(synth) * burst * flutter;
+            clap = Drive(NextNoise(synth) * burst * flutter * synth->hitVelocity, 0.55f);
         }
 
         // Slowly breathing, decorrelated band-pass noise removes the clean
@@ -328,13 +351,23 @@ static void NativeAudioCallback(void *buffer, unsigned int frames) {
                                    synth->delayFrames / 2u) & DELAY_MASK;
         float earlyLeft = synth->delayLeft[earlyIndex];
         float earlyRight = synth->delayRight[earlyIndex];
+        // Third tap between the early reflection and the main echo thickens the
+        // tail into something closer to a cheap diffuse reverb than one repeat.
+        unsigned int lateIndex = (synth->delayIndex + SYNTH_DELAY_FRAMES -
+                                 (synth->delayFrames * 3u) / 4u) & DELAY_MASK;
+        float lateLeft = synth->delayLeft[lateIndex];
+        float lateRight = synth->delayRight[lateIndex];
         float sendLeft = padLeft + arp * 0.92f + atmosphereLeft;
         float sendRight = padRight + arp * 0.92f + atmosphereRight;
         float feedback = 0.34f + intensity * 0.10f;
+        synth->delayDampLeft += (delayedRight - synth->delayDampLeft) * 0.35f;
+        synth->delayDampRight += (delayedLeft - synth->delayDampRight) * 0.35f;
         synth->delayLeft[synth->delayIndex] =
-            SoftClip(sendLeft + delayedRight * feedback + earlyRight * 0.06f);
+            SoftClip(sendLeft + synth->delayDampRight * feedback + earlyRight * 0.06f +
+                    lateRight * 0.05f);
         synth->delayRight[synth->delayIndex] =
-            SoftClip(sendRight + delayedLeft * feedback + earlyLeft * 0.06f);
+            SoftClip(sendRight + synth->delayDampLeft * feedback + earlyLeft * 0.06f +
+                    lateLeft * 0.05f);
         synth->delayIndex = (synth->delayIndex + 1u) & DELAY_MASK;
 
         float rhythmGain = 0.038f + intensity * 0.045f + bossIntensity * 0.022f;

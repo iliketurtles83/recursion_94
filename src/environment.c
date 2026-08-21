@@ -1140,7 +1140,9 @@ static void DrawStructureBatch(const EnvironmentSystem *env, StructureType type,
     Vector3 bodyVec = { body.r / 255.0f, body.g / 255.0f, body.b / 255.0f };
     SetShaderValue(env->towerMaterial.shader, env->towerAccentLoc, &accentVec, SHADER_UNIFORM_VEC4);
     SetShaderValue(env->towerMaterial.shader, env->towerBodyLoc, &bodyVec, SHADER_UNIFORM_VEC3);
-    int structureKind = (int)type;
+    // Landmarks trade the generic obsidian body for a raymarched fractal core
+    // (tower.fs kind 11) so the rare beacon reads as a demoscene set-piece.
+    int structureKind = (type == STRUCT_LANDMARK) ? 11 : (int)type;
     SetShaderValue(env->towerMaterial.shader, env->towerKindLoc, &structureKind, SHADER_UNIFORM_INT);
 
     Mesh mesh = (type == STRUCT_CACHE_TOWER || type == STRUCT_LANDMARK)
@@ -1279,6 +1281,24 @@ static void DrawArchitectureDetailBatch(const EnvironmentSystem *env, int detail
             position.y += s->size.y * 0.5f + unitHeight * 0.5f + 0.36f;
             size = (Vector3){ Clamp(s->size.x * 0.18f, 0.44f, 1.10f), unitHeight,
                               Clamp(s->size.z * 0.18f, 0.44f, 1.10f) };
+        } else if (detailMode == 13) {
+            // Sparse plasma accent panel: a demoscene sine-plasma "screen"
+            // set into a fraction of tall facades, well clear of glazing bays.
+            if (s->size.y < 6.5f || hash % 9u != 3u) continue;
+            float corridorSide = s->position.x < 0.0f ? 1.0f : -1.0f;
+            position.x += corridorSide * (s->size.x * 0.5f + 0.045f);
+            position.y += ((float)((hash >> 6) & 3u) - 1.5f) * s->size.y * 0.10f;
+            size = (Vector3){ 0.075f, Clamp(s->size.y * 0.22f, 1.1f, 3.2f),
+                              Clamp(s->size.z * 0.34f, 0.9f, 2.6f) };
+        } else if (detailMode == 14) {
+            // Falling binary/matrix data-rain placard on a different sparse
+            // subset of facades than the plasma panel or corridor signage.
+            if (s->size.y < 6.0f || hash % 11u != 5u) continue;
+            float corridorSide = s->position.x < 0.0f ? -1.0f : 1.0f;
+            position.x += corridorSide * (s->size.x * 0.5f + 0.045f);
+            position.y += ((float)((hash >> 9) & 3u) - 1.5f) * s->size.y * 0.08f;
+            size = (Vector3){ 0.075f, Clamp(s->size.y * 0.30f, 1.3f, 3.6f),
+                              Clamp(s->size.z * 0.40f, 1.0f, 3.0f) };
         } else {
             // A second, offset glazing bay appears only on tall nearby towers.
             if (s->size.y < 12.0f || s->size.z < 2.0f || (hash & 3u) != 2u) continue;
@@ -1304,14 +1324,21 @@ static void DrawArchitectureDetailBatch(const EnvironmentSystem *env, int detail
     if (count == 0) return;
 
     bool glazing = detailMode == 2 || detailMode == 12;
-    Color accent = glazing ? env->secondaryColor : env->primaryColor;
+    bool plasma = detailMode == 13;
+    bool dataRain = detailMode == 14;
+    Color accent = glazing ? env->secondaryColor
+                  : plasma ? env->primaryColor
+                  : dataRain ? env->secondaryColor
+                  : env->primaryColor;
     Color body = glazing ? (Color){ 5, 9, 14, 255 }
+                 : (plasma || dataRain) ? (Color){ 3, 5, 10, 255 }
                  : (detailMode == 9 || detailMode == 10
                     ? (Color){ 10, 13, 17, 255 } : (Color){ 18, 22, 28, 255 });
     Vector4 accentVec = { accent.r / 255.0f, accent.g / 255.0f,
                           accent.b / 255.0f, 1.0f };
     Vector3 bodyVec = { body.r / 255.0f, body.g / 255.0f, body.b / 255.0f };
-    int structureKind = glazing ? 7 : (detailMode == 9 ? 9 : (detailMode == 10 ? 10 : 8));
+    int structureKind = glazing ? 7 : plasma ? 6 : dataRain ? 5
+                       : (detailMode == 9 ? 9 : (detailMode == 10 ? 10 : 8));
     SetShaderValue(env->towerMaterial.shader, env->towerAccentLoc, &accentVec, SHADER_UNIFORM_VEC4);
     SetShaderValue(env->towerMaterial.shader, env->towerBodyLoc, &bodyVec, SHADER_UNIFORM_VEC3);
     SetShaderValue(env->towerMaterial.shader, env->towerKindLoc, &structureKind, SHADER_UNIFORM_INT);
@@ -1341,6 +1368,14 @@ static void DrawInfrastructureDetailBatch(const EnvironmentSystem *env, int deta
             size = (Vector3){ 0.22f, height, 0.22f };
             if (alongX && s->size.x > 5.0f) position.x -= s->size.x * 0.28f;
             else if (alongZ && s->size.z > 5.0f) position.z -= s->size.z * 0.28f;
+        } else if (detailMode == 2) {
+            // Data-rain strip on the conduit's top face: literal binary/matrix
+            // "data streams in conduits" per the demoscene feedback pass.
+            float longest = fmaxf(s->size.x, fmaxf(s->size.y, s->size.z));
+            if (longest < 3.0f || (!alongX && !alongZ)) continue;
+            position.y = s->position.y + s->size.y * 0.5f + 0.045f;
+            if (alongX) size = (Vector3){ s->size.x * 0.92f, 0.05f, s->size.z * 0.5f };
+            else size = (Vector3){ s->size.x * 0.5f, 0.05f, s->size.z * 0.92f };
         } else {
             float longest = fmaxf(s->size.x, fmaxf(s->size.y, s->size.z));
             if (longest < 2.0f) continue;
@@ -1361,10 +1396,12 @@ static void DrawInfrastructureDetailBatch(const EnvironmentSystem *env, int deta
     }
     if (count == 0) return;
 
+    bool dataRain = detailMode == 2;
     Vector4 accentVec = { env->primaryColor.r / 255.0f, env->primaryColor.g / 255.0f,
                           env->primaryColor.b / 255.0f, 1.0f };
-    Vector3 bodyVec = { 0.060f, 0.074f, 0.090f };
-    int structureKind = 8;
+    Vector3 bodyVec = dataRain ? (Vector3){ 0.012f, 0.020f, 0.040f }
+                              : (Vector3){ 0.060f, 0.074f, 0.090f };
+    int structureKind = dataRain ? 5 : 8;
     SetShaderValue(env->towerMaterial.shader, env->towerAccentLoc, &accentVec, SHADER_UNIFORM_VEC4);
     SetShaderValue(env->towerMaterial.shader, env->towerBodyLoc, &bodyVec, SHADER_UNIFORM_VEC3);
     SetShaderValue(env->towerMaterial.shader, env->towerKindLoc, &structureKind, SHADER_UNIFORM_INT);
@@ -1401,8 +1438,11 @@ void DrawEnvironment(const EnvironmentSystem *env, Camera3D camera, float virtua
     DrawArchitectureDetailBatch(env, 10, virtualPlayerZ);
     DrawArchitectureDetailBatch(env, 11, virtualPlayerZ);
     DrawArchitectureDetailBatch(env, 3, virtualPlayerZ);
+    DrawArchitectureDetailBatch(env, 13, virtualPlayerZ);
+    DrawArchitectureDetailBatch(env, 14, virtualPlayerZ);
     DrawInfrastructureDetailBatch(env, 0);
     DrawInfrastructureDetailBatch(env, 1);
+    DrawInfrastructureDetailBatch(env, 2);
 }
 
 void UnloadEnvironment(EnvironmentSystem *env) {

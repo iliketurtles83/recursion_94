@@ -53,8 +53,12 @@ typedef struct {
     volatile float beatPulse;
 
     float stepTimer;
+    float stepJitter;
+    float hitVelocity;
     volatile int currentStep;
     int barCount;
+
+    float resonanceLfoPhase;
 
     float kickTime;
     float kickPhase;
@@ -96,6 +100,8 @@ typedef struct {
     float delayRight[SYNTH_DELAY_FRAMES];
     unsigned int delayIndex;
     unsigned int delayFrames;
+    float delayDampLeft;
+    float delayDampRight;
 
     SFXVoice sfxPool[MAX_SFX_VOICES];
     volatile bool initialized;

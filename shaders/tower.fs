@@ -39,33 +39,69 @@ void main()
     vec3 finalRGB;
 
     if (uStructureKind == 5) {
-        // Corridor-facing data placards. A tiny analytic seven-segment/data
-        // pattern creates the impression of changing signage without fonts or
-        // textures, and remains deterministic for the run seed.
+        // Corridor-facing data placards rendered as falling binary/matrix-style
+        // data rain: independently scrolling columns with a bright leading glyph,
+        // built entirely from hashes so no font or texture asset is needed.
         vec2 signUV = abs(N.x) > 0.55 ? fragLocalPos.zy + 0.5
                                       : fragLocalPos.xy + 0.5;
         float frameDistance = min(min(signUV.x, 1.0 - signUV.x),
                                   min(signUV.y, 1.0 - signUV.y));
         float frame = 1.0 - smoothstep(0.035, 0.075, frameDistance);
-        vec2 cell = floor(signUV * vec2(9.0, 5.0));
-        float cellCode = sin(dot(cell + vec2(seedPhase * 7.0, seedPhase * 3.0),
-                                 vec2(12.9898, 78.233)));
-        float glyph = step(0.42, fract(cellCode * 43758.5453));
-        vec2 within = fract(signUV * vec2(9.0, 5.0));
-        glyph *= smoothstep(0.12, 0.22, min(within.x, within.y)) *
-                 smoothstep(0.12, 0.22, min(1.0 - within.x, 1.0 - within.y));
+        float columns = 9.0;
+        float colId = floor(signUV.x * columns);
+        float colSpeed = 0.6 + fract(sin(colId * 91.71 + seedPhase * 13.0) * 43758.5453) * 1.6;
+        float scrollY = signUV.y * 6.0 + uTime * colSpeed + seedPhase * 5.0;
+        vec2 cell = vec2(colId, floor(scrollY));
+        float cellCode = sin(dot(cell, vec2(12.9898, 78.233)));
+        float glyph = step(0.5, fract(cellCode * 43758.5453));
+        vec2 within = vec2(fract(signUV.x * columns), fract(scrollY));
+        glyph *= smoothstep(0.12, 0.24, min(within.x, 1.0 - within.x)) *
+                 smoothstep(0.12, 0.24, min(within.y, 1.0 - within.y));
+        float leading = smoothstep(0.86, 1.0, within.y) * glyph;
         float scan = pow(max(sin(signUV.y * 44.0 - uTime * 3.2 + seedPhase), 0.0), 12.0);
         float header = smoothstep(0.76, 0.78, signUV.y) *
                        (1.0 - smoothstep(0.89, 0.91, signUV.y));
         vec3 signBase = mix(vec3(0.003, 0.008, 0.020), neonColor, 0.055);
-        finalRGB = signBase + neonColor * (frame * 0.42 + glyph * 0.22 +
+        finalRGB = signBase + neonColor * (frame * 0.42 + glyph * 0.16 + leading * 0.55 +
                                            scan * 0.10 + header * 0.18);
     } else if (uStructureKind == 6) {
-        float energy = 0.82 + 0.18 * sin(fragPosition.y * 0.82 -
-                                         uTime * (0.55 + uIntensity * 0.65) + seedPhase);
-        finalRGB = mix(vec3(0.008, 0.018, 0.035), neonColor, 0.16) *
-                   (0.72 + 0.28 * diff) + neonColor * rim * 0.18 +
-                   neonColor * energy * (0.075 + uIntensity * 0.035);
+        // Classic multi-layer sine-wave plasma: several offset traveling waves
+        // summed and mapped through the run palette, a direct demoscene staple.
+        float t = uTime * (0.6 + uIntensity * 0.5);
+        float p1 = sin(fragPosition.x * 0.6 + t);
+        float p2 = sin(fragPosition.y * 0.5 - t * 1.3);
+        float p3 = sin((fragPosition.x + fragPosition.y) * 0.35 + t * 0.7);
+        float p4 = sin(length(fragPosition.xy) * 0.4 - t * 1.8 + seedPhase * 6.0);
+        float plasma = (p1 + p2 + p3 + p4) * 0.25 * 0.5 + 0.5;
+        vec3 plasmaColor = mix(uPrimaryColor, uSecondaryColor, plasma);
+        finalRGB = mix(vec3(0.006, 0.012, 0.026), plasmaColor, 0.55 + 0.35 * diff) +
+                   plasmaColor * rim * 0.22 + neonColor * pow(plasma, 6.0) * 0.30;
+    } else if (uStructureKind == 11) {
+        // Cheap raymarched fractal core: fold local space a few times and
+        // accumulate glow along the interior-facing ray instead of a hard hit,
+        // which stays forgiving/stable without a real camera-position uniform.
+        vec3 rd = -N;
+        vec3 p = fragLocalPos;
+        float marched = 0.0;
+        float glow = 0.0;
+        for (int i = 0; i < 12; i++) {
+            vec3 q = p + rd * marched;
+            float scale = 1.0;
+            q = abs(q) - 0.5;
+            for (int f = 0; f < 3; f++) {
+                q = abs(q) - (0.24 + 0.02 * sin(uTime * 0.31 + float(f)));
+                q.xy = q.x > q.y ? q.xy : q.yx;
+                q *= 1.9;
+                scale *= 1.9;
+            }
+            float d = (length(max(abs(q) - 0.5, 0.0)) - 0.06) / scale;
+            d = abs(d) + 0.012;
+            glow += 0.018 / (0.02 + d * d * 46.0);
+            marched += max(d, 0.015);
+            if (marched > 1.2) break;
+        }
+        vec3 fractalColor = mix(vec3(0.008, 0.008, 0.018), neonColor, clamp(glow, 0.0, 1.0));
+        finalRGB = fractalColor + neonColor * rim * 0.30;
     } else if (uStructureKind == 7) {
         // Recessed architectural glazing: dark glass, physical mullions and
         // a sparse set of dim occupied panes. It supplies scale without bloom.

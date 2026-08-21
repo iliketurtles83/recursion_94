@@ -11,6 +11,7 @@ uniform float uIntensity;
 uniform vec3 uPrimaryColor;
 uniform vec3 uSecondaryColor;
 uniform int uObjectClass;
+uniform int uEnemyType;
 
 void main()
 {
@@ -46,6 +47,30 @@ void main()
         lit = max(lit, base * 0.56 + enemyAccent * 0.012);
         lit += enemyAccent * rim * 0.18;
         lit += mix(base, enemyAccent, 0.24) * emissive * 0.075;
+
+        // Per-type signatures so silhouettes read apart at a glance instead of
+        // collapsing into the same generic "glowing hull" treatment.
+        if (uEnemyType == 0) {
+            // Drifter: slow plasma pulse riding the hull, mesh-locked via the normal.
+            float plasma = sin(atan(N.y, N.x) * 5.0 + fragPosition.z * 0.4 + uTime * 3.0) * 0.5 + 0.5;
+            lit += enemyAccent * plasma * 0.16;
+        } else if (uEnemyType == 1) {
+            // Chaser: scrolling speed streaks along its long axis sell the dive.
+            float streak = smoothstep(0.7, 1.0, fract(fragPosition.z * 2.2 - uTime * 6.0));
+            lit += enemyAccent * streak * rim * 0.55;
+        } else if (uEnemyType == 2) {
+            // Splitter: posterized facets foreshadow its blocky fracture-on-death.
+            float voxelBand = floor(diffuse * 4.0) / 4.0;
+            lit = mix(lit, base * (0.4 + voxelBand * 0.6), 0.5);
+        } else if (uEnemyType == 4) {
+            // Boss core: angular banded glow (not radial) plus a slow fractal
+            // crack pattern so the silhouette reads as a faceted machine, not a circle.
+            float band = cos(atan(N.y, N.x) * 8.0 + uTime * 0.4) * 0.5 + 0.5;
+            float crack = abs(sin(fragPosition.x * 6.0) * sin(fragPosition.y * 6.0) *
+                              sin(fragPosition.z * 6.0 + uTime * 0.6));
+            lit += enemyAccent * band * 0.22;
+            lit += mix(base, vec3(1.0, 0.9, 0.8), 0.5) * smoothstep(0.82, 0.98, crack) * 0.4;
+        }
     } else if (uObjectClass == 2) {
         lit += mix(uPrimaryColor, uSecondaryColor, 0.5) * rim * 0.09;
     }

@@ -20,6 +20,7 @@ typedef struct {
     int craftTimeLoc;
     int craftIntensityLoc;
     int craftObjectClassLoc;
+    int craftEnemyTypeLoc;
     bool ready;
 } PostProcessSystem;
 
@@ -49,6 +50,7 @@ static void InitPostProcess(PostProcessSystem *post, int width, int height,
     post->craftTimeLoc = GetShaderLocation(post->craftShader, "uTime");
     post->craftIntensityLoc = GetShaderLocation(post->craftShader, "uIntensity");
     post->craftObjectClassLoc = GetShaderLocation(post->craftShader, "uObjectClass");
+    post->craftEnemyTypeLoc = GetShaderLocation(post->craftShader, "uEnemyType");
     int craftPrimaryLoc = GetShaderLocation(post->craftShader, "uPrimaryColor");
     int craftSecondaryLoc = GetShaderLocation(post->craftShader, "uSecondaryColor");
     SetShaderValue(post->craftShader, craftPrimaryLoc, &primaryValue, SHADER_UNIFORM_VEC3);
@@ -268,7 +270,7 @@ int main(int argc, char **argv) {
                     DrawEnvironment(&env, camera, virtualPlayerZ);
                     BeginCraftPass(&post, game.runTime, musicIntensity);
                         DrawGameplay3D(&game, post.craftShader,
-                                       post.craftObjectClassLoc);
+                                       post.craftObjectClassLoc, post.craftEnemyTypeLoc);
                     EndShaderMode();
                 EndMode3D();
                 DrawDemosceneOverlay(&demo, game.runTime, musicIntensity,
