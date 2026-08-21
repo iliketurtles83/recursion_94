@@ -53,12 +53,9 @@ void DrawDemosceneBackdrop(const DemosceneSystem *demo, float time, float intens
     if (intensity < 0.0f) intensity = 0.0f;
     if (intensity > 1.0f) intensity = 1.0f;
 
-    // Deep atmospheric gradient gives the architecture a readable silhouette
-    // and avoids the unfinished flat-black void of the original scene.
+    // The raymarched backdrop shader now supplies the base sky; zenith stays
+    // only for the moon's eclipse shadow disc below.
     Color zenith = MixColor((Color){ 1, 2, 10, 255 }, demo->secondary, 0.035f, 255);
-    Color horizon = MixColor((Color){ 4, 7, 20, 255 }, demo->primary,
-                             0.075f + intensity * 0.025f, 255);
-    DrawRectangleGradientV(0, 0, screenWidth, screenHeight, zenith, horizon);
 
     int horizonY = (int)((float)screenHeight * 0.47f);
     DrawRectangleGradientV(0, horizonY - 125, screenWidth, 185,

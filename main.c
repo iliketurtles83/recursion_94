@@ -21,6 +21,8 @@ typedef struct {
     int craftIntensityLoc;
     int craftObjectClassLoc;
     int craftEnemyTypeLoc;
+    Shader backdropShader;
+    int backdropTimeLoc;
     bool ready;
 } PostProcessSystem;
 
@@ -55,8 +57,20 @@ static void InitPostProcess(PostProcessSystem *post, int width, int height,
     int craftSecondaryLoc = GetShaderLocation(post->craftShader, "uSecondaryColor");
     SetShaderValue(post->craftShader, craftPrimaryLoc, &primaryValue, SHADER_UNIFORM_VEC3);
     SetShaderValue(post->craftShader, craftSecondaryLoc, &secondaryValue, SHADER_UNIFORM_VEC3);
+
+    post->backdropShader = LoadShader(NULL, "shaders/backdrop.fs");
+    post->backdropTimeLoc = GetShaderLocation(post->backdropShader, "uTime");
+    int backdropResolutionLoc = GetShaderLocation(post->backdropShader, "uResolution");
+    int backdropSeedLoc = GetShaderLocation(post->backdropShader, "uRunSeed");
+    int backdropPrimaryLoc = GetShaderLocation(post->backdropShader, "uPrimaryColor");
+    int backdropSecondaryLoc = GetShaderLocation(post->backdropShader, "uSecondaryColor");
+    SetShaderValue(post->backdropShader, backdropResolutionLoc, &resolution, SHADER_UNIFORM_VEC2);
+    SetShaderValue(post->backdropShader, backdropSeedLoc, &shaderSeed, SHADER_UNIFORM_INT);
+    SetShaderValue(post->backdropShader, backdropPrimaryLoc, &primaryValue, SHADER_UNIFORM_VEC3);
+    SetShaderValue(post->backdropShader, backdropSecondaryLoc, &secondaryValue, SHADER_UNIFORM_VEC3);
+
     post->ready = post->target.texture.id != 0 && post->shader.id != 0 &&
-                  post->craftShader.id != 0;
+                  post->craftShader.id != 0 && post->backdropShader.id != 0;
 }
 
 static void BeginCraftPass(PostProcessSystem *post, float time, float intensity) {
@@ -64,6 +78,13 @@ static void BeginCraftPass(PostProcessSystem *post, float time, float intensity)
     SetShaderValue(post->craftShader, post->craftIntensityLoc, &intensity,
                    SHADER_UNIFORM_FLOAT);
     BeginShaderMode(post->craftShader);
+}
+
+static void DrawRaymarchBackdrop(PostProcessSystem *post, float time, int width, int height) {
+    SetShaderValue(post->backdropShader, post->backdropTimeLoc, &time, SHADER_UNIFORM_FLOAT);
+    BeginShaderMode(post->backdropShader);
+        DrawRectangle(0, 0, width, height, WHITE);
+    EndShaderMode();
 }
 
 static void DrawPostProcess(PostProcessSystem *post, float time, float intensity,
@@ -84,6 +105,7 @@ static void DrawPostProcess(PostProcessSystem *post, float time, float intensity
 static void UnloadPostProcess(PostProcessSystem *post) {
     if (!post->ready) return;
     UnloadShader(post->craftShader);
+    UnloadShader(post->backdropShader);
     UnloadShader(post->shader);
     UnloadRenderTexture(post->target);
     post->ready = false;
@@ -228,12 +250,25 @@ int main(int argc, char **argv) {
             glitchAmount = fmaxf(0.0f, glitchAmount - dt * 2.5f);
         }
 
-        // Tempo stays fixed for the seed. Progress, combat and boost instead
-        // reveal more rhythmic and visual layers.
+        // Tempo is fixed per seed once the intro ramp completes. Progress,
+        // combat and boost instead reveal more rhythmic and visual layers.
         float musicIntensity = 0.24f + game.difficulty * 0.20f;
         musicIntensity += fminf((float)game.combo * 0.018f, 0.12f);
         if (boosting) musicIntensity += 0.48f;
         if (game.boss.active) musicIntensity += game.boss.phase == BOSS_ENRAGED ? 0.24f : 0.14f;
+
+        // Quiet hush in the stretch before the boss spawns - snaps off the
+        // instant the fight starts, giving the drop somewhere to land.
+        float preBossHush = 0.0f;
+        const float bossHushWindow = 350.0f;
+        if (!game.boss.active) {
+            float distanceToBoss = game.boss.nextSpawnDistance - virtualPlayerZ;
+            if (distanceToBoss > 0.0f && distanceToBoss < bossHushWindow) {
+                preBossHush = 1.0f - distanceToBoss / bossHushWindow;
+            }
+        }
+        musicIntensity *= (1.0f - preBossHush * 0.5f);
+
         if (game.gameOver) musicIntensity = 0.10f;
         musicIntensity = fmaxf(0.0f, fminf(musicIntensity, 1.0f));
 
@@ -253,7 +288,8 @@ int main(int argc, char **argv) {
 
         // Update Subsystems
         UpdateEnvironment(&env, virtualPlayerZ, game.runTime, musicIntensity);
-        UpdateAudioSynth(&synth, musicIntensity, glitchAmount, bossMusicIntensity);
+        UpdateAudioSynth(&synth, musicIntensity, glitchAmount, bossMusicIntensity,
+                        virtualPlayerZ, preBossHush);
         UpdateGameplayCamera(&game, &camera, dt, boosting);
 
         float beatPulse = GetSynthBeatPulse(&synth);
@@ -264,6 +300,7 @@ int main(int argc, char **argv) {
         BeginDrawing();
             BeginTextureMode(post.target);
                 ClearBackground((Color){ 2, 3, 10, 255 });
+                DrawRaymarchBackdrop(&post, game.runTime, screenWidth, screenHeight);
                 DrawDemosceneBackdrop(&demo, game.runTime, musicIntensity,
                                       screenWidth, screenHeight);
                 BeginMode3D(camera);
@@ -283,9 +320,9 @@ int main(int argc, char **argv) {
             DrawGameplayHUD(&game, camera, screenWidth, screenHeight);
             if (debugOverlay) {
                 DrawFPS(10, 82);
-                DrawText(TextFormat("Z %.1f  SPEED %.1fx  BPM %.1f FIXED  INT %.2f",
+                DrawText(TextFormat("Z %.1f  SPEED %.1fx  BPM %.1f  INT %.2f  GATE %.2f",
                                     virtualPlayerZ, speedMultiplier, synth.currentBpm,
-                                    musicIntensity),
+                                    musicIntensity, GetSynthDrumGate(&synth)),
                          10, 104, 16, (Color){ 90, 190, 215, 220 });
                 DrawText(TextFormat("STRUCTURES %d  DROPPED %d", env.structureCount,
                                     env.droppedStructures),

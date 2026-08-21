@@ -162,9 +162,21 @@ void main()
 
         // Pulse energy shift: neon shifts toward bright cyan/white core at peak
         vec3 pulseEnergy = mix(neonColor, vec3(0.32, 0.76, 0.86), 0.46) * smoothPulse * 0.20;
-        
+
+        // Reuse streamCoord as the scroll axis for hash-based glyphs (same
+        // technique as the kind==5 data placard), so conduits read as literal
+        // data streams riding on top of the smooth pulse.
+        float glyphCol = floor((fragLocalPos.x + 0.5) * 5.0);
+        float glyphRow = floor(streamCoord * 18.0);
+        float glyphCode = sin(dot(vec2(glyphCol, glyphRow), vec2(12.9898, 78.233)));
+        float glyph = step(0.5, fract(glyphCode * 43758.5453));
+        vec2 glyphWithin = vec2(fract((fragLocalPos.x + 0.5) * 5.0), fract(streamCoord * 18.0));
+        glyph *= smoothstep(0.10, 0.22, min(glyphWithin.x, 1.0 - glyphWithin.x)) *
+                 smoothstep(0.10, 0.22, min(glyphWithin.y, 1.0 - glyphWithin.y));
+        vec3 glyphColor = mix(neonColor, vec3(0.55, 0.92, 0.98), 0.5) * glyph * smoothPulse * 0.16;
+
         float boostCarrier = pow(max(sin(streamCoord * 31.4159 + seedPhase), 0.0), 9.0);
-        finalRGB = tubeBase + coreGlow + pulseEnergy + neonColor * (rim * 0.24) +
+        finalRGB = tubeBase + coreGlow + pulseEnergy + glyphColor + neonColor * (rim * 0.24) +
                    uSecondaryColor * boostCarrier * uIntensity * 0.18;
     } else {
         // =====================================================================

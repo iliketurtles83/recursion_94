@@ -102,6 +102,33 @@ void main() {
              (riftWave * 0.34 + arrivalEnvelope * 0.035) *
              (1.0 - luminance(color) * 0.55);
 
+    // Bounded raymarched tunnel, only ever visible during the ~2.6s boss
+    // approach and fully cleared by the time combat starts.
+    if (arrivalEnvelope > 0.001) {
+        vec3 rd = normalize(vec3(centered, 1.4));
+        float marched = 0.0;
+        float glow = 0.0;
+        for (int i = 0; i < 16; i++) {
+            vec3 q = rd * marched;
+            q.z += uTime * 1.6;
+            float scale = 1.0;
+            for (int f = 0; f < 3; f++) {
+                q = abs(q) - 0.75;
+                q.xy = q.x > q.y ? q.xy : q.yx;
+                q *= 1.7;
+                scale *= 1.7;
+            }
+            float d = (length(max(abs(q) - 0.6, 0.0)) - 0.08) / scale;
+            d = abs(d) + 0.02;
+            glow += 0.02 / (0.03 + d * d * 40.0);
+            marched += max(d * 0.6, 0.03);
+            if (marched > 6.0) break;
+        }
+        vec3 tunnelColor = mix(uPrimaryColor, uSecondaryColor,
+                               sin(marched * 0.6 + uTime) * 0.5 + 0.5) * glow;
+        color += tunnelColor * arrivalEnvelope * 0.5;
+    }
+
     float screenY = gl_FragCoord.y / uResolution.y;
     float horizonHaze = exp(-pow((screenY - 0.53) * 4.1, 2.0));
     color += mix(uSecondaryColor, uPrimaryColor, 0.58) * horizonHaze *
