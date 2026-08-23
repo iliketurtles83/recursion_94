@@ -147,11 +147,17 @@ int main(int argc, char **argv) {
     EnvironmentValidationReport generationReport;
     bool generationValid = ValidateEnvironmentGenerator(&generationReport);
     TraceLog(generationValid ? LOG_INFO : LOG_ERROR,
-             "GENERATOR: zones=%d repeats=%d landmark-spacing=%d peak=%d dropped=%d",
+             "GENERATOR: zones=%d repeats=%d landmark-spacing=%d peak=%d terrain=%d far=%d unsupported=%d(flank=%d ravine=%d far=%d) dropped=%d",
              generationReport.zonesChecked,
              generationReport.adjacentRepeatViolations,
              generationReport.landmarkSpacingViolations,
              generationReport.peakStructureCount,
+             generationReport.peakTerrainCount,
+             generationReport.peakFarStructureCount,
+             generationReport.unsupportedStructures,
+             generationReport.unsupportedFlankStructures,
+             generationReport.unsupportedRavineStructures,
+             generationReport.unsupportedFarStructures,
              generationReport.droppedStructures);
     return generationValid ? 0 : 1;
 #else

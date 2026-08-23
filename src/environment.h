@@ -6,8 +6,11 @@
 #include <stdint.h>
 
 #define MAX_STRUCTURES 1024
+#define MAX_TERRAIN_INSTANCES 1024
+#define MAX_FAR_STRUCTURES 128
 #define SECTOR_DEPTH 16.0f
 #define DRAW_DISTANCE 384.0f
+#define TERRAIN_DRAW_DISTANCE 512.0f
 #define DISTRICT_SECTORS 16
 
 typedef enum {
@@ -27,11 +30,22 @@ typedef struct {
 } EnvironmentStructure;
 
 typedef struct {
+    Vector3 position;
+    Vector3 size;
+} TerrainInstance;
+
+typedef struct {
     int zonesChecked;
     int adjacentRepeatViolations;
     int landmarkSpacingViolations;
     int peakStructureCount;
     int droppedStructures;
+    int peakTerrainCount;
+    int peakFarStructureCount;
+    int unsupportedStructures;
+    int unsupportedFlankStructures;
+    int unsupportedRavineStructures;
+    int unsupportedFarStructures;
 } EnvironmentValidationReport;
 
 typedef struct {
@@ -39,14 +53,6 @@ typedef struct {
     Color primaryColor;
     Color secondaryColor;
     Color landmarkColor;
-
-    Model floorModel;
-    int floorScrollLoc;
-    int floorTimeLoc;
-    int floorIntensityLoc;
-    int floorSeedLoc;
-    int floorPrimaryLoc;
-    int floorSecondaryLoc;
 
     Mesh unitCubeMesh;
     Mesh unitPrismMesh;
@@ -60,6 +66,18 @@ typedef struct {
     int towerAccentLoc;
     int towerBodyLoc;
     int towerKindLoc;
+
+    Material terrainMaterial;
+    int terrainTimeLoc;
+    int terrainIntensityLoc;
+    int terrainSeedLoc;
+    int terrainPrimaryLoc;
+    int terrainSecondaryLoc;
+    TerrainInstance terrain[MAX_TERRAIN_INSTANCES];
+    int terrainCount;
+
+    EnvironmentStructure farStructures[MAX_FAR_STRUCTURES];
+    int farStructureCount;
 
     EnvironmentStructure structures[MAX_STRUCTURES];
     int structureCount;
