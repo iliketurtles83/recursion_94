@@ -143,12 +143,14 @@ typedef struct {
     float hitFlash;
     float cameraKick;
     float weaponFlash;
+    float loopTransitionTimer;
     float runTime;
     int weaponTier;
     bool gameOver;
 } GameplaySystem;
 
 void InitGameplay(GameplaySystem *game, uint32_t runSeed);
+void AdvanceGameplayLoop(GameplaySystem *game, uint32_t runSeed, float virtualPlayerZ);
 bool CanGameplayBoost(const GameplaySystem *game);
 GameplayEvents UpdateGameplay(GameplaySystem *game, float dt, float virtualPlayerZ,
                               float worldSpeed, bool boosting);

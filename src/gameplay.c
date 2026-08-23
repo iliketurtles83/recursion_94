@@ -38,6 +38,10 @@ static float Hash01(uint32_t value) {
     return (float)(MixBits(value) & 0x00ffffffu) / 16777215.0f;
 }
 
+static float LoopPressure(const GameplaySystem *game) {
+    return fminf((float)game->boss.encounterIndex * 0.12f, 0.36f);
+}
+
 static int WeaponTierForChain(int combo) {
     if (combo >= 12) return 3;
     if (combo >= 8) return 2;
@@ -136,7 +140,8 @@ static Enemy *SpawnEnemyAt(GameplaySystem *game, EnemyType type, Vector3 positio
     enemy->identity = game->spawnSerial++;
     enemy->generation = generation;
     enemy->fireTimer = (0.65f + Hash01(seed + 19u) * 0.75f) *
-                       (1.0f - game->difficulty * 0.50f);
+                       (1.0f - game->difficulty * 0.50f) *
+                       (1.0f - LoopPressure(game) * 0.35f);
 
     switch (type) {
         case ENEMY_DRIFTER:
@@ -170,9 +175,10 @@ static Enemy *SpawnEnemyAt(GameplaySystem *game, EnemyType type, Vector3 positio
 
 static void SpawnFormation(GameplaySystem *game) {
     uint32_t seed = game->runSeed ^ (uint32_t)(game->spawnSerial + 1) * 0x9e3779b9u;
-    int count = 1;
+    int count = game->boss.encounterIndex > 0 ? 2 : 1;
     if (game->difficulty > 0.08f && Hash01(seed + 1u) > 0.35f) count++;
     if (game->difficulty > 0.42f && Hash01(seed + 2u) > 0.48f) count++;
+    if (count > 4) count = 4;
 
     float centerX = -7.5f + Hash01(seed + 3u) * 15.0f;
     float centerY = 1.6f + Hash01(seed + 4u) * 4.6f;
@@ -357,7 +363,7 @@ static void UpdateBoss(GameplaySystem *game, float dt, float virtualPlayerZ,
         }
     }
 
-    float projectileSpeed = 23.0f + game->difficulty * 9.0f +
+    float projectileSpeed = 23.0f + game->difficulty * 9.0f + LoopPressure(game) * 8.0f +
                             (boss->phase == BOSS_ENRAGED ? 4.0f : 0.0f);
     for (int shot = 0; shot < shotCount; shot++) {
         float spread = ((float)shot - (float)(shotCount - 1) * 0.5f) * 1.45f;
@@ -781,6 +787,7 @@ static void UpdateEffects(GameplaySystem *game, float dt) {
     game->hitFlash = fmaxf(0.0f, game->hitFlash - dt * 2.7f);
     game->cameraKick = fmaxf(0.0f, game->cameraKick - dt * 3.5f);
     game->weaponFlash = fmaxf(0.0f, game->weaponFlash - dt * 1.25f);
+    game->loopTransitionTimer = fmaxf(0.0f, game->loopTransitionTimer - dt);
     game->boss.introFlash = fmaxf(0.0f, game->boss.introFlash - dt * 0.48f);
     game->boss.defeatFlash = fmaxf(0.0f, game->boss.defeatFlash - dt * 0.42f);
 }
@@ -795,6 +802,23 @@ void InitGameplay(GameplaySystem *game, uint32_t runSeed) {
     game->boss.coreSlot = -1;
     for (int node = 0; node < 4; node++) game->boss.nodeSlots[node] = -1;
     game->boss.nextSpawnDistance = 1600.0f + Hash01(runSeed ^ 0xb05594u) * 400.0f;
+}
+
+void AdvanceGameplayLoop(GameplaySystem *game, uint32_t runSeed, float virtualPlayerZ) {
+    game->runSeed = runSeed;
+    SetGameplayPalette(game);
+
+    for (int i = 0; i < MAX_ENEMIES; i++) game->enemies[i].active = false;
+    for (int i = 0; i < MAX_ENEMY_PROJECTILES; i++) game->projectiles[i].active = false;
+    for (int i = 0; i < MAX_PLAYER_PROJECTILES; i++) game->playerProjectiles[i].active = false;
+    ClearLocks(game);
+
+    game->boss.coreSlot = -1;
+    for (int node = 0; node < 4; node++) game->boss.nodeSlots[node] = -1;
+    game->boss.nextSpawnDistance = virtualPlayerZ + 1900.0f +
+        Hash01(runSeed ^ (uint32_t)game->boss.encounterIndex * 0x51c3u) * 400.0f;
+    game->spawnTimer = 0.45f;
+    game->loopTransitionTimer = 3.0f;
 }
 
 bool CanGameplayBoost(const GameplaySystem *game) {
@@ -827,7 +851,8 @@ GameplayEvents UpdateGameplay(GameplaySystem *game, float dt, float virtualPlaye
         game->spawnTimer -= dt;
         if (game->spawnTimer <= 0.0f) {
             SpawnFormation(game);
-            game->spawnTimer = 1.18f - game->difficulty * 0.68f;
+            game->spawnTimer = (1.18f - game->difficulty * 0.68f) *
+                               (1.0f - LoopPressure(game) * 0.45f);
         }
     }
 
@@ -1560,6 +1585,17 @@ static void DrawSegmentMeter(int x, int y, int width, int height, float amount,
 }
 
 void DrawGameplayHUD(const GameplaySystem *game, Camera3D camera, int screenWidth, int screenHeight) {
+    if (game->loopTransitionTimer > 0.0f) {
+        float fade = ClampFloat(game->loopTransitionTimer, 0.0f, 1.0f);
+        const char *loopText = TextFormat("RECURSION %02d // SEED %u",
+                                          game->boss.encounterIndex + 1, game->runSeed);
+        int textWidth = MeasureText(loopText, 22);
+        DrawRectangle(screenWidth / 2 - textWidth / 2 - 18, 96,
+                      textWidth + 36, 42, (Color){ 2, 5, 14, (unsigned char)(190.0f * fade) });
+        DrawText(loopText, screenWidth / 2 - textWidth / 2, 106, 22,
+                 (Color){ game->primaryColor.r, game->primaryColor.g,
+                          game->primaryColor.b, (unsigned char)(255.0f * fade) });
+    }
     if (game->boss.active && game->boss.phase == BOSS_APPROACH) {
         float progress = ClampFloat(game->boss.phaseTime / 2.6f, 0.0f, 1.0f);
         float envelope = sinf(progress * 3.14159265f);

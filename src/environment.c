@@ -448,7 +448,7 @@ static Mesh GenMeshCenteredPrism(int sides) {
     return mesh;
 }
 
-void InitEnvironment(EnvironmentSystem *env, uint32_t runSeed) {
+static void SetEnvironmentSeed(EnvironmentSystem *env, uint32_t runSeed) {
     static const Color palettes[][3] = {
         { { 0, 235, 255, 255 }, { 255, 35, 170, 255 }, { 255, 230, 70, 255 } },
         { { 80, 255, 150, 255 }, { 130, 75, 255, 255 }, { 255, 105, 55, 255 } },
@@ -463,6 +463,10 @@ void InitEnvironment(EnvironmentSystem *env, uint32_t runSeed) {
     env->primaryColor = palettes[palette][0];
     env->secondaryColor = palettes[palette][1];
     env->landmarkColor = palettes[palette][2];
+}
+
+void InitEnvironment(EnvironmentSystem *env, uint32_t runSeed) {
+    SetEnvironmentSeed(env, runSeed);
 
     // Extend the floor behind the camera so its near edge can never expose
     // submerged structures along the bottom of the viewport.
@@ -514,6 +518,28 @@ void InitEnvironment(EnvironmentSystem *env, uint32_t runSeed) {
     for (int i = 0; i < MAX_STRUCTURES; i++) {
         env->structures[i].active = false;
     }
+}
+
+void ReseedEnvironment(EnvironmentSystem *env, uint32_t runSeed) {
+    SetEnvironmentSeed(env, runSeed);
+
+    int shaderSeed = (int)runSeed;
+    Vector3 primary = { env->primaryColor.r / 255.0f, env->primaryColor.g / 255.0f,
+                        env->primaryColor.b / 255.0f };
+    Vector3 secondary = { env->secondaryColor.r / 255.0f, env->secondaryColor.g / 255.0f,
+                          env->secondaryColor.b / 255.0f };
+    Shader floorShader = env->floorModel.materials[0].shader;
+    SetShaderValue(floorShader, env->floorSeedLoc, &shaderSeed, SHADER_UNIFORM_INT);
+    SetShaderValue(floorShader, env->floorPrimaryLoc, &primary, SHADER_UNIFORM_VEC3);
+    SetShaderValue(floorShader, env->floorSecondaryLoc, &secondary, SHADER_UNIFORM_VEC3);
+    SetShaderValue(env->towerMaterial.shader, env->towerSeedLoc, &shaderSeed, SHADER_UNIFORM_INT);
+    SetShaderValue(env->towerMaterial.shader, env->towerPrimaryLoc, &primary, SHADER_UNIFORM_VEC3);
+    SetShaderValue(env->towerMaterial.shader, env->towerSecondaryLoc, &secondary, SHADER_UNIFORM_VEC3);
+
+    env->structureCount = 0;
+    env->droppedStructures = 0;
+    env->emissionSector = 0;
+    env->emissionSerial = 0;
 }
 
 // Procedurally generate a single flank (left or right) for a sector based on its macro-zone archetype

@@ -61,6 +61,21 @@ VALIDATE_GENERATOR=1 ./build.sh
 
 Validation mode replaces `bin/recursion94` with a validation-only executable. Run `./build.sh` again afterward to restore the playable build.
 
+To render the procedural synth without an audio device and verify its deterministic PCM hash:
+
+```bash
+VALIDATE_AUDIO=1 ./build.sh
+```
+
+To measure audio callback duration in a playable build:
+
+```bash
+PROFILE_AUDIO=1 ./build.sh
+./bin/recursion94 --seed 94
+```
+
+Press `F3` to compare the maximum callback duration with the callback's frame budget. Profiling is disabled in normal release builds.
+
 ## Windows
 
 The included Windows script cross-compiles a 64-bit `.exe` on Debian or Ubuntu using MinGW-w64.

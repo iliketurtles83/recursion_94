@@ -1,15 +1,63 @@
+#define _POSIX_C_SOURCE 200809L
 #include "audio_synth.h"
 
 #include <math.h>
 #include <string.h>
+#ifdef AUDIO_SYNTH_PROFILE
+#include <time.h>
+#endif
 
 #define PI 3.14159265358979323846f
 #define DELAY_MASK (SYNTH_DELAY_FRAMES - 1u)
 // Distance (world units) over which the ambient intro gives way to a full beat.
 #define SONG_INTRO_END_DISTANCE 650.0f
 #define SONG_BUILD_END_DISTANCE 1300.0f
+#define AUDIO_VALIDATION_HASH UINT64_C(0xf7534a0b56bce62e)
+
+_Static_assert(ATOMIC_INT_LOCK_FREE == 2,
+               "The audio callback requires lock-free atomic integers");
 
 static SynthSystem *g_synth_ref = 0;
+
+static void ConfigureSynthSeed(SynthSystem *synth, uint32_t runSeed);
+static void StartSynthSFX(SynthSystem *synth, SFXType type);
+
+static int SFXPriority(SFXType type) {
+    if (type == SFX_BOSS_RISER || type == SFX_POWER_UP) return 3;
+    if (type == SFX_GLITCH_HIT || type == SFX_EXPLOSION) return 2;
+    if (type == SFX_LASER_CHARGE) return 1;
+    return 0;
+}
+
+static unsigned int FloatBits(float value) {
+    unsigned int bits;
+    memcpy(&bits, &value, sizeof(bits));
+    return bits;
+}
+
+static float BitsFloat(unsigned int bits) {
+    float value;
+    memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+static void ApplySynthControl(SynthSystem *synth, SynthControl control) {
+    synth->targetIntensity = control.intensity;
+    synth->targetBossIntensity = control.bossIntensity;
+    synth->glitchAmount = control.glitchAmount;
+
+    float introProgress = fmaxf(0.0f, fminf(
+        control.virtualPlayerZ / SONG_INTRO_END_DISTANCE, 1.0f));
+    float introEase = introProgress * introProgress * (3.0f - 2.0f * introProgress);
+    synth->targetBpm = synth->ambientBpm +
+                       (synth->baseBpm - synth->ambientBpm) * introEase;
+
+    float buildProgress = fmaxf(0.0f, fminf(
+        (control.virtualPlayerZ - SONG_INTRO_END_DISTANCE) /
+        (SONG_BUILD_END_DISTANCE - SONG_INTRO_END_DISTANCE), 1.0f));
+    synth->songBuildProgress = buildProgress;
+    synth->targetDrumGate = buildProgress * (1.0f - control.preBossHush * 0.94f);
+}
 
 static uint32_t SynthHash(uint32_t value) {
     value ^= value >> 16;
@@ -258,14 +306,30 @@ static void TriggerStep(SynthSystem *synth, float intensity, float bossIntensity
     }
 }
 
-static void NativeAudioCallback(void *buffer, unsigned int frames) {
-    short *output = (short *)buffer;
-    if (!g_synth_ref || !g_synth_ref->initialized) {
-        memset(buffer, 0, frames * 2u * sizeof(short));
-        return;
+static void RenderAudioFrames(SynthSystem *synth, short *output, unsigned int frames) {
+    if (atomic_exchange_explicit(&synth->reseedPending, false, memory_order_acquire)) {
+        uint32_t runSeed = atomic_load_explicit(&synth->pendingSeed, memory_order_relaxed);
+        ConfigureSynthSeed(synth, runSeed);
     }
+    unsigned int commandRead = atomic_load_explicit(&synth->sfxCommandRead,
+                                                    memory_order_relaxed);
+    unsigned int commandWrite = atomic_load_explicit(&synth->sfxCommandWrite,
+                                                     memory_order_acquire);
+    while (commandRead != commandWrite) {
+        StartSynthSFX(synth, synth->sfxCommands[commandRead]);
+        commandRead = (commandRead + 1u) % SFX_COMMAND_CAPACITY;
+    }
+    atomic_store_explicit(&synth->sfxCommandRead, commandRead, memory_order_release);
 
-    SynthSystem *synth = g_synth_ref;
+    unsigned int controlRead = atomic_load_explicit(&synth->controlRead,
+                                                    memory_order_relaxed);
+    unsigned int controlWrite = atomic_load_explicit(&synth->controlWrite,
+                                                     memory_order_acquire);
+    while (controlRead != controlWrite) {
+        ApplySynthControl(synth, synth->controls[controlRead]);
+        controlRead = (controlRead + 1u) % SYNTH_CONTROL_CAPACITY;
+    }
+    atomic_store_explicit(&synth->controlRead, controlRead, memory_order_release);
     const float dt = 1.0f / (float)SAMPLE_RATE;
 
     for (unsigned int frame = 0; frame < frames; frame++) {
@@ -593,15 +657,107 @@ static void NativeAudioCallback(void *buffer, unsigned int frames) {
         output[frame * 2u] = (short)(SoftClip(left) * 27800.0f);
         output[frame * 2u + 1u] = (short)(SoftClip(right) * 27800.0f);
     }
+
 }
 
-void InitAudioSynth(SynthSystem *synth, uint32_t runSeed) {
-    *synth = (SynthSystem){ 0 };
+static void PublishSynthTelemetry(SynthSystem *synth, unsigned int frames,
+                                  unsigned int elapsedMicros) {
+    atomic_fetch_add_explicit(&synth->telemetrySequence, 1u, memory_order_acq_rel);
+    atomic_store_explicit(&synth->telemetryBeatPulse, FloatBits(synth->beatPulse),
+                          memory_order_relaxed);
+    atomic_store_explicit(&synth->telemetryDrumGate, FloatBits(synth->drumGate),
+                          memory_order_relaxed);
+    atomic_store_explicit(&synth->telemetryBpm, FloatBits(synth->currentBpm),
+                          memory_order_relaxed);
+    atomic_store_explicit(&synth->lastCallbackFrames, frames, memory_order_relaxed);
+    unsigned int previousMax = atomic_load_explicit(&synth->maxCallbackMicros,
+                                                    memory_order_relaxed);
+    while (elapsedMicros > previousMax &&
+           !atomic_compare_exchange_weak_explicit(&synth->maxCallbackMicros,
+                                                  &previousMax, elapsedMicros,
+                                                  memory_order_relaxed,
+                                                  memory_order_relaxed)) {
+    }
+    atomic_fetch_add_explicit(&synth->telemetrySequence, 1u, memory_order_release);
+}
+
+static void NativeAudioCallback(void *buffer, unsigned int frames) {
+    unsigned int elapsedMicros = 0u;
+#ifdef AUDIO_SYNTH_PROFILE
+    struct timespec callbackStart;
+    clock_gettime(CLOCK_MONOTONIC, &callbackStart);
+#endif
+    SynthSystem *synth = g_synth_ref;
+    if (!synth) {
+        memset(buffer, 0, frames * 2u * sizeof(short));
+        return;
+    }
+
+    bool rendered = false;
+    if (atomic_load_explicit(&synth->initialized, memory_order_acquire)) {
+        RenderAudioFrames(synth, (short *)buffer, frames);
+        rendered = true;
+    } else {
+        memset(buffer, 0, frames * 2u * sizeof(short));
+    }
+#ifdef AUDIO_SYNTH_PROFILE
+    struct timespec callbackEnd;
+    clock_gettime(CLOCK_MONOTONIC, &callbackEnd);
+    int64_t elapsedNanos = (int64_t)(callbackEnd.tv_sec - callbackStart.tv_sec) *
+                           INT64_C(1000000000) +
+                           (int64_t)(callbackEnd.tv_nsec - callbackStart.tv_nsec);
+    elapsedMicros = elapsedNanos > 0 ? (unsigned int)(elapsedNanos / 1000) : 0u;
+#endif
+    if (rendered) PublishSynthTelemetry(synth, frames, elapsedMicros);
+}
+
+static void ConfigureSynthSeed(SynthSystem *synth, uint32_t runSeed) {
+    static const float fmRatios[4] = { 1.0f, 1.4983f, 2.37f, 3.01f };
+    static const signed char bassPatterns[4][16] = {
+        { 0, -1, -1, -1, -1, -1, 7, -1, 0, -1, -1, -1, 12, -1, -1, -1 },
+        { 0, -1, -1, -1, 7, -1, -1, -1, 0, -1, -1, 12, -1, -1, 7, -1 },
+        { 0, -1, -1, 7, -1, -1, -1, -1, 0, -1, 12, -1, -1, -1, -1, -1 },
+        { 0, -1, -1, -1, -1, 12, -1, -1, 0, -1, -1, -1, -1, -1, 7, -1 }
+    };
+
     synth->runSeed = runSeed;
     synth->noiseState = SynthHash(runSeed ^ 0xd1b54a35u);
     if (synth->noiseState == 0u) synth->noiseState = 0x94a5f31du;
     synth->baseBpm = GetSynthSeedBpm(runSeed);
     synth->ambientBpm = fmaxf(92.0f, synth->baseBpm - 20.0f);
+    synth->targetBpm = synth->baseBpm;
+    synth->rootMidi = 36 + SeedRootIndex(runSeed);
+    synth->rootFrequency = MidiFrequency(synth->rootMidi - 12);
+    synth->bassTargetFrequency = synth->rootFrequency;
+    SetPadChord(synth, synth->barCount >> 1);
+    synth->arpModRatio = fmRatios[SynthHash(runSeed ^ 0x2f1e7bu) & 3u];
+
+    int bassVariant = (int)(SynthHash(runSeed ^ 0xb455u) & 3u);
+    memcpy(synth->bassPattern, bassPatterns[bassVariant], sizeof(synth->bassPattern));
+
+    float delaySeconds = (60.0f / synth->baseBpm) * 0.75f;
+    synth->delayFrames = (unsigned int)(delaySeconds * (float)SAMPLE_RATE);
+    if (synth->delayFrames >= SYNTH_DELAY_FRAMES) synth->delayFrames = SYNTH_DELAY_FRAMES - 1u;
+    synth->delayFramesRight = (synth->delayFrames * 2u) / 3u;
+    if (synth->delayFramesRight == 0u) synth->delayFramesRight = 1u;
+}
+
+static void InitializeSynthState(SynthSystem *synth, uint32_t runSeed) {
+    *synth = (SynthSystem){ 0 };
+    atomic_init(&synth->sfxCommandRead, 0u);
+    atomic_init(&synth->sfxCommandWrite, 0u);
+    atomic_init(&synth->controlRead, 0u);
+    atomic_init(&synth->controlWrite, 0u);
+    atomic_init(&synth->pendingSeed, runSeed);
+    atomic_init(&synth->reseedPending, false);
+    atomic_init(&synth->telemetryBeatPulse, FloatBits(0.0f));
+    atomic_init(&synth->telemetryDrumGate, FloatBits(0.0f));
+    atomic_init(&synth->telemetryBpm, FloatBits(0.0f));
+    atomic_init(&synth->maxCallbackMicros, 0u);
+    atomic_init(&synth->lastCallbackFrames, 0u);
+    atomic_init(&synth->telemetrySequence, 0u);
+    atomic_init(&synth->initialized, false);
+    ConfigureSynthSeed(synth, runSeed);
     synth->currentBpm = synth->ambientBpm;
     synth->targetBpm = synth->ambientBpm;
     synth->targetIntensity = 0.24f;
@@ -617,12 +773,8 @@ void InitAudioSynth(SynthSystem *synth, uint32_t runSeed) {
     synth->clapTime = 1.0f;
     synth->arpFrequency = 220.0f;
 
-    synth->rootMidi = 36 + SeedRootIndex(runSeed);
-    synth->rootFrequency = MidiFrequency(synth->rootMidi - 12);
     synth->bassFrequency = synth->rootFrequency;
-    synth->bassTargetFrequency = synth->rootFrequency;
     synth->subEnv = 0.35f;
-    SetPadChord(synth, 0);
     for (int note = 0; note < PAD_CHORD_NOTES; note++) {
         synth->padFrequency[note] = synth->padTargetFrequency[note];
         synth->padSinePhase[note] = Hash01(runSeed + (uint32_t)note * 41u);
@@ -632,27 +784,8 @@ void InitAudioSynth(SynthSystem *synth, uint32_t runSeed) {
             synth->padDrift[index] = Hash01(runSeed + (uint32_t)index * 31u + 9u);
         }
     }
-    static const float fmRatios[4] = { 1.0f, 1.4983f, 2.37f, 3.01f };
-    synth->arpModRatio = fmRatios[SynthHash(runSeed ^ 0x2f1e7bu) & 3u];
-
-    static const signed char bassPatterns[4][16] = {
-        { 0, -1, -1, -1, -1, -1, 7, -1, 0, -1, -1, -1, 12, -1, -1, -1 },
-        { 0, -1, -1, -1, 7, -1, -1, -1, 0, -1, -1, 12, -1, -1, 7, -1 },
-        { 0, -1, -1, 7, -1, -1, -1, -1, 0, -1, 12, -1, -1, -1, -1, -1 },
-        { 0, -1, -1, -1, -1, 12, -1, -1, 0, -1, -1, -1, -1, -1, 7, -1 }
-    };
-    int bassVariant = (int)(SynthHash(runSeed ^ 0xb455u) & 3u);
-    memcpy(synth->bassPattern, bassPatterns[bassVariant], sizeof(synth->bassPattern));
-
     synth->bassFilter.cutoff = 0.08f;
     synth->bassFilter.resonance = 0.48f;
-    float delaySeconds = (60.0f / synth->baseBpm) * 0.75f;
-    synth->delayFrames = (unsigned int)(delaySeconds * (float)SAMPLE_RATE);
-    if (synth->delayFrames >= SYNTH_DELAY_FRAMES) synth->delayFrames = SYNTH_DELAY_FRAMES - 1u;
-    // Shorter offset tap for the right channel so echoes bounce L/R instead of
-    // repeating in lockstep.
-    synth->delayFramesRight = (synth->delayFrames * 2u) / 3u;
-    if (synth->delayFramesRight == 0u) synth->delayFramesRight = 1u;
 
     static const int combSizes[REVERB_COMB_COUNT] = { 1116, 1188, 1277, 1356 };
     static const int allpassSizes[REVERB_ALLPASS_COUNT] = { 556, 441 };
@@ -665,7 +798,10 @@ void InitAudioSynth(SynthSystem *synth, uint32_t runSeed) {
         synth->reverbAllpasses[i].size = allpassSizes[i];
         synth->reverbAllpasses[i].feedback = 0.5f;
     }
+}
 
+void InitAudioSynth(SynthSystem *synth, uint32_t runSeed) {
+    InitializeSynthState(synth, runSeed);
     SetAudioStreamBufferSizeDefault(BUFFER_FRAMES);
     InitAudioDevice();
     if (!IsAudioDeviceReady()) return;
@@ -676,40 +812,66 @@ void InitAudioSynth(SynthSystem *synth, uint32_t runSeed) {
     }
 
     g_synth_ref = synth;
-    synth->initialized = true;
+    atomic_store_explicit(&synth->initialized, true, memory_order_release);
     SetAudioStreamCallback(synth->stream, NativeAudioCallback);
     PlayAudioStream(synth->stream);
+}
+
+void ReseedAudioSynth(SynthSystem *synth, uint32_t runSeed) {
+    if (!atomic_load_explicit(&synth->initialized, memory_order_acquire)) {
+        ConfigureSynthSeed(synth, runSeed);
+        return;
+    }
+
+    atomic_store_explicit(&synth->pendingSeed, runSeed, memory_order_relaxed);
+    atomic_store_explicit(&synth->reseedPending, true, memory_order_release);
 }
 
 void UpdateAudioSynth(SynthSystem *synth, float intensity, float glitchAmount,
                       float bossIntensity, float virtualPlayerZ, float preBossHush) {
     if (intensity < 0.0f) intensity = 0.0f;
     if (intensity > 1.0f) intensity = 1.0f;
-    synth->targetIntensity = intensity;
     if (bossIntensity < 0.0f) bossIntensity = 0.0f;
     if (bossIntensity > 1.0f) bossIntensity = 1.0f;
-    synth->targetBossIntensity = bossIntensity;
-    synth->glitchAmount = glitchAmount;
     if (preBossHush < 0.0f) preBossHush = 0.0f;
     if (preBossHush > 1.0f) preBossHush = 1.0f;
 
-    // BPM is fixed per seed once the intro ramp completes - no reactive nudging.
-    float introProgress = fmaxf(0.0f, fminf(virtualPlayerZ / SONG_INTRO_END_DISTANCE, 1.0f));
-    float introEase = introProgress * introProgress * (3.0f - 2.0f * introProgress);
-    synth->targetBpm = synth->ambientBpm + (synth->baseBpm - synth->ambientBpm) * introEase;
+    unsigned int controlWrite = atomic_load_explicit(&synth->controlWrite,
+                                                     memory_order_relaxed);
+    unsigned int nextWrite = (controlWrite + 1u) % SYNTH_CONTROL_CAPACITY;
+    unsigned int controlRead = atomic_load_explicit(&synth->controlRead,
+                                                    memory_order_acquire);
+    if (nextWrite == controlRead) return;
 
-    float buildProgress = fmaxf(0.0f, fminf(
-        (virtualPlayerZ - SONG_INTRO_END_DISTANCE) /
-        (SONG_BUILD_END_DISTANCE - SONG_INTRO_END_DISTANCE), 1.0f));
-    synth->songBuildProgress = buildProgress;
-    synth->targetDrumGate = buildProgress * (1.0f - preBossHush * 0.94f);
+    synth->controls[controlWrite] = (SynthControl) {
+        intensity, glitchAmount, bossIntensity, virtualPlayerZ, preBossHush
+    };
+    atomic_store_explicit(&synth->controlWrite, nextWrite, memory_order_release);
 }
 
-void TriggerSynthSFX(SynthSystem *synth, SFXType type) {
-    if (!synth->initialized) return;
+static void StartSynthSFX(SynthSystem *synth, SFXType type) {
+    int selectedVoice = -1;
+    int selectedPriority = SFXPriority(type);
+    float selectedProgress = -1.0f;
     for (int i = 0; i < MAX_SFX_VOICES; i++) {
-        SFXVoice *voice = &synth->sfxPool[i];
-        if (voice->active) continue;
+        SFXVoice *candidate = &synth->sfxPool[i];
+        if (!candidate->active) {
+            selectedVoice = i;
+            break;
+        }
+
+        int candidatePriority = SFXPriority(candidate->type);
+        float candidateProgress = candidate->time / candidate->duration;
+        if (candidatePriority < selectedPriority ||
+            (candidatePriority == selectedPriority && candidateProgress > selectedProgress)) {
+            selectedVoice = i;
+            selectedPriority = candidatePriority;
+            selectedProgress = candidateProgress;
+        }
+    }
+
+    if (selectedVoice >= 0 && selectedPriority <= SFXPriority(type)) {
+        SFXVoice *voice = &synth->sfxPool[selectedVoice];
         voice->type = type;
         voice->time = 0.0f;
 
@@ -737,21 +899,119 @@ void TriggerSynthSFX(SynthSystem *synth, SFXType type) {
             return;
         }
         voice->active = true;
-        return;
     }
 }
 
+void TriggerSynthSFX(SynthSystem *synth, SFXType type) {
+    if (!atomic_load_explicit(&synth->initialized, memory_order_acquire) ||
+        type <= SFX_NONE || type > SFX_BOSS_RISER) return;
+
+    unsigned int commandWrite = atomic_load_explicit(&synth->sfxCommandWrite,
+                                                     memory_order_relaxed);
+    unsigned int nextWrite = (commandWrite + 1u) % SFX_COMMAND_CAPACITY;
+    unsigned int commandRead = atomic_load_explicit(&synth->sfxCommandRead,
+                                                    memory_order_acquire);
+    if (nextWrite == commandRead) return;
+
+    synth->sfxCommands[commandWrite] = type;
+    atomic_store_explicit(&synth->sfxCommandWrite, nextWrite, memory_order_release);
+}
+
 float GetSynthBeatPulse(const SynthSystem *synth) {
-    return synth->beatPulse;
+    return GetSynthTelemetry(synth).beatPulse;
 }
 
 float GetSynthDrumGate(const SynthSystem *synth) {
-    return synth->drumGate;
+    return GetSynthTelemetry(synth).drumGate;
+}
+
+float GetSynthCurrentBpm(const SynthSystem *synth) {
+    return GetSynthTelemetry(synth).currentBpm;
+}
+
+unsigned int GetSynthMaxCallbackMicros(const SynthSystem *synth) {
+    return atomic_load_explicit(&synth->maxCallbackMicros, memory_order_relaxed);
+}
+
+unsigned int GetSynthLastCallbackFrames(const SynthSystem *synth) {
+    return atomic_load_explicit(&synth->lastCallbackFrames, memory_order_relaxed);
+}
+
+SynthTelemetry GetSynthTelemetry(const SynthSystem *synth) {
+    SynthTelemetry telemetry;
+    for (;;) {
+        unsigned int sequenceBefore = atomic_load_explicit(
+            &synth->telemetrySequence, memory_order_acquire);
+        if ((sequenceBefore & 1u) != 0u) continue;
+        telemetry.beatPulse = BitsFloat(atomic_load_explicit(
+            &synth->telemetryBeatPulse, memory_order_relaxed));
+        telemetry.drumGate = BitsFloat(atomic_load_explicit(
+            &synth->telemetryDrumGate, memory_order_relaxed));
+        telemetry.currentBpm = BitsFloat(atomic_load_explicit(
+            &synth->telemetryBpm, memory_order_relaxed));
+        telemetry.maxCallbackMicros = atomic_load_explicit(
+            &synth->maxCallbackMicros, memory_order_relaxed);
+        telemetry.callbackFrames = atomic_load_explicit(
+            &synth->lastCallbackFrames, memory_order_relaxed);
+        unsigned int sequenceAfter = atomic_load_explicit(
+            &synth->telemetrySequence, memory_order_acquire);
+        if (sequenceBefore == sequenceAfter) return telemetry;
+    }
+}
+
+static uint64_t RenderValidationPass(uint32_t runSeed, bool *hasSignal) {
+    SynthSystem synth;
+    short output[BUFFER_FRAMES * 2];
+    uint64_t hash = UINT64_C(1469598103934665603);
+    *hasSignal = false;
+
+    InitializeSynthState(&synth, runSeed);
+    atomic_store_explicit(&synth.initialized, true, memory_order_release);
+    UpdateAudioSynth(&synth, 0.72f, 0.0f, 0.0f, 980.0f, 0.0f);
+    TriggerSynthSFX(&synth, SFX_LASER_TAP);
+    TriggerSynthSFX(&synth, SFX_EXPLOSION);
+
+    for (int block = 0; block < 12; block++) {
+        if (block == 4) {
+            UpdateAudioSynth(&synth, 0.94f, 0.35f, 0.84f, 1550.0f, 0.0f);
+            TriggerSynthSFX(&synth, SFX_BOSS_RISER);
+        } else if (block == 8) {
+            ReseedAudioSynth(&synth, runSeed ^ UINT32_C(0x9e3779b9));
+            TriggerSynthSFX(&synth, SFX_POWER_UP);
+        }
+
+        RenderAudioFrames(&synth, output, BUFFER_FRAMES);
+        for (unsigned int sample = 0; sample < BUFFER_FRAMES * 2u; sample++) {
+            uint16_t value = (uint16_t)output[sample];
+            if (value != 0u) *hasSignal = true;
+            hash ^= value & 0xffu;
+            hash *= UINT64_C(1099511628211);
+            hash ^= value >> 8;
+            hash *= UINT64_C(1099511628211);
+        }
+    }
+
+    atomic_store_explicit(&synth.initialized, false, memory_order_release);
+    return hash;
+}
+
+bool ValidateAudioSynth(uint64_t *pcmHash) {
+    bool firstHasSignal;
+    bool secondHasSignal;
+    bool alternateHasSignal;
+    uint64_t first = RenderValidationPass(94u, &firstHasSignal);
+    uint64_t second = RenderValidationPass(94u, &secondHasSignal);
+    uint64_t alternate = RenderValidationPass(1337u, &alternateHasSignal);
+    if (pcmHash) *pcmHash = first;
+    return firstHasSignal && secondHasSignal && alternateHasSignal &&
+            first == second && first != alternate && first == AUDIO_VALIDATION_HASH;
 }
 
 void UnloadAudioSynth(SynthSystem *synth) {
-    if (!synth->initialized) return;
-    synth->initialized = false;
+    if (!atomic_load_explicit(&synth->initialized, memory_order_acquire)) return;
+    atomic_store_explicit(&synth->initialized, false, memory_order_release);
+    // Raylib 6.0 runs stream callbacks while holding its audio mutex;
+    // StopAudioStream takes the same mutex, so returning here is the barrier.
     StopAudioStream(synth->stream);
     UnloadAudioStream(synth->stream);
     CloseAudioDevice();

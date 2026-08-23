@@ -70,6 +70,7 @@ typedef struct {
 
 // Lifecycle & Update API
 void InitEnvironment(EnvironmentSystem *env, uint32_t runSeed);
+void ReseedEnvironment(EnvironmentSystem *env, uint32_t runSeed);
 void UpdateEnvironment(EnvironmentSystem *env, float virtualPlayerZ, float time, float intensity);
 void DrawEnvironment(const EnvironmentSystem *env, Camera3D camera, float virtualPlayerZ);
 void UnloadEnvironment(EnvironmentSystem *env);
