@@ -69,7 +69,7 @@ void main()
     // CPU-streamed world coordinates. Sparse silhouettes begin before the
     // full-detail environment so the horizon remains populated without adding
     // near-field clutter.
-    float fadeIn = smoothstep(-512.0, -350.0, worldPos.z);
+    float fadeIn = smoothstep(-640.0, -448.0, worldPos.z);
     float fadeOut = 1.0 - smoothstep(12.0, 25.0, worldPos.z);
     float horizonFactor = fadeIn * fadeOut;
 

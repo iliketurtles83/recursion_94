@@ -28,6 +28,7 @@ typedef struct {
     int craftSecondaryLoc;
     Shader backdropShader;
     int backdropTimeLoc;
+    int backdropIntensityLoc;
     int backdropSeedLoc;
     int backdropPrimaryLoc;
     int backdropSecondaryLoc;
@@ -90,6 +91,7 @@ static void InitPostProcess(PostProcessSystem *post, int width, int height,
 
     post->backdropShader = LoadShader(NULL, "shaders/backdrop.fs");
     post->backdropTimeLoc = GetShaderLocation(post->backdropShader, "uTime");
+    post->backdropIntensityLoc = GetShaderLocation(post->backdropShader, "uIntensity");
     int backdropResolutionLoc = GetShaderLocation(post->backdropShader, "uResolution");
     post->backdropSeedLoc = GetShaderLocation(post->backdropShader, "uRunSeed");
     post->backdropPrimaryLoc = GetShaderLocation(post->backdropShader, "uPrimaryColor");
@@ -108,8 +110,11 @@ static void BeginCraftPass(PostProcessSystem *post, float time, float intensity)
     BeginShaderMode(post->craftShader);
 }
 
-static void DrawRaymarchBackdrop(PostProcessSystem *post, float time, int width, int height) {
+static void DrawRaymarchBackdrop(PostProcessSystem *post, float time, float intensity,
+                                  int width, int height) {
     SetShaderValue(post->backdropShader, post->backdropTimeLoc, &time, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(post->backdropShader, post->backdropIntensityLoc, &intensity,
+                   SHADER_UNIFORM_FLOAT);
     BeginShaderMode(post->backdropShader);
         DrawRectangle(0, 0, width, height, WHITE);
     EndShaderMode();
@@ -384,7 +389,8 @@ int main(int argc, char **argv) {
         BeginDrawing();
             BeginTextureMode(post.target);
                 ClearBackground((Color){ 2, 3, 10, 255 });
-                DrawRaymarchBackdrop(&post, game.runTime, screenWidth, screenHeight);
+                DrawRaymarchBackdrop(&post, game.runTime, musicIntensity,
+                                      screenWidth, screenHeight);
                 DrawDemosceneBackdrop(&demo, game.runTime, musicIntensity,
                                       screenWidth, screenHeight);
                 BeginMode3D(camera);

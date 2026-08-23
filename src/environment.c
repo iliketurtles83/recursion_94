@@ -44,6 +44,8 @@ static const unsigned char ZONE_PATTERNS[][4] = {
 };
 
 #define ZONE_PATTERN_COUNT ((int)(sizeof(ZONE_PATTERNS) / sizeof(ZONE_PATTERNS[0])))
+#define ENVIRONMENT_LATERAL_SCALE 1.5f
+#define CORRIDOR_EDGE_X (15.0f * ENVIRONMENT_LATERAL_SCALE)
 #define TERRAIN_CELL_WIDTH 8.0f
 #define TERRAIN_BASE_Y -28.0f
 #define FLANK_OUTWARD_SHIFT 8.0f
@@ -58,6 +60,10 @@ typedef struct {
 } TerrainSupport;
 
 static uint32_t g_environmentSeed = 94u;
+
+static inline float ScaleEnvironmentX(float x) {
+    return x * ENVIRONMENT_LATERAL_SCALE;
+}
 
 // Stateless integer hash functions for deterministic, high-entropy procedural generation
 static inline unsigned int HashUint(unsigned int x) {
@@ -127,7 +133,8 @@ static TerrainSupport SampleTerrainSupport(int cellX, int sector) {
     float longitudinal = ValueNoise1D((float)sector * 0.20f + (float)cellX * 0.11f, 14001);
     float broadRelief = floorf(longitudinal * 4.0f) * 1.25f;
     float localStep = floorf(detail * 3.0f) * 0.65f;
-    float shoulder = powf((float)distanceFromCenter / 4.0f, 1.35f) * 5.2f;
+    float shoulder = powf((float)distanceFromCenter /
+                          (4.0f * ENVIRONMENT_LATERAL_SCALE), 1.35f) * 5.2f;
 
     support.occupied = true;
     support.topY = -6.4f + shoulder + broadRelief + localStep;
@@ -144,7 +151,7 @@ static int TerrainCellForX(float x) {
 static void GroundFlankStructures(EnvironmentSystem *env, float virtualPlayerZ) {
     for (int i = 0; i < env->structureCount; i++) {
         EnvironmentStructure *structure = &env->structures[i];
-        if (fabsf(structure->position.x) < 15.0f) continue;
+        if (fabsf(structure->position.x) < CORRIDOR_EDGE_X) continue;
 
         int cellX = TerrainCellForX(structure->position.x);
         int sector = (int)floorf((virtualPlayerZ - structure->position.z) / SECTOR_DEPTH);
@@ -157,7 +164,7 @@ static bool TerrainCellSupportsStructure(const EnvironmentSystem *env, float vir
                                          int cellX, int sector) {
     for (int i = 0; i < env->structureCount; i++) {
         const EnvironmentStructure *structure = &env->structures[i];
-        if (fabsf(structure->position.x) < 15.0f) continue;
+        if (fabsf(structure->position.x) < CORRIDOR_EDGE_X) continue;
         if (TerrainCellForX(structure->position.x) != cellX) continue;
         int structureSector = (int)floorf((virtualPlayerZ - structure->position.z) / SECTOR_DEPTH);
         if (structureSector == sector) return true;
@@ -221,10 +228,10 @@ static void GenerateFarSilhouettes(EnvironmentSystem *env, float virtualPlayerZ)
         EnvironmentStructure *structure = &env->farStructures[env->farStructureCount++];
         structure->type = HashFloat(sector, 15006) < 0.72f ? STRUCT_CACHE_TOWER
                                                             : STRUCT_MEMORY_SLAB;
-        structure->position = (Vector3){ (float)cellX * TERRAIN_CELL_WIDTH,
+        structure->position = (Vector3){ ScaleEnvironmentX((float)cellX * TERRAIN_CELL_WIDTH),
                                          support.topY - 0.35f + height * 0.5f,
                                          -(worldZ - virtualPlayerZ) - SECTOR_DEPTH * 0.5f };
-        structure->size = (Vector3){ width, height, width * 0.82f };
+        structure->size = (Vector3){ ScaleEnvironmentX(width), height, width * 0.82f };
         structure->compileScale = 1.0f;
         structure->active = true;
     }
@@ -368,6 +375,9 @@ static inline void AddStructurePriority(EnvironmentSystem *env, StructureType ty
     float baseY = pos.y - size.y * 0.5f;
     size.y *= gate;
     pos.y = baseY + size.y * 0.5f;
+
+    pos.x = ScaleEnvironmentX(pos.x);
+    size.x = ScaleEnvironmentX(size.x);
 
     int idx = env->structureCount++;
     env->structures[idx].type = type;
@@ -1120,12 +1130,12 @@ static void GenerateEnvironmentStructures(EnvironmentSystem *env, float virtualP
         // =========================================================================
         // 1. CONTINUOUS 3-LANE PARALLEL HIGHWAY CONDUITS (Corridor Spine)
         // =========================================================================
-        float leftInnerY = SampleTerrainSupport(TerrainCellForX(-11.5f), targetSector).topY + 0.25f;
-        float leftMiddleY = SampleTerrainSupport(TerrainCellForX(-12.8f), targetSector).topY + 0.25f;
-        float leftOuterY = SampleTerrainSupport(TerrainCellForX(-14.1f), targetSector).topY + 0.20f;
-        float rightInnerY = SampleTerrainSupport(TerrainCellForX(11.5f), targetSector).topY + 0.25f;
-        float rightMiddleY = SampleTerrainSupport(TerrainCellForX(12.8f), targetSector).topY + 0.25f;
-        float rightOuterY = SampleTerrainSupport(TerrainCellForX(14.1f), targetSector).topY + 0.20f;
+        float leftInnerY = SampleTerrainSupport(TerrainCellForX(ScaleEnvironmentX(-11.5f)), targetSector).topY + 0.25f;
+        float leftMiddleY = SampleTerrainSupport(TerrainCellForX(ScaleEnvironmentX(-12.8f)), targetSector).topY + 0.25f;
+        float leftOuterY = SampleTerrainSupport(TerrainCellForX(ScaleEnvironmentX(-14.1f)), targetSector).topY + 0.20f;
+        float rightInnerY = SampleTerrainSupport(TerrainCellForX(ScaleEnvironmentX(11.5f)), targetSector).topY + 0.25f;
+        float rightMiddleY = SampleTerrainSupport(TerrainCellForX(ScaleEnvironmentX(12.8f)), targetSector).topY + 0.25f;
+        float rightOuterY = SampleTerrainSupport(TerrainCellForX(ScaleEnvironmentX(14.1f)), targetSector).topY + 0.20f;
 
         // Left parallel highway lines
         AddCriticalStructure(env, STRUCT_BUS_CONDUIT, (Vector3){ -11.5f, leftInnerY, sectorCenterZ }, (Vector3){ 0.50f, 0.50f, SECTOR_DEPTH }, compileScale);
@@ -1305,10 +1315,10 @@ bool ValidateEnvironmentGenerator(EnvironmentValidationReport *report) {
             for (int i = 0; i < probe.structureCount; i++) {
                 const EnvironmentStructure *structure = &probe.structures[i];
                 float bottom = structure->position.y - structure->size.y * 0.5f;
-                if (fabsf(structure->position.x) < 15.0f && bottom >= -4.0f) continue;
+                if (fabsf(structure->position.x) < CORRIDOR_EDGE_X && bottom >= -4.0f) continue;
                 if (!HasTerrainFoundation(&probe, virtualPlayerZ, structure)) {
                     report->unsupportedStructures++;
-                    if (fabsf(structure->position.x) >= 15.0f) {
+                    if (fabsf(structure->position.x) >= CORRIDOR_EDGE_X) {
                         report->unsupportedFlankStructures++;
                     } else {
                         report->unsupportedRavineStructures++;

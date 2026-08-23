@@ -27,7 +27,7 @@ void main()
     fragPosition = worldPos.xyz;
     fragNormal = normalize(normalMatrix * vertexNormal);
     fragLocalPos = vertexPosition;
-    fragFade = smoothstep(-512.0, -350.0, worldPos.z) *
+    fragFade = smoothstep(-640.0, -448.0, worldPos.z) *
                (1.0 - smoothstep(12.0, 25.0, worldPos.z));
 
     gl_Position = matProjection * matView * worldPos;

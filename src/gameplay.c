@@ -5,8 +5,12 @@
 #include <stdint.h>
 
 #define TAP_THRESHOLD 0.12f
-#define PLAYER_MIN_X -10.0f
-#define PLAYER_MAX_X 10.0f
+#define GAMEPLAY_LATERAL_SCALE 1.5f
+#define PLAYER_MAX_X (10.0f * GAMEPLAY_LATERAL_SCALE)
+#define PLAYER_MIN_X (-PLAYER_MAX_X)
+#define ENEMY_FORMATION_CENTER_X (7.5f * GAMEPLAY_LATERAL_SCALE)
+#define ENEMY_FORMATION_LIMIT_X (9.0f * GAMEPLAY_LATERAL_SCALE)
+#define ENEMY_FORMATION_SPACING (3.2f * GAMEPLAY_LATERAL_SCALE)
 #define PLAYER_MIN_Y 0.8f
 #define PLAYER_MAX_Y 7.0f
 #define PLAYER_BOLT_SPEED 85.0f
@@ -180,7 +184,8 @@ static void SpawnFormation(GameplaySystem *game) {
     if (game->difficulty > 0.42f && Hash01(seed + 2u) > 0.48f) count++;
     if (count > 4) count = 4;
 
-    float centerX = -7.5f + Hash01(seed + 3u) * 15.0f;
+    float centerX = -ENEMY_FORMATION_CENTER_X +
+                    Hash01(seed + 3u) * ENEMY_FORMATION_CENTER_X * 2.0f;
     float centerY = 1.6f + Hash01(seed + 4u) * 4.6f;
     for (int i = 0; i < count; i++) {
         float typeRoll = Hash01(seed + 11u + (uint32_t)i * 7u);
@@ -188,9 +193,9 @@ static void SpawnFormation(GameplaySystem *game) {
         if (game->difficulty > 0.08f && typeRoll > 0.50f) type = ENEMY_CHASER;
         if (game->difficulty > 0.25f && typeRoll > 0.80f) type = ENEMY_SPLITTER;
 
-        float offset = ((float)i - (float)(count - 1) * 0.5f) * 3.2f;
+        float offset = ((float)i - (float)(count - 1) * 0.5f) * ENEMY_FORMATION_SPACING;
         Vector3 position = {
-            ClampFloat(centerX + offset, -9.0f, 9.0f),
+            ClampFloat(centerX + offset, -ENEMY_FORMATION_LIMIT_X, ENEMY_FORMATION_LIMIT_X),
             ClampFloat(centerY + sinf((float)i * 2.3f) * 1.2f, 1.0f, 6.5f),
             -104.0f - Hash01(seed + 30u + (uint32_t)i) * 28.0f
         };
@@ -614,10 +619,14 @@ static void UpdateEnemy(GameplaySystem *game, Enemy *enemy, float dt, float worl
 
         case ENEMY_HOVER:
             if (enemy->type == ENEMY_DRIFTER) {
-                enemy->position.x = enemy->basePosition.x + sinf(enemy->age * 1.45f + identity) * 3.1f;
+                enemy->position.x = enemy->basePosition.x +
+                                    sinf(enemy->age * 1.45f + identity) *
+                                    (3.1f * GAMEPLAY_LATERAL_SCALE);
                 enemy->position.y = enemy->basePosition.y + cosf(enemy->age * 1.1f + identity) * 0.9f;
             } else if (enemy->type == ENEMY_SPLITTER) {
-                enemy->position.x = enemy->basePosition.x + sinf(enemy->age * 1.7f + identity) * 2.0f;
+                enemy->position.x = enemy->basePosition.x +
+                                    sinf(enemy->age * 1.7f + identity) *
+                                    (2.0f * GAMEPLAY_LATERAL_SCALE);
                 enemy->position.y = enemy->basePosition.y + cosf(enemy->age * 2.2f + identity) * 1.4f;
             } else {
                 enemy->position.x = Approach(enemy->position.x, game->player.position.x, 0.35f, dt);

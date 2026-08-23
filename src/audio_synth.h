@@ -10,7 +10,7 @@
 #define BUFFER_FRAMES 4096
 #define MAX_SFX_VOICES 6
 #define SYNTH_DELAY_FRAMES 16384
-#define PAD_CHORD_NOTES 4
+#define PAD_CHORD_NOTES 5
 #define PAD_UNISON_VOICES 5
 #define REVERB_COMB_COUNT 4
 #define REVERB_ALLPASS_COUNT 2
@@ -172,8 +172,6 @@ typedef struct {
     float hatMetalPhase[3];
 
     float atmospherePhase;
-    float dronePhaseLeft;
-    float dronePhaseRight;
     LadderFilter atmosphereFilterLeft;
     LadderFilter atmosphereFilterRight;
 
@@ -181,7 +179,7 @@ typedef struct {
     float delayRight[SYNTH_DELAY_FRAMES];
     unsigned int delayIndex;
     unsigned int delayFrames;
-    unsigned int delayFramesRight; // shorter/offset tap so echoes ping-pong L/R
+    unsigned int delayFramesRight;
     float delayDampLeft;
     float delayDampRight;
 
