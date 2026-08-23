@@ -46,6 +46,10 @@ static const unsigned char ZONE_PATTERNS[][4] = {
 #define ZONE_PATTERN_COUNT ((int)(sizeof(ZONE_PATTERNS) / sizeof(ZONE_PATTERNS[0])))
 #define TERRAIN_CELL_WIDTH 8.0f
 #define TERRAIN_BASE_Y -28.0f
+#define FLANK_OUTWARD_SHIFT 8.0f
+#define FLANK_SKIP_CHANCE 0.25f
+#define FLANK_SKIP_LEFT_SEED 16001
+#define FLANK_SKIP_RIGHT_SEED 16002
 
 typedef struct {
     bool occupied;
@@ -239,8 +243,8 @@ static ZoneDescriptor DescribeZoneByKey(int zoneKey) {
 
     zone.startSector = zone.districtIndex * DISTRICT_SECTORS + offset;
     zone.length = ZONE_PATTERNS[patternIndex][zone.ordinal];
-    zone.theme = (DistrictTheme)(SeededHash((uint32_t)zone.districtIndex, UINT32_C(0xa511e9b3)) %
-                                 DISTRICT_THEME_COUNT);
+    uint32_t themeRoll = SeededHash((uint32_t)zone.districtIndex, UINT32_C(0xa511e9b3)) % 6u;
+    zone.theme = themeRoll < 4u ? (DistrictTheme)themeRoll : DISTRICT_OPEN_VOID;
 
     float densityNoise = ValueNoise1D((float)zone.districtIndex * 0.37f, 3101);
     float heightNoise = ValueNoise1D((float)zone.districtIndex * 0.23f + 7.0f, 3102);
@@ -300,11 +304,11 @@ static void PickFlankPair(const ZoneDescriptor *zone, int *leftArchetype, int *r
     // Even and odd zones use disjoint archetype families. Immediate repeats are
     // therefore impossible without recursively evaluating earlier zones.
     static const unsigned char choices[DISTRICT_THEME_COUNT][2][8] = {
-        { { 0, 0, 2, 8, 8, 6, 4, 2 }, { 1, 1, 3, 5, 7, 5, 1, 3 } },
-        { { 2, 6, 4, 0, 8, 6, 2, 4 }, { 5, 5, 3, 7, 1, 5, 3, 7 } },
-        { { 2, 2, 4, 8, 0, 2, 4, 6 }, { 1, 3, 5, 1, 7, 3, 5, 1 } },
-        { { 4, 6, 8, 4, 2, 6, 4, 8 }, { 7, 7, 3, 5, 1, 7, 3, 5 } },
-        { { 6, 6, 0, 2, 6, 8, 4, 6 }, { 5, 7, 1, 5, 3, 7, 5, 1 } }
+        { { 0, 6, 2, 8, 8, 6, 4, 6 }, { 1, 1, 3, 5, 7, 5, 1, 3 } },
+        { { 2, 6, 4, 6, 8, 6, 2, 4 }, { 5, 5, 3, 7, 1, 5, 3, 7 } },
+        { { 2, 6, 4, 8, 0, 2, 4, 6 }, { 1, 3, 5, 1, 7, 3, 5, 1 } },
+        { { 4, 6, 8, 4, 2, 6, 4, 6 }, { 7, 7, 3, 5, 1, 7, 3, 5 } },
+        { { 6, 6, 0, 6, 6, 8, 4, 6 }, { 5, 7, 1, 5, 3, 7, 5, 1 } }
     };
 
     int parity = FloorMod(zone->key, 2);
@@ -329,6 +333,11 @@ static void PickFlankPair(const ZoneDescriptor *zone, int *leftArchetype, int *r
 // Jitter multiplier in range [1.0 - maxVar, 1.0 + maxVar]
 static inline float JitterMult(int zoneIdx, int seed, float maxVar) {
     return 1.0f + (HashFloat(zoneIdx, seed) * 2.0f - 1.0f) * maxVar;
+}
+
+static bool ShouldSkipFlank(int targetSector, float side) {
+    int seed = side < 0.0f ? FLANK_SKIP_LEFT_SEED : FLANK_SKIP_RIGHT_SEED;
+    return HashFloat(targetSector, seed) < FLANK_SKIP_CHANCE;
 }
 
 // Safely append a structure while reserving space for higher-value layers.
@@ -644,6 +653,8 @@ void ReseedEnvironment(EnvironmentSystem *env, uint32_t runSeed) {
 static void GenerateFlank(EnvironmentSystem *env, float side, int targetSector, const ZoneDescriptor *zone,
                           int sectorInZone, int archetype, float relativeZ, float sectorCenterZ,
                           float compileScale) {
+    if (ShouldSkipFlank(targetSector, side)) return;
+
     int zoneIdx = zone->key;
     float hwyX = side * 14.1f; // Outermost line of the 3-lane trench highway
     float flankShift = zone->openness * 9.0f;
@@ -656,7 +667,7 @@ static void GenerateFlank(EnvironmentSystem *env, float side, int targetSector, 
         case 0: {
             float jBank = JitterMult(zoneIdx, 1010, 0.08f);
             float jWidth = JitterMult(zoneIdx, 1011, 0.15f);
-            float bankX = side * ((18.5f + flankShift) * jBank);
+            float bankX = side * ((18.5f + FLANK_OUTWARD_SHIFT + flankShift) * jBank);
             float socketW = 8.5f * jWidth;
             
             // Continuous motherboard socket rail along the base
@@ -771,9 +782,9 @@ static void GenerateFlank(EnvironmentSystem *env, float side, int targetSector, 
                 // Lead-in / lead-out auxiliary trace corridor
                 AddStructure(env, STRUCT_BUS_CONDUIT, (Vector3){ dieX, -2.6f, sectorCenterZ },
                              (Vector3){ 0.6f, 0.6f, SECTOR_DEPTH }, compileScale);
-                AddStructure(env, STRUCT_MEMORY_SLAB, (Vector3){ side * ((19.0f + flankShift) * jDie), -2.0f, sectorCenterZ },
+                AddStructure(env, STRUCT_MEMORY_SLAB, (Vector3){ side * ((19.0f + FLANK_OUTWARD_SHIFT + flankShift) * jDie), -2.0f, sectorCenterZ },
                              (Vector3){ 6.0f, 1.2f * compileScale, 5.0f }, compileScale);
-                AddConduitFeeder(env, hwyX, side * ((16.0f + flankShift) * jDie), -2.5f, sectorCenterZ, 0.8f, compileScale);
+                AddConduitFeeder(env, hwyX, side * ((16.0f + FLANK_OUTWARD_SHIFT + flankShift) * jDie), -2.5f, sectorCenterZ, 0.8f, compileScale);
             }
             break;
         }
@@ -783,7 +794,7 @@ static void GenerateFlank(EnvironmentSystem *env, float side, int targetSector, 
         // =========================================================================
         case 3: {
             float jDist = JitterMult(zoneIdx, 1040, 0.10f);
-            float node0X = side * ((16.5f + flankShift) * jDist);
+            float node0X = side * ((16.5f + FLANK_OUTWARD_SHIFT + flankShift) * jDist);
             float node0Z = relativeZ - 3.5f;
             float node0H = (5.5f + HashFloat(targetSector, 301) * 2.5f) * heightScale * compileScale;
             float node0W = 3.6f * JitterMult(zoneIdx, 1041, 0.18f);
@@ -797,7 +808,7 @@ static void GenerateFlank(EnvironmentSystem *env, float side, int targetSector, 
             AddStructure(env, STRUCT_CACHE_TOWER, (Vector3){ node1X, -1.8f + node1H * 0.5f, node1Z },
                          (Vector3){ node1W, node1H, node1W }, compileScale);
 
-            float node2X = side * ((17.0f + flankShift) * jDist);
+            float node2X = side * ((17.0f + FLANK_OUTWARD_SHIFT + flankShift) * jDist);
             float node2Z = relativeZ - 12.5f;
             float node2H = (5.0f + HashFloat(targetSector, 303) * 2.0f) * heightScale * compileScale;
             float node2W = 3.6f * JitterMult(zoneIdx, 1043, 0.18f);
@@ -835,7 +846,7 @@ static void GenerateFlank(EnvironmentSystem *env, float side, int targetSector, 
                          (Vector3){ midW, midH, midW }, compileScale);
 
             // Inner pedestal block
-            float innerX = side * ((16.0f + flankShift) * jTow);
+            float innerX = side * ((16.0f + FLANK_OUTWARD_SHIFT + flankShift) * jTow);
             float innerH = (3.5f + HashFloat(targetSector, 404) * 2.5f) * heightScale * compileScale;
             float innerW = 4.2f * JitterMult(zoneIdx, 1053, 0.18f);
             AddStructure(env, STRUCT_MEMORY_SLAB, (Vector3){ innerX, -2.2f + innerH * 0.5f, sectorCenterZ },
@@ -857,8 +868,8 @@ static void GenerateFlank(EnvironmentSystem *env, float side, int targetSector, 
         // =========================================================================
         case 5: {
             float jCon = JitterMult(zoneIdx, 1060, 0.08f);
-            float line1X = side * ((15.6f + flankShift) * jCon);
-            float line2X = side * ((17.2f + flankShift) * jCon);
+            float line1X = side * ((15.6f + FLANK_OUTWARD_SHIFT + flankShift) * jCon);
+            float line2X = side * ((17.2f + FLANK_OUTWARD_SHIFT + flankShift) * jCon);
 
             // Parallel high-speed data ribbons
             AddStructure(env, STRUCT_BUS_CONDUIT, (Vector3){ line1X, -2.6f, sectorCenterZ },
@@ -867,7 +878,7 @@ static void GenerateFlank(EnvironmentSystem *env, float side, int targetSector, 
                          (Vector3){ 0.50f, 0.50f, SECTOR_DEPTH }, compileScale);
 
             // Central switching logic hub block
-            float hubX = side * ((19.8f + flankShift) * jCon);
+            float hubX = side * ((19.8f + FLANK_OUTWARD_SHIFT + flankShift) * jCon);
             float hubW = 6.5f * JitterMult(zoneIdx, 1061, 0.18f);
             AddStructure(env, STRUCT_MEMORY_SLAB, (Vector3){ hubX, -2.2f, sectorCenterZ },
                          (Vector3){ hubW, 1.2f * compileScale, 4.0f }, compileScale);
@@ -883,7 +894,7 @@ static void GenerateFlank(EnvironmentSystem *env, float side, int targetSector, 
         // =========================================================================
         case 6: {
             float jSparse = JitterMult(zoneIdx, 1070, 0.10f);
-            float nodeX = side * ((17.5f + flankShift) * jSparse);
+            float nodeX = side * ((17.5f + FLANK_OUTWARD_SHIFT + flankShift) * jSparse);
             float nodeW = 3.0f * JitterMult(zoneIdx, 1071, 0.20f);
             float nodeH = (1.8f + HashFloat(targetSector, 601) * 1.5f) * heightScale * compileScale;
             AddStructure(env, STRUCT_MEMORY_SLAB, (Vector3){ nodeX, -2.4f + nodeH * 0.5f, sectorCenterZ },
@@ -902,7 +913,7 @@ static void GenerateFlank(EnvironmentSystem *env, float side, int targetSector, 
             int spikeCount = (zone->density > 0.62f) ? 3 : 2;
             for (int s = 0; s < spikeCount; s++) {
                 float spkZ = relativeZ - (s * 5.0f + 2.5f);
-                float spkX = side * (17.0f + flankShift + s * 4.0f + HashFloat(targetSector, 710 + s) * 3.0f) * jSpike;
+                float spkX = side * (17.0f + FLANK_OUTWARD_SHIFT + flankShift + s * 4.0f + HashFloat(targetSector, 710 + s) * 3.0f) * jSpike;
                 float spkH = (16.0f + HashFloat(targetSector, 720 + s) * 20.0f) * heightScale * compileScale;
                 float spkW = (1.2f + HashFloat(targetSector, 730 + s) * 0.5f) * compileScale;
 
@@ -925,7 +936,7 @@ static void GenerateFlank(EnvironmentSystem *env, float side, int targetSector, 
         // =========================================================================
         case 8: {
             float jCrate = JitterMult(zoneIdx, 1090, 0.10f);
-            float baseRackX = side * (18.0f + flankShift) * jCrate;
+            float baseRackX = side * (18.0f + FLANK_OUTWARD_SHIFT + flankShift) * jCrate;
             int crateColumns = (zone->density > 0.70f) ? 2 : 1;
             for (int cx = 0; cx < crateColumns; cx++) {
                 for (int cz = 0; cz < 3; cz++) {
@@ -1139,8 +1150,12 @@ static void GenerateEnvironmentStructures(EnvironmentSystem *env, float virtualP
                       relativeZ, sectorCenterZ, compileScale);
         GenerateFlank(env,  1.0f, targetSector, &zone, sectorInZone, rightArchetype,
                       relativeZ, sectorCenterZ, compileScale);
-        GenerateModularSilhouette(env, -1.0f, &zone, sectorInZone, sectorCenterZ, compileScale);
-        GenerateModularSilhouette(env,  1.0f, &zone, sectorInZone, sectorCenterZ, compileScale);
+        if (!ShouldSkipFlank(targetSector, -1.0f)) {
+            GenerateModularSilhouette(env, -1.0f, &zone, sectorInZone, sectorCenterZ, compileScale);
+        }
+        if (!ShouldSkipFlank(targetSector, 1.0f)) {
+            GenerateModularSilhouette(env, 1.0f, &zone, sectorInZone, sectorCenterZ, compileScale);
+        }
         GenerateRavineObject(env, targetSector, sectorCenterZ, compileScale);
 
         // =========================================================================
@@ -1155,6 +1170,24 @@ static void GenerateEnvironmentStructures(EnvironmentSystem *env, float virtualP
 
             AddConduitSpanZ(env,  anchorX, -2.4f, relativeZ + 2.0f, relativeZ - 2.0f, compileScale);
             AddConduitFeeder(env,  14.1f,  anchorX, -2.5f, relativeZ, 0.7f, compileScale);
+
+            if (HashFloat(zone.key, 16101) < 0.30f) {
+                float crossAnchorX = 25.0f + transitionOpen * 8.0f;
+                float crossY = 7.0f + zone.heightScale * 4.0f;
+                AddConduitFeeder(env, -crossAnchorX, crossAnchorX, crossY,
+                                 relativeZ, 0.9f, compileScale);
+            }
+        }
+
+        if (zone.ordinal == 0 && sectorInZone == 0 &&
+            HashFloat(zone.districtIndex, 16201) < 0.68f) {
+            float trunkSide = HashFloat(zone.districtIndex, 16202) < 0.5f ? -1.0f : 1.0f;
+            float trunkX = trunkSide * (28.0f + zone.openness * 10.0f +
+                                        HashFloat(zone.districtIndex, 16203) * 6.0f);
+            AddConduitSpanZ(env, trunkX, -2.45f, relativeZ,
+                            relativeZ - DISTRICT_SECTORS * SECTOR_DEPTH, compileScale);
+            AddConduitFeeder(env, trunkSide * 14.1f, trunkX, -2.5f,
+                             relativeZ, 0.8f, compileScale);
         }
 
         // =========================================================================
