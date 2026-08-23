@@ -73,6 +73,21 @@ static float LengthSquared2D(float x, float y) {
     return x * x + y * y;
 }
 
+static float SegmentSphereHit(Vector3 start, Vector3 end, Vector3 center, float radius) {
+    Vector3 segment = { end.x - start.x, end.y - start.y, end.z - start.z };
+    Vector3 offset = { start.x - center.x, start.y - center.y, start.z - center.z };
+    float lengthSquared = segment.x * segment.x + segment.y * segment.y + segment.z * segment.z;
+    if (lengthSquared < 0.000001f) return -1.0f;
+
+    float projection = -(offset.x * segment.x + offset.y * segment.y +
+                         offset.z * segment.z) / lengthSquared;
+    float hitTime = ClampFloat(projection, 0.0f, 1.0f);
+    float dx = offset.x + segment.x * hitTime;
+    float dy = offset.y + segment.y * hitTime;
+    float dz = offset.z + segment.z * hitTime;
+    return dx * dx + dy * dy + dz * dz <= radius * radius ? hitTime : -1.0f;
+}
+
 static int FindFreeEnemy(GameplaySystem *game) {
     for (int i = 0; i < MAX_ENEMIES; i++) {
         if (!game->enemies[i].active) return i;
@@ -120,8 +135,8 @@ static Enemy *SpawnEnemyAt(GameplaySystem *game, EnemyType type, Vector3 positio
     enemy->basePosition = position;
     enemy->identity = game->spawnSerial++;
     enemy->generation = generation;
-    enemy->fireTimer = (0.7f + Hash01(seed + 19u) * 0.9f) *
-                       (1.0f - game->difficulty * 0.42f);
+    enemy->fireTimer = (0.65f + Hash01(seed + 19u) * 0.75f) *
+                       (1.0f - game->difficulty * 0.50f);
 
     switch (type) {
         case ENEMY_DRIFTER:
@@ -156,16 +171,16 @@ static Enemy *SpawnEnemyAt(GameplaySystem *game, EnemyType type, Vector3 positio
 static void SpawnFormation(GameplaySystem *game) {
     uint32_t seed = game->runSeed ^ (uint32_t)(game->spawnSerial + 1) * 0x9e3779b9u;
     int count = 1;
-    if (game->difficulty > 0.18f && Hash01(seed + 1u) > 0.45f) count++;
-    if (game->difficulty > 0.58f && Hash01(seed + 2u) > 0.62f) count++;
+    if (game->difficulty > 0.08f && Hash01(seed + 1u) > 0.35f) count++;
+    if (game->difficulty > 0.42f && Hash01(seed + 2u) > 0.48f) count++;
 
     float centerX = -7.5f + Hash01(seed + 3u) * 15.0f;
     float centerY = 1.6f + Hash01(seed + 4u) * 4.6f;
     for (int i = 0; i < count; i++) {
         float typeRoll = Hash01(seed + 11u + (uint32_t)i * 7u);
         EnemyType type = ENEMY_DRIFTER;
-        if (game->difficulty > 0.16f && typeRoll > 0.55f) type = ENEMY_CHASER;
-        if (game->difficulty > 0.38f && typeRoll > 0.84f) type = ENEMY_SPLITTER;
+        if (game->difficulty > 0.08f && typeRoll > 0.50f) type = ENEMY_CHASER;
+        if (game->difficulty > 0.25f && typeRoll > 0.80f) type = ENEMY_SPLITTER;
 
         float offset = ((float)i - (float)(count - 1) * 0.5f) * 3.2f;
         Vector3 position = {
@@ -198,14 +213,13 @@ static int EnemySlot(const GameplaySystem *game, const Enemy *enemy) {
     return enemy ? (int)(enemy - game->enemies) : -1;
 }
 
-// Player shot with real flight time; homes toward targetSlot but keeps going
-// straight if that enemy is gone by the time it arrives (no free retargeting).
-static void SpawnPlayerProjectile(GameplaySystem *game, Vector3 origin, int targetSlot,
-                                  float speed, float damage, bool charged) {
+// Player shot with real flight time. Charged shots track targetSlot; tap shots
+// use an explicit aim point and targetSlot = -1.
+static void SpawnPlayerProjectile(GameplaySystem *game, Vector3 origin, Vector3 aim,
+                                  int targetSlot, float speed, float damage, bool charged) {
     int slot = FindFreePlayerProjectile(game);
     if (slot < 0) return;
 
-    Vector3 aim = game->enemies[targetSlot].position;
     float dx = aim.x - origin.x;
     float dy = aim.y - origin.y;
     float dz = aim.z - origin.z;
@@ -454,97 +468,25 @@ static void DamageEnemy(GameplaySystem *game, Enemy *enemy, float damage, bool c
 }
 
 static void FireTap(GameplaySystem *game, GameplayEvents *events) {
-    int target = -1;
-    float nearestZ = -10000.0f;
-    for (int i = 0; i < MAX_ENEMIES; i++) {
-        Enemy *enemy = &game->enemies[i];
-        if (!IsEnemyTargetable(game, enemy) ||
-            enemy->position.z >= game->player.position.z) continue;
-        float dx = enemy->position.x - game->player.position.x;
-        float dy = enemy->position.y - game->player.position.y;
-        float radius = 0.85f + enemy->size.x * 0.36f;
-        if (LengthSquared2D(dx, dy) <= radius * radius && enemy->position.z > nearestZ) {
-            target = i;
-            nearestZ = enemy->position.z;
-        }
-    }
-
-    if (target < 0) {
-        Vector3 end = { game->player.position.x, game->player.position.y, -110.0f };
-        game->beams[0] = (BeamTrace){ end, 0.09f };
-        events->tapShots++;
-        return;
-    }
-
-    int targets[MAX_LOCK_TARGETS];
-    bool chosen[MAX_ENEMIES] = { false };
-    int targetCount = 1;
-    int forkLimit = game->weaponTier >= 3 ? 4 : (game->weaponTier >= 1 ? 2 : 1);
-    targets[0] = target;
-    chosen[target] = true;
-    Vector3 anchor = game->enemies[target].position;
-
-    // Forked pulse beams favor nearby enemies, turning a maintained chain into
-    // crowd-clearing power without adding a new control or ammo system.
-    while (targetCount < forkLimit) {
-        int best = -1;
-        float bestScore = 1000000.0f;
-        for (int i = 0; i < MAX_ENEMIES; i++) {
-            const Enemy *enemy = &game->enemies[i];
-            if (!IsEnemyTargetable(game, enemy) || chosen[i] || enemy->position.z >= 0.0f) continue;
-            float dx = enemy->position.x - anchor.x;
-            float dy = enemy->position.y - anchor.y;
-            float dz = enemy->position.z - anchor.z;
-            float score = dx * dx + dy * dy + dz * dz * 0.08f;
-            if (score < bestScore && score < 110.0f) {
-                best = i;
-                bestScore = score;
-            }
-        }
-        if (best < 0) break;
-        chosen[best] = true;
-        targets[targetCount++] = best;
-        anchor = game->enemies[best].position;
-    }
-
-    int tierAtFire = game->weaponTier;
     Vector3 muzzle = game->player.position;
     muzzle.z -= 1.2f;
-    for (int beam = 0; beam < targetCount; beam++) {
-        int enemyIndex = targets[beam];
-        Vector3 aim = game->enemies[enemyIndex].position;
-        float dx = aim.x - muzzle.x, dy = aim.y - muzzle.y, dz = aim.z - muzzle.z;
-        float invLen = 1.0f / fmaxf(sqrtf(dx * dx + dy * dy + dz * dz), 0.001f);
-        Vector3 flash = { muzzle.x + dx * invLen * 2.2f, muzzle.y + dy * invLen * 2.2f,
-                          muzzle.z + dz * invLen * 2.2f };
-        game->beams[beam] = (BeamTrace){ flash, 0.09f + (float)beam * 0.015f };
-        float damage = (beam == 0 && tierAtFire >= 3) ? 2.0f : 1.0f;
-        float speed = PLAYER_BOLT_SPEED + (float)tierAtFire * 4.0f;
-        SpawnPlayerProjectile(game, muzzle, enemyIndex, speed, damage, false);
-    }
+    Vector3 aim = { game->player.position.x, game->player.position.y, -110.0f };
+    float speed = PLAYER_BOLT_SPEED + (float)game->weaponTier * 5.0f;
+    float damage = 1.0f + (float)game->weaponTier * 0.5f;
+    SpawnPlayerProjectile(game, muzzle, aim, -1, speed, damage, false);
     events->tapShots++;
 }
 
 static void FireCharge(GameplaySystem *game, GameplayEvents *events) {
     Vector3 muzzle = game->player.position;
     muzzle.z -= 1.2f;
-    int beam = 0;
-    for (int i = 0; i < MAX_ENEMIES && beam < MAX_LOCK_TARGETS; i++) {
+    int fired = 0;
+    for (int i = 0; i < MAX_ENEMIES && fired < MAX_LOCK_TARGETS; i++) {
         Enemy *enemy = &game->enemies[i];
         if (!enemy->active || !enemy->locked) continue;
-        float dx = enemy->position.x - muzzle.x, dy = enemy->position.y - muzzle.y,
-              dz = enemy->position.z - muzzle.z;
-        float invLen = 1.0f / fmaxf(sqrtf(dx * dx + dy * dy + dz * dz), 0.001f);
-        Vector3 flash = { muzzle.x + dx * invLen * 2.8f, muzzle.y + dy * invLen * 2.8f,
-                          muzzle.z + dz * invLen * 2.8f };
-        game->beams[beam++] = (BeamTrace){ flash, 0.16f };
-        SpawnPlayerProjectile(game, muzzle, i, PLAYER_BALL_SPEED,
+        SpawnPlayerProjectile(game, muzzle, enemy->position, i, PLAYER_BALL_SPEED,
                               game->weaponTier >= 3 ? 3.0f : 2.0f, true);
-    }
-    if (beam == 0) {
-        game->beams[0] = (BeamTrace){
-            { game->player.position.x, game->player.position.y, -110.0f }, 0.12f
-        };
+        fired++;
     }
     events->chargeShots++;
     ClearLocks(game);
@@ -647,9 +589,10 @@ static void UpdateEnemy(GameplaySystem *game, Enemy *enemy, float dt, float worl
     enemy->age += dt;
     enemy->phaseTime += dt;
     float identity = (float)enemy->identity;
-    float holdZ = (enemy->type == ENEMY_SPLITTER ? -38.0f : -30.0f) -
-                  game->difficulty * (enemy->type == ENEMY_SPLITTER ? 17.0f : 21.0f);
-    if (enemy->generation > 0) holdZ = -24.0f;
+    float holdZ = (enemy->type == ENEMY_SPLITTER ? -28.0f :
+                   (enemy->type == ENEMY_CHASER ? -22.0f : -25.0f)) +
+                  game->difficulty * 2.0f;
+    if (enemy->generation > 0) holdZ = -22.0f;
 
     switch (enemy->phase) {
         case ENEMY_APPROACH:
@@ -717,9 +660,9 @@ static void UpdateEnemy(GameplaySystem *game, Enemy *enemy, float dt, float worl
                     enemy->active = false;
                 }
             } else if (enemy->phaseTime > 0.35f) {
-                enemy->fireTimer = (1.1f + Hash01(game->runSeed ^
-                    (uint32_t)enemy->identity * 23u) * 1.2f) *
-                    (1.0f - game->difficulty * 0.48f);
+                enemy->fireTimer = (0.95f + Hash01(game->runSeed ^
+                    (uint32_t)enemy->identity * 23u) * 1.0f) *
+                    (1.0f - game->difficulty * 0.52f);
                 SetEnemyPhase(enemy, ENEMY_HOVER);
             }
             break;
@@ -772,20 +715,45 @@ static void UpdatePlayerProjectiles(GameplaySystem *game, float dt, GameplayEven
             }
         }
 
+        Vector3 previousPosition = projectile->position;
         projectile->position.x += projectile->velocity.x * dt;
         projectile->position.y += projectile->velocity.y * dt;
         projectile->position.z += projectile->velocity.z * dt;
 
         if (trackingLive) {
-            float dx = target->position.x - projectile->position.x;
-            float dy = target->position.y - projectile->position.y;
-            float dz = target->position.z - projectile->position.z;
             float hitRadius = 0.55f + target->size.x * 0.28f + (projectile->charged ? 0.25f : 0.0f);
-            if (dx * dx + dy * dy + dz * dz <= hitRadius * hitRadius) {
+            if (SegmentSphereHit(previousPosition, projectile->position,
+                                 target->position, hitRadius) >= 0.0f) {
                 DamageEnemy(game, target, projectile->damage, projectile->charged, events);
                 SpawnBurst(game, projectile->position,
                           projectile->charged ? game->hotColor : game->secondaryColor,
                           projectile->charged ? 6 : 3);
+                projectile->active = false;
+                continue;
+            }
+        } else if (projectile->targetEnemy < 0) {
+            int hitEnemy = -1;
+            float firstHit = 2.0f;
+            for (int enemyIndex = 0; enemyIndex < MAX_ENEMIES; enemyIndex++) {
+                Enemy *enemy = &game->enemies[enemyIndex];
+                if (!IsEnemyTargetable(game, enemy)) continue;
+                float hitRadius = 0.55f + enemy->size.x * 0.28f;
+                float hitTime = SegmentSphereHit(previousPosition, projectile->position,
+                                                 enemy->position, hitRadius);
+                if (hitTime >= 0.0f && hitTime < firstHit) {
+                    firstHit = hitTime;
+                    hitEnemy = enemyIndex;
+                }
+            }
+            if (hitEnemy >= 0) {
+                projectile->position.x = previousPosition.x +
+                    (projectile->position.x - previousPosition.x) * firstHit;
+                projectile->position.y = previousPosition.y +
+                    (projectile->position.y - previousPosition.y) * firstHit;
+                projectile->position.z = previousPosition.z +
+                    (projectile->position.z - previousPosition.z) * firstHit;
+                DamageEnemy(game, &game->enemies[hitEnemy], projectile->damage, false, events);
+                SpawnBurst(game, projectile->position, game->secondaryColor, 3);
                 projectile->active = false;
                 continue;
             }
@@ -809,9 +777,6 @@ static void UpdateEffects(GameplaySystem *game, float dt) {
         particle->velocity.z *= 1.0f - fminf(dt * 2.5f, 0.9f);
         particle->life -= dt;
         if (particle->life <= 0.0f) particle->active = false;
-    }
-    for (int i = 0; i < MAX_LOCK_TARGETS; i++) {
-        game->beams[i].timer = fmaxf(0.0f, game->beams[i].timer - dt);
     }
     game->hitFlash = fmaxf(0.0f, game->hitFlash - dt * 2.7f);
     game->cameraKick = fmaxf(0.0f, game->cameraKick - dt * 3.5f);
@@ -862,7 +827,7 @@ GameplayEvents UpdateGameplay(GameplaySystem *game, float dt, float virtualPlaye
         game->spawnTimer -= dt;
         if (game->spawnTimer <= 0.0f) {
             SpawnFormation(game);
-            game->spawnTimer = 1.32f - game->difficulty * 0.80f;
+            game->spawnTimer = 1.18f - game->difficulty * 0.68f;
         }
     }
 
@@ -1564,31 +1529,6 @@ void DrawGameplay3D(const GameplaySystem *game, Shader craftShader, int objectCl
                          (Color){ 220, 245, 255, (unsigned char)(alpha / 2) });
         }
     }
-    for (int i = 0; i < MAX_LOCK_TARGETS; i++) {
-        if (game->beams[i].timer <= 0.0f) continue;
-        Vector3 start = game->player.position;
-        start.z -= 1.2f;
-        Color beamColor = game->weaponTier >= 3 ? game->hotColor
-                          : (game->weaponTier >= 1 ? game->secondaryColor
-                                                   : game->primaryColor);
-        float beamLife = ClampFloat(game->beams[i].timer * 9.0f, 0.0f, 1.0f);
-        DrawCylinderEx(start, game->beams[i].end,
-                       0.018f, 0.060f + beamLife * 0.025f, 6,
-                       (Color){ beamColor.r, beamColor.g, beamColor.b, 150 });
-        DrawLine3D(start, game->beams[i].end, (Color){ 225, 250, 255, 255 });
-        start.x += 0.07f;
-        DrawLine3D(start, game->beams[i].end, beamColor);
-        if (game->weaponTier >= 2) {
-            start.x -= 0.14f;
-            DrawLine3D(start, game->beams[i].end,
-                       (Color){ beamColor.r, beamColor.g, beamColor.b, 170 });
-        }
-        DrawSphereEx(game->beams[i].end, 0.18f + beamLife * 0.22f,
-                     6, 10, beamColor);
-        DrawCircle3D(game->beams[i].end, 0.42f + beamLife * 0.30f,
-                     (Vector3){ 1.0f, 0.0f, 0.0f }, game->runTime * 120.0f,
-                     (Color){ beamColor.r, beamColor.g, beamColor.b, 165 });
-    }
 }
 
 static void DrawHudPanel(int x, int y, int width, int height, Color accent) {
@@ -1674,7 +1614,7 @@ void DrawGameplayHUD(const GameplaySystem *game, Camera3D camera, int screenWidt
     }
 
     static const char *weaponNames[4] = {
-        "PULSE", "DUAL-LINK", "MULTILOCK-6", "OVERDRIVE"
+        "PULSE", "ACCELERATOR", "MULTILOCK-6", "OVERDRIVE"
     };
     static const int nextThreshold[4] = { 4, 8, 12, 12 };
     const char *weaponText = TextFormat("WEAPON  %s", weaponNames[game->weaponTier]);

@@ -50,8 +50,8 @@ typedef struct {
     bool active;
 } EnemyProjectile;
 
-// Homes toward the enemy slot it was fired at; keeps flying straight if that
-// enemy dies first, so travel time is a real window rather than a guarantee.
+// Charged shots home toward their enemy slot. Tap shots use targetEnemy = -1
+// and continue straight along the reticle lane.
 typedef struct {
     Vector3 position;
     Vector3 velocity;
@@ -73,11 +73,6 @@ typedef struct {
     bool active;
     bool shockwave;
 } CombatParticle;
-
-typedef struct {
-    Vector3 end;
-    float timer;
-} BeamTrace;
 
 typedef struct {
     Vector3 position;
@@ -136,7 +131,6 @@ typedef struct {
     EnemyProjectile projectiles[MAX_ENEMY_PROJECTILES];
     PlayerProjectile playerProjectiles[MAX_PLAYER_PROJECTILES];
     CombatParticle particles[MAX_COMBAT_PARTICLES];
-    BeamTrace beams[MAX_LOCK_TARGETS];
 
     int score;
     int combo;

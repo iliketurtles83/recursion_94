@@ -49,24 +49,34 @@ static float SemitoneRatio(int semitones) {
 }
 
 static void SetPadChord(SynthSystem *synth, int phrase) {
-    // Natural-minor progressions chosen for long-form trance phrasing. Each
-    // holds for two bars and glides into the next rather than retriggering.
+    // Slow minor movement with open extensions leaves ambiguity and space.
+    // Each chord holds for two bars and glides into the next.
     static const signed char progressions[4][4] = {
-        { 0, 8, 3, 10 },   // i - VI - III - VII
-        { 0, 5, 8, 10 },   // i - iv - VI - VII
-        { 0, 10, 8, 10 },  // i - VII - VI - VII
-        { 0, 3, 5, 8 }     // i - III - iv - VI
+        { 0, 8, 5, 10 },
+        { 0, 5, 3, 10 },
+        { 0, 10, 8, 5 },
+        { 0, 3, 8, 10 }
     };
     int variant = (int)(SynthHash(synth->runSeed ^ 0x93a5f17du) & 3u);
     int chordRoot = progressions[variant][phrase & 3];
     int third = (chordRoot == 0 || chordRoot == 5) ? 3 : 4;
     int padRootMidi = synth->rootMidi + 12 + chordRoot;
+    int voicing = (int)(SynthHash(synth->runSeed ^ (uint32_t)phrase * 0x45d9f3bu) & 3u);
+    static const signed char upperIntervals[4][3] = {
+        { 3, 7, 14 },
+        { 3, 7, 10 },
+        { 2, 7, 12 },
+        { 7, 12, 19 }
+    };
 
     synth->chordRoot = chordRoot;
     synth->chordThird = third;
     synth->padTargetFrequency[0] = MidiFrequency(padRootMidi);
-    synth->padTargetFrequency[1] = MidiFrequency(padRootMidi + third);
-    synth->padTargetFrequency[2] = MidiFrequency(padRootMidi + 7);
+    for (int note = 1; note < PAD_CHORD_NOTES; note++) {
+        int interval = upperIntervals[voicing][note - 1];
+        if (note == 1 && interval == 3) interval = third;
+        synth->padTargetFrequency[note] = MidiFrequency(padRootMidi + interval);
+    }
 }
 
 static float SoftClip(float value) {
@@ -170,8 +180,7 @@ static float MetallicTone(SynthSystem *synth, float dt) {
     return sum * (1.0f / 3.0f);
 }
 
-static void TriggerStep(SynthSystem *synth, float intensity, float bossIntensity,
-                        float buildProgress) {
+static void TriggerStep(SynthSystem *synth, float intensity, float bossIntensity) {
     synth->currentStep = (synth->currentStep + 1) & 15;
     int step = synth->currentStep;
     if (step == 0) {
@@ -179,14 +188,30 @@ static void TriggerStep(SynthSystem *synth, float intensity, float bossIntensity
         if ((synth->barCount & 1) == 0) SetPadChord(synth, synth->barCount >> 1);
     }
 
-    // Seeded (not real-time random) micro timing and velocity drift so the
-    // grid stays deterministic per seed but no longer feels quantize-perfect.
+    // Alternating swing keeps each eighth-note pair the same length while
+    // seeded micro timing prevents the halftime groove feeling quantized.
     uint32_t humanizeSeed = SynthHash(synth->runSeed ^ ((uint32_t)synth->barCount * 0x2f6e2b1u) ^
                                       ((uint32_t)step * 0x9e3779b1u));
-    synth->stepJitter = (Hash01(humanizeSeed) - 0.5f) * 0.010f;
-    synth->hitVelocity = 0.82f + Hash01(humanizeSeed ^ 0x55u) * 0.32f;
+    float swing = 0.008f + Hash01(synth->runSeed ^ 0x17c3u) * 0.007f;
+    synth->stepJitter = ((step & 1) ? swing : -swing) +
+                        (Hash01(humanizeSeed) - 0.5f) * 0.003f;
+    synth->hitVelocity = 0.76f + Hash01(humanizeSeed ^ 0x55u) * 0.28f;
 
-    if ((step & 3) == 0) {
+    static const unsigned short kickMasks[4] = {
+        0x0001u, 0x0401u, 0x4001u, 0x0441u
+    };
+    static const unsigned short hatMasks[4] = {
+        0x5120u, 0x8924u, 0x9210u, 0x4492u
+    };
+    static const unsigned short openHatMasks[4] = {
+        0x2000u, 0x0200u, 0x0020u, 0x0800u
+    };
+    int rhythmVariant = (int)(SynthHash(synth->runSeed ^ 0x61d5a9u) & 3u);
+    unsigned short stepBit = (unsigned short)(1u << step);
+    unsigned short kickMask = 0x0001u;
+    if (synth->songBuildProgress > 0.48f) kickMask |= kickMasks[rhythmVariant];
+    if (bossIntensity > 0.58f) kickMask |= 0x2040u;
+    if ((kickMask & stepBit) != 0u) {
         synth->kickTime = 0.0f;
         synth->kickPhase = 0.0f;
         synth->kickTrigger = true;
@@ -196,6 +221,7 @@ static void TriggerStep(SynthSystem *synth, float intensity, float bossIntensity
     int bassNote = synth->bassPattern[step];
     if (bassNote >= 0) {
         synth->bassEnv = 1.0f;
+        synth->subEnv = 1.0f;
         synth->bassTargetFrequency = synth->rootFrequency *
                                      SemitoneRatio(synth->chordRoot + bassNote);
     } else if (bossIntensity > 0.58f && (step & 1) == 1) {
@@ -203,25 +229,32 @@ static void TriggerStep(SynthSystem *synth, float intensity, float bossIntensity
         synth->bassTargetFrequency = synth->rootFrequency *
                                      SemitoneRatio(synth->chordRoot + 12);
     }
-    if ((step & 1) == 1 || intensity > 0.74f || bossIntensity > 0.48f) synth->hatTime = 0.0f;
-    if ((step & 3) == 2) synth->openHatTime = 0.0f;
-    if (step == 4 || step == 12) synth->clapTime = 0.0f;
+    unsigned short hatMask = hatMasks[rhythmVariant];
+    if (intensity > 0.74f) hatMask |= 0x0888u;
+    if (bossIntensity > 0.48f) hatMask |= 0x2222u;
+    if ((hatMask & stepBit) != 0u) synth->hatTime = 0.0f;
+    if ((openHatMasks[rhythmVariant] & stepBit) != 0u &&
+        synth->songBuildProgress > 0.34f) synth->openHatTime = 0.0f;
+    if (step == 8 || (step == 14 && bossIntensity > 0.68f)) synth->clapTime = 0.0f;
 
-    // Ambient warmup: a sparse downbeat-only melody carries the intro/buildup
-    // instead of the denser reactive arp below, which only wakes up once the
-    // beat has fully arrived.
-    bool introMelodyStep = buildProgress < 1.0f && (step == 0 || step == 8);
-    bool reactiveArpStep = buildProgress >= 1.0f && intensity > 0.28f &&
-                           ((step & 1) == 0 || intensity > 0.62f || bossIntensity > 0.38f);
-    if (introMelodyStep || reactiveArpStep) {
-        signed char chordTones[8] = {
-            0, (signed char)synth->chordThird, 7, 12,
-            7, (signed char)(12 + synth->chordThird), 19, 24
+    static const unsigned short motifMasks[4] = {
+        0x4884u, 0x2488u, 0x8422u, 0x4212u
+    };
+    int motif = (int)(SynthHash(synth->runSeed ^ 0xc4ceb9feu) & 3u);
+    unsigned short motifMask = motifMasks[motif];
+    if (synth->songBuildProgress < 0.42f) motifMask &= 0x0444u;
+    if (bossIntensity > 0.62f) motifMask |= 0x4008u;
+    if ((motifMask & stepBit) != 0u && synth->songBuildProgress > 0.12f) {
+        signed char chordTones[7] = {
+            0, (signed char)synth->chordThird, 7, 10, 14,
+            (signed char)(12 + synth->chordThird), 19
         };
-        uint32_t noteHash = SynthHash(synth->runSeed + (uint32_t)synth->barCount * 31u + (uint32_t)step * 7u);
-        int note = synth->chordRoot + chordTones[noteHash & 7u];
+        uint32_t toneSeed = SynthHash(synth->runSeed ^ (uint32_t)motif * 0x9e37u ^
+                                      (uint32_t)step * 0x45d9u);
+        int tone = (int)(toneSeed % 7u);
+        int note = synth->chordRoot + chordTones[tone];
         synth->arpFrequency = synth->rootFrequency * SemitoneRatio(note + 12);
-        synth->arpEnv = introMelodyStep ? 0.55f : 0.35f + intensity * 0.65f;
+        synth->arpEnv = 0.62f + intensity * 0.14f + bossIntensity * 0.08f;
     }
 }
 
@@ -241,6 +274,7 @@ static void NativeAudioCallback(void *buffer, unsigned int frames) {
         synth->bossIntensity +=
             (synth->targetBossIntensity - synth->bossIntensity) * 0.00072f;
         float bossIntensity = synth->bossIntensity;
+        float buildProgress = synth->songBuildProgress;
         // Slow, musical glide (multi-second time constant) rather than a snap -
         // only ever moves during the intro's ambientBpm -> baseBpm ramp now.
         synth->currentBpm += (synth->targetBpm - synth->currentBpm) * 0.00003f;
@@ -252,7 +286,7 @@ static void NativeAudioCallback(void *buffer, unsigned int frames) {
         synth->stepTimer += dt;
         if (synth->stepTimer >= stepInterval) {
             synth->stepTimer -= stepInterval;
-            TriggerStep(synth, intensity, bossIntensity, synth->songBuildProgress);
+            TriggerStep(synth, intensity, bossIntensity);
         }
 
         synth->resonanceLfoPhase += dt * (0.07f + Hash01(synth->runSeed ^ 0x27u) * 0.05f);
@@ -263,15 +297,14 @@ static void NativeAudioCallback(void *buffer, unsigned int frames) {
         float kickEnvelope = 0.0f;
         if (synth->kickTrigger) {
             synth->kickTime += dt;
-            if (synth->kickTime < 0.20f) {
-                float attack = fminf(synth->kickTime / 0.004f, 1.0f);
-                kickEnvelope = expf(-synth->kickTime * 14.0f) * attack * synth->drumGate;
-                float pitch = 38.0f + 112.0f * expf(-synth->kickTime * 34.0f);
+            if (synth->kickTime < 0.18f) {
+                float attack = fminf(synth->kickTime / 0.005f, 1.0f);
+                kickEnvelope = expf(-synth->kickTime * 16.0f) * attack * synth->drumGate;
+                float pitch = 36.0f + 88.0f * expf(-synth->kickTime * 38.0f);
                 float tone = AdvanceSine(&synth->kickPhase, pitch, dt) * kickEnvelope * synth->hitVelocity;
-                // Fast decaying noise burst gives the attack a click a pure sweep lacks.
-                float click = NextNoise(synth) * expf(-synth->kickTime * 1400.0f) *
+                float click = NextNoise(synth) * expf(-synth->kickTime * 1800.0f) *
                              synth->hitVelocity * synth->drumGate;
-                kick = tanhf((tone * 1.7f + click * 0.5f) * 1.3f);
+                kick = tanhf((tone * 1.65f + click * 0.28f) * 1.25f);
             } else {
                 synth->kickTrigger = false;
             }
@@ -281,38 +314,43 @@ static void NativeAudioCallback(void *buffer, unsigned int frames) {
         synth->bassPhase += synth->bassFrequency * dt;
         if (synth->bassPhase >= 1.0f) synth->bassPhase -= 1.0f;
         float saw = synth->bassPhase * 2.0f - 1.0f;
-        float sub = sinf(synth->bassPhase * 2.0f * PI);
         float pulse = synth->bassPhase < 0.46f ? 1.0f : -1.0f;
         synth->bassEnv = fmaxf(0.0f, synth->bassEnv - dt * (3.7f - intensity * 1.1f));
         synth->bassFilter.cutoff = 0.026f + synth->bassEnv *
                                   (0.070f + intensity * 0.075f + bossIntensity * 0.040f);
         synth->bassFilter.resonance = 0.40f + resonanceLfo * 0.30f - intensity * 0.08f;
-        float bassSource = saw * 0.26f + pulse * 0.05f + sub * 0.69f;
-        float bassSidechain = 1.0f - kickEnvelope * (0.32f + intensity * 0.08f);
+        float bassSource = saw * 0.72f + pulse * 0.28f;
+        float bassSidechain = 1.0f - kickEnvelope * (0.18f + intensity * 0.05f);
         float bass = ProcessLadder(&synth->bassFilter, bassSource) * synth->bassEnv *
                     bassSidechain * synth->drumGate;
+
+        synth->subPhase += synth->bassFrequency * dt;
+        if (synth->subPhase >= 1.0f) synth->subPhase -= 1.0f;
+        synth->subEnv = fmaxf(0.28f, synth->subEnv - dt * 0.34f);
+        float subDuck = 1.0f - kickEnvelope * 0.14f;
+        float subBass = sinf(synth->subPhase * 2.0f * PI) * synth->subEnv * subDuck *
+                (0.15f + synth->drumGate * 0.10f + bossIntensity * 0.035f);
 
         synth->padLfoPhase += dt * (0.045f + Hash01(synth->runSeed ^ 0x51u) * 0.025f);
         if (synth->padLfoPhase >= 1.0f) synth->padLfoPhase -= 1.0f;
         float padLfo = sinf(synth->padLfoPhase * 2.0f * PI) * 0.5f + 0.5f;
         float padRawLeft = 0.0f;
         float padRawRight = 0.0f;
-        // Supersaw: PAD_UNISON_VOICES detuned saws per chord note, wide spread
-        // plus slow independent per-voice drift, instead of a thin 2-osc blend.
+        // Dark unison bed: sine body supports restrained detuned saw movement.
         static const float voiceDetune[PAD_UNISON_VOICES] = { -1.0f, -0.5f, 0.0f, 0.5f, 1.0f };
         static const float voicePan[PAD_UNISON_VOICES] = { 0.05f, 0.30f, 0.5f, 0.70f, 0.95f };
         static const float voiceLevel[PAD_UNISON_VOICES] = { 0.68f, 0.85f, 1.0f, 0.85f, 0.68f };
         static const float voiceDriftRate[PAD_UNISON_VOICES] = { 0.031f, 0.047f, 0.019f, 0.053f, 0.037f };
-        float padSpread = 0.045f + intensity * 0.025f;
+        static const float notePan[PAD_CHORD_NOTES] = { 0.38f, 0.62f, 0.22f, 0.78f };
+        float padSpread = 0.022f + intensity * 0.014f;
         for (int note = 0; note < PAD_CHORD_NOTES; note++) {
             synth->padFrequency[note] +=
                 (synth->padTargetFrequency[note] - synth->padFrequency[note]) * 0.000025f;
             synth->padSinePhase[note] += synth->padFrequency[note] * dt;
             if (synth->padSinePhase[note] >= 1.0f) synth->padSinePhase[note] -= 1.0f;
-            float sub = sinf(synth->padSinePhase[note] * 2.0f * PI);
-            float notePan = (float)note * 0.32f;
-            padRawLeft += sub * 0.16f * (0.82f - notePan);
-            padRawRight += sub * 0.16f * (0.18f + notePan);
+            float padSine = sinf(synth->padSinePhase[note] * 2.0f * PI);
+            padRawLeft += padSine * 0.20f * (1.0f - notePan[note]);
+            padRawRight += padSine * 0.20f * notePan[note];
 
             for (int voice = 0; voice < PAD_UNISON_VOICES; voice++) {
                 int index = note * PAD_UNISON_VOICES + voice;
@@ -322,53 +360,55 @@ static void NativeAudioCallback(void *buffer, unsigned int frames) {
                 float ratio = 1.0f + voiceDetune[voice] * padSpread + drift;
                 synth->padPhase[index] += synth->padFrequency[note] * ratio * dt;
                 if (synth->padPhase[index] >= 1.0f) synth->padPhase[index] -= 1.0f;
-                float sawValue = (synth->padPhase[index] * 2.0f - 1.0f) * voiceLevel[voice] * 0.20f;
-                float pan = voicePan[voice] + notePan * 0.16f;
+                float sawValue = (synth->padPhase[index] * 2.0f - 1.0f) *
+                                 voiceLevel[voice] * 0.12f;
+                float pan = voicePan[voice] * 0.72f + notePan[note] * 0.28f;
                 padRawLeft += sawValue * (1.0f - pan);
                 padRawRight += sawValue * pan;
             }
         }
-        float padCutoff = 0.018f + padLfo * 0.016f + intensity * 0.020f;
+        float padCutoff = 0.011f + padLfo * 0.010f + intensity * 0.016f;
         synth->padFilterLeft.cutoff = padCutoff;
         synth->padFilterRight.cutoff = padCutoff * 1.035f;
         synth->padFilterLeft.resonance = 0.58f - intensity * 0.08f;
         synth->padFilterRight.resonance = 0.56f - intensity * 0.08f;
         float padLeft = ProcessLadder(&synth->padFilterLeft, padRawLeft * 0.38f);
         float padRight = ProcessLadder(&synth->padFilterRight, padRawRight * 0.38f);
-        float sidechain = 1.0f - kickEnvelope * (0.48f + intensity * 0.12f);
-        float padGain = (0.13f + padLfo * 0.035f + intensity * 0.050f) * sidechain;
+        float sidechain = 1.0f - kickEnvelope * (0.22f + intensity * 0.06f);
+        float padGain = (0.16f + padLfo * 0.045f + intensity * 0.055f) * sidechain;
         padLeft *= padGain;
         padRight *= padGain;
 
-        synth->arpEnv = fmaxf(0.0f, synth->arpEnv - dt * (5.6f - intensity * 1.4f));
+        synth->arpEnv = fmaxf(0.0f, synth->arpEnv - dt * (2.8f - intensity * 0.6f));
         synth->arpPhase += synth->arpFrequency * dt;
         if (synth->arpPhase >= 1.0f) synth->arpPhase -= 1.0f;
         float arpSaw = synth->arpPhase * 2.0f - 1.0f;
         float arpTriangle = 1.0f - 4.0f * fabsf(synth->arpPhase - 0.5f);
-        // 2-operator phase-modulation voice blended in for a modern FM lead edge.
+        // Restrained phase modulation gives the sparse pluck a corroded bell edge.
         synth->arpModPhase += synth->arpFrequency * synth->arpModRatio * dt;
         if (synth->arpModPhase >= 1.0f) synth->arpModPhase -= 1.0f;
         float arpModulator = sinf(synth->arpModPhase * 2.0f * PI);
-        float arpFmIndex = 0.6f + intensity * 1.4f;
+        float arpFmIndex = 0.42f + intensity * 0.62f;
         float arpFm = sinf((synth->arpPhase + arpModulator * arpFmIndex * 0.15f) * 2.0f * PI);
-        synth->arpFilter.cutoff = 0.030f + synth->arpEnv * (0.085f + intensity * 0.065f);
-        synth->arpFilter.resonance = 0.30f + resonanceLfo * 0.28f;
+        synth->arpFilter.cutoff = 0.018f + synth->arpEnv * (0.052f + intensity * 0.038f);
+        synth->arpFilter.resonance = 0.36f + resonanceLfo * 0.22f;
         float arpWave = ProcessLadder(&synth->arpFilter,
-                                      arpSaw * 0.20f + arpTriangle * 0.48f + arpFm * 0.32f);
+                          arpSaw * 0.08f + arpTriangle * 0.58f + arpFm * 0.34f);
+        float melodyGain = 0.10f + intensity * 0.045f + bossIntensity * 0.035f;
         float arp = arpWave * synth->arpEnv *
-                    (intensity * 0.14f + bossIntensity * 0.050f) * sidechain;
+                melodyGain * sidechain;
 
         float metallicTone = MetallicTone(synth, dt);
 
         synth->hatTime += dt;
         float hat = 0.0f;
-        if (synth->hatTime < (intensity > 0.72f ? 0.095f : 0.055f)) {
+        if (synth->hatTime < (intensity > 0.72f ? 0.072f : 0.045f)) {
             float noise = NextNoise(synth);
-            float highNoise = noise - synth->previousNoise * 0.82f;
+            float highNoise = noise - synth->previousNoise * 0.68f;
             synth->previousNoise = noise;
-            float ringed = highNoise * (0.55f + 0.45f * metallicTone);
-            hat = Drive(ringed * expf(-synth->hatTime * (intensity > 0.72f ? 34.0f : 60.0f)) *
-                        synth->hitVelocity, 0.85f) * synth->drumGate;
+            float ringed = highNoise * (0.72f + 0.28f * metallicTone);
+            hat = Drive(ringed * expf(-synth->hatTime * (intensity > 0.72f ? 42.0f : 68.0f)) *
+                        synth->hitVelocity, 0.62f) * synth->drumGate;
         }
 
         synth->openHatTime += dt;
@@ -384,10 +424,12 @@ static void NativeAudioCallback(void *buffer, unsigned int frames) {
 
         synth->clapTime += dt;
         float clap = 0.0f;
-        if (synth->clapTime < 0.19f) {
-            float burst = expf(-synth->clapTime * 18.0f);
-            float flutter = 0.55f + 0.45f * sinf(synth->clapTime * 2.0f * PI * 34.0f);
-            clap = Drive(NextNoise(synth) * burst * flutter * synth->hitVelocity, 0.55f) * synth->drumGate;
+        if (synth->clapTime < 0.27f) {
+            float burst = expf(-synth->clapTime * 13.0f);
+            float flutter = 0.62f + 0.38f * sinf(synth->clapTime * 2.0f * PI * 27.0f);
+            float darkNoise = NextNoise(synth) + synth->previousNoise * 0.45f;
+            clap = Drive(darkNoise * burst * flutter * synth->hitVelocity, 0.42f) *
+                   synth->drumGate;
         }
 
         // Slowly breathing, decorrelated band-pass noise removes the clean
@@ -401,9 +443,17 @@ static void NativeAudioCallback(void *buffer, unsigned int frames) {
         synth->atmosphereFilterLeft.resonance = 0.34f;
         synth->atmosphereFilterRight.resonance = 0.31f;
         float atmosphereLeft = ProcessLadder(&synth->atmosphereFilterLeft, NextNoise(synth)) *
-                               (0.014f + intensity * 0.006f + bossIntensity * 0.007f);
+                               (0.018f + intensity * 0.007f + bossIntensity * 0.008f);
         float atmosphereRight = ProcessLadder(&synth->atmosphereFilterRight, NextNoise(synth)) *
-                                (0.014f + intensity * 0.006f + bossIntensity * 0.007f);
+                                (0.018f + intensity * 0.007f + bossIntensity * 0.008f);
+        float droneFrequency = synth->rootFrequency * 2.0f;
+        float droneLeft = AdvanceSine(&synth->dronePhaseLeft, droneFrequency, dt);
+        float droneRight = AdvanceSine(&synth->dronePhaseRight,
+                                       droneFrequency * SemitoneRatio(7), dt);
+        float hushLift = buildProgress * (1.0f - synth->drumGate);
+        float droneGain = 0.018f + (1.0f - buildProgress) * 0.018f + hushLift * 0.025f;
+        atmosphereLeft += (droneLeft * 0.78f + droneRight * 0.22f) * droneGain;
+        atmosphereRight += (droneRight * 0.72f + droneLeft * 0.28f) * droneGain;
 
         float sfx = 0.0f;
         for (int voice = 0; voice < MAX_SFX_VOICES; voice++) {
@@ -417,30 +467,31 @@ static void NativeAudioCallback(void *buffer, unsigned int frames) {
             }
 
             if (sfxVoice->type == SFX_LASER_TAP) {
-                // Exponential glide + a light 2nd-harmonic layer and a fast
-                // noise chiff on the attack read as a modern blaster instead
-                // of a linear-sweep arcade "pew".
-                float pitchDecay = expf(-sfxVoice->time * 34.0f);
+                // A compact low-mid pulse, metallic edge and transient replace
+                // the exposed high-frequency sweep of an arcade laser.
+                float pitchDecay = expf(-sfxVoice->time * 42.0f);
                 float frequency = sfxVoice->freqEnd +
                                   (sfxVoice->freqStart - sfxVoice->freqEnd) * pitchDecay;
-                float tone = sinf(2.0f * PI * frequency * sfxVoice->time) * 0.72f +
-                             sinf(2.0f * PI * frequency * 2.01f * sfxVoice->time) * 0.20f;
-                float chiff = NextNoise(synth) * expf(-sfxVoice->time * 500.0f) * 0.35f;
-                float attack = fminf(sfxVoice->time / 0.003f, 1.0f);
-                float envelope = attack * expf(-progress * 7.0f);
-                sfx += SoftClip((tone + chiff) * 1.3f) * envelope * sfxVoice->volume;
+                float body = sinf(2.0f * PI * frequency * sfxVoice->time) * 0.82f;
+                float edge = sinf(2.0f * PI * frequency * 2.73f * sfxVoice->time +
+                                  sinf(2.0f * PI * 71.0f * sfxVoice->time) * 0.7f) * 0.24f;
+                float transient = NextNoise(synth) * expf(-sfxVoice->time * 240.0f) * 0.55f;
+                float attack = fminf(sfxVoice->time / 0.0015f, 1.0f);
+                float envelope = attack * expf(-progress * 5.2f);
+                sfx += SoftClip((body + edge + transient) * 1.45f) *
+                       envelope * sfxVoice->volume;
             } else if (sfxVoice->type == SFX_LASER_CHARGE) {
-                // Deeper sub layer and a longer settle give the charged shot
-                // more weight than the quick tap without the same "pew" whistle.
-                float pitchDecay = expf(-sfxVoice->time * 14.0f);
+                float pitchDecay = expf(-sfxVoice->time * 18.0f);
                 float frequency = sfxVoice->freqEnd +
                                   (sfxVoice->freqStart - sfxVoice->freqEnd) * pitchDecay;
-                float tone = sinf(2.0f * PI * frequency * sfxVoice->time) * 0.75f +
-                             sinf(2.0f * PI * frequency * 0.5f * sfxVoice->time) * 0.30f;
-                float shimmer = NextNoise(synth) * (0.10f + progress * 0.05f);
-                float attack = fminf(sfxVoice->time / 0.006f, 1.0f);
-                float envelope = attack * expf(-progress * 3.0f) * (1.0f - progress * 0.15f);
-                sfx += SoftClip((tone + shimmer) * 1.25f) * envelope * sfxVoice->volume;
+                float body = sinf(2.0f * PI * frequency * sfxVoice->time) * 0.78f +
+                             sinf(2.0f * PI * frequency * 0.5f * sfxVoice->time) * 0.38f;
+                float edge = sinf(2.0f * PI * frequency * 2.37f * sfxVoice->time) * 0.19f;
+                float transient = NextNoise(synth) * expf(-sfxVoice->time * 150.0f) * 0.48f;
+                float attack = fminf(sfxVoice->time / 0.003f, 1.0f);
+                float envelope = attack * expf(-progress * 3.4f);
+                sfx += SoftClip((body + edge + transient) * 1.35f) *
+                       envelope * sfxVoice->volume;
             } else if (sfxVoice->type == SFX_BOSS_RISER) {
                 float eased = progress * progress;
                 float frequency = sfxVoice->freqStart +
@@ -462,20 +513,21 @@ static void NativeAudioCallback(void *buffer, unsigned int frames) {
             } else if (sfxVoice->type == SFX_GLITCH_HIT) {
                 sfx += NextNoise(synth) * expf(-progress * 6.0f) * sfxVoice->volume;
             } else if (sfxVoice->type == SFX_EXPLOSION) {
-                // Sweep a ladder filter across the noise (bright -> closed) for a
-                // filtered "boom/crunch" instead of raw broadband static, plus a
-                // pitch-dropping sub thump for body and a short crackle transient.
-                sfxVoice->noiseFilter.cutoff = 0.42f * expf(-progress * 3.4f) + 0.02f;
-                sfxVoice->noiseFilter.resonance = 0.22f;
+                // Separate snap, body and debris make a kill immediately legible
+                // while the resonant low-pass keeps the destruction smooth.
+                sfxVoice->noiseFilter.cutoff = 0.32f * expf(-progress * 3.8f) + 0.018f;
+                sfxVoice->noiseFilter.resonance = 0.30f;
                 float rumble = ProcessLadder(&sfxVoice->noiseFilter, NextNoise(synth));
-                float pitchDecay = expf(-sfxVoice->time * 9.0f);
+                float pitchDecay = expf(-sfxVoice->time * 12.0f);
                 float subFrequency = sfxVoice->freqEnd +
                                      (sfxVoice->freqStart - sfxVoice->freqEnd) * pitchDecay;
                 float sub = sinf(2.0f * PI * subFrequency * sfxVoice->time);
-                float crackle = NextNoise(synth) * expf(-sfxVoice->time * 260.0f) * 0.6f;
-                float envelope = expf(-progress * 11.0f) * 0.6f + expf(-progress * 2.6f) * 0.75f;
-                sfx += SoftClip((rumble * 0.85f + sub * 0.5f + crackle) * 1.15f) *
-                       envelope * sfxVoice->volume;
+                float snap = NextNoise(synth) * expf(-sfxVoice->time * 180.0f) * 0.75f;
+                float bodyEnvelope = expf(-progress * 3.1f);
+                float debrisEnvelope = expf(-progress * 6.5f) * (0.35f + progress);
+                float debris = NextNoise(synth) * debrisEnvelope * 0.18f;
+                sfx += SoftClip((rumble * 0.78f + sub * 0.62f) * bodyEnvelope +
+                                snap + debris) * sfxVoice->volume;
             }
         }
 
@@ -498,9 +550,10 @@ static void NativeAudioCallback(void *buffer, unsigned int frames) {
                                       (synth->delayFramesRight * 3u) / 4u) & DELAY_MASK;
         float lateLeft = synth->delayLeft[lateIndex];
         float lateRight = synth->delayRight[lateIndexRight];
-        float sendLeft = padLeft + arp * 0.92f + atmosphereLeft;
-        float sendRight = padRight + arp * 0.92f + atmosphereRight;
-        float feedback = 0.34f + intensity * 0.10f;
+        float rhythmGain = 0.030f + intensity * 0.036f + bossIntensity * 0.018f;
+        float sendLeft = padLeft + arp * 1.08f + atmosphereLeft + clap * rhythmGain * 0.16f;
+        float sendRight = padRight + arp * 1.08f + atmosphereRight + clap * rhythmGain * 0.18f;
+        float feedback = 0.38f + intensity * 0.08f;
         synth->delayDampLeft += (delayedRight - synth->delayDampLeft) * 0.35f;
         synth->delayDampRight += (delayedLeft - synth->delayDampRight) * 0.35f;
         synth->delayLeft[synth->delayIndex] =
@@ -515,20 +568,21 @@ static void NativeAudioCallback(void *buffer, unsigned int frames) {
         float reverbRight = 0.0f;
         ProcessReverb(synth, (sendLeft + sendRight) * 0.5f, &reverbLeft, &reverbRight);
 
-        float rhythmGain = 0.030f + intensity * 0.036f + bossIntensity * 0.018f;
-        float reverbWet = 0.38f + intensity * 0.12f;
-        float left = kick * (0.44f + bossIntensity * 0.02f) +
-                     bass * (0.56f + bossIntensity * 0.08f) + padLeft + arp * 0.66f +
-                     hat * rhythmGain * 0.60f + openHat * rhythmGain * 0.24f +
-                     clap * rhythmGain * 0.30f + atmosphereLeft +
-                     delayedLeft * 0.32f + earlyRight * 0.04f + sfx * 0.46f +
-                     reverbLeft * reverbWet;
-        float right = kick * (0.44f + bossIntensity * 0.02f) +
-                      bass * (0.54f + bossIntensity * 0.08f) + padRight + arp * 0.70f +
-                      hat * rhythmGain * 0.66f + openHat * rhythmGain * 0.28f +
-                      clap * rhythmGain * 0.34f + atmosphereRight +
-                      delayedRight * 0.32f + earlyLeft * 0.04f + sfx * 0.46f +
-                      reverbRight * reverbWet;
+        float reverbWet = 0.48f + intensity * 0.12f;
+        float musicBedLeft = bass * (0.56f + bossIntensity * 0.08f) + subBass +
+              padLeft + arp * 0.66f + hat * rhythmGain * 0.60f +
+              openHat * rhythmGain * 0.24f + clap * rhythmGain * 0.30f +
+              atmosphereLeft + delayedLeft * 0.32f + earlyRight * 0.04f +
+              reverbLeft * reverbWet;
+        float musicBedRight = bass * (0.54f + bossIntensity * 0.08f) + subBass +
+               padRight + arp * 0.70f + hat * rhythmGain * 0.66f +
+               openHat * rhythmGain * 0.28f + clap * rhythmGain * 0.34f +
+               atmosphereRight + delayedRight * 0.32f + earlyLeft * 0.04f +
+               reverbRight * reverbWet;
+        float musicLeft = kick * (0.32f + bossIntensity * 0.015f) + musicBedLeft * 1.12f;
+        float musicRight = kick * (0.32f + bossIntensity * 0.015f) + musicBedRight * 1.12f;
+        float left = musicLeft * 1.42f + sfx * 0.18f;
+        float right = musicRight * 1.42f + sfx * 0.18f;
 
         if (synth->glitchAmount > 0.08f) {
             float levels = 32.0f - synth->glitchAmount * 20.0f;
@@ -567,6 +621,7 @@ void InitAudioSynth(SynthSystem *synth, uint32_t runSeed) {
     synth->rootFrequency = MidiFrequency(synth->rootMidi - 12);
     synth->bassFrequency = synth->rootFrequency;
     synth->bassTargetFrequency = synth->rootFrequency;
+    synth->subEnv = 0.35f;
     SetPadChord(synth, 0);
     for (int note = 0; note < PAD_CHORD_NOTES; note++) {
         synth->padFrequency[note] = synth->padTargetFrequency[note];
@@ -577,17 +632,17 @@ void InitAudioSynth(SynthSystem *synth, uint32_t runSeed) {
             synth->padDrift[index] = Hash01(runSeed + (uint32_t)index * 31u + 9u);
         }
     }
-    static const float fmRatios[4] = { 1.0f, 1.5f, 2.0f, 3.0f };
+    static const float fmRatios[4] = { 1.0f, 1.4983f, 2.37f, 3.01f };
     synth->arpModRatio = fmRatios[SynthHash(runSeed ^ 0x2f1e7bu) & 3u];
 
-    static const signed char intervals[8] = { 0, 0, 0, 7, 0, 12, 7, 0 };
-    for (int step = 0; step < 16; step++) {
-        synth->bassPattern[step] = -1;
-        uint32_t h = SynthHash(runSeed + (uint32_t)step * 0x9e3779b9u);
-        if ((step & 3) == 2 || ((step & 1) == 1 && (h & 3u) == 0u)) {
-            synth->bassPattern[step] = intervals[(h >> 3) & 7u];
-        }
-    }
+    static const signed char bassPatterns[4][16] = {
+        { 0, -1, -1, -1, -1, -1, 7, -1, 0, -1, -1, -1, 12, -1, -1, -1 },
+        { 0, -1, -1, -1, 7, -1, -1, -1, 0, -1, -1, 12, -1, -1, 7, -1 },
+        { 0, -1, -1, 7, -1, -1, -1, -1, 0, -1, 12, -1, -1, -1, -1, -1 },
+        { 0, -1, -1, -1, -1, 12, -1, -1, 0, -1, -1, -1, -1, -1, 7, -1 }
+    };
+    int bassVariant = (int)(SynthHash(runSeed ^ 0xb455u) & 3u);
+    memcpy(synth->bassPattern, bassPatterns[bassVariant], sizeof(synth->bassPattern));
 
     synth->bassFilter.cutoff = 0.08f;
     synth->bassFilter.resonance = 0.48f;
@@ -603,8 +658,8 @@ void InitAudioSynth(SynthSystem *synth, uint32_t runSeed) {
     static const int allpassSizes[REVERB_ALLPASS_COUNT] = { 556, 441 };
     for (int i = 0; i < REVERB_COMB_COUNT; i++) {
         synth->reverbCombs[i].size = combSizes[i];
-        synth->reverbCombs[i].feedback = 0.82f;
-        synth->reverbCombs[i].damp = 0.20f;
+        synth->reverbCombs[i].feedback = 0.88f;
+        synth->reverbCombs[i].damp = 0.14f;
     }
     for (int i = 0; i < REVERB_ALLPASS_COUNT; i++) {
         synth->reverbAllpasses[i].size = allpassSizes[i];
@@ -659,17 +714,17 @@ void TriggerSynthSFX(SynthSystem *synth, SFXType type) {
         voice->time = 0.0f;
 
         if (type == SFX_LASER_TAP) {
-            voice->duration = 0.085f; voice->freqStart = 1500.0f;
-            voice->freqEnd = 260.0f; voice->volume = 0.40f;
+            voice->duration = 0.11f; voice->freqStart = 310.0f;
+            voice->freqEnd = 118.0f; voice->volume = 0.42f;
         } else if (type == SFX_LASER_CHARGE) {
-            voice->duration = 0.20f; voice->freqStart = 1800.0f;
-            voice->freqEnd = 140.0f; voice->volume = 0.58f;
+            voice->duration = 0.26f; voice->freqStart = 240.0f;
+            voice->freqEnd = 68.0f; voice->volume = 0.52f;
         } else if (type == SFX_GLITCH_HIT) {
             voice->duration = 0.22f; voice->freqStart = 400.0f;
             voice->freqEnd = 50.0f; voice->volume = 0.70f;
         } else if (type == SFX_EXPLOSION) {
-            voice->duration = 0.50f; voice->freqStart = 150.0f;
-            voice->freqEnd = 32.0f; voice->volume = 0.80f;
+            voice->duration = 0.44f; voice->freqStart = 130.0f;
+            voice->freqEnd = 38.0f; voice->volume = 0.66f;
             voice->noiseFilter.stage[0] = 0.0f; voice->noiseFilter.stage[1] = 0.0f;
             voice->noiseFilter.stage[2] = 0.0f; voice->noiseFilter.stage[3] = 0.0f;
         } else if (type == SFX_POWER_UP) {

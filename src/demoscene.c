@@ -123,22 +123,55 @@ void DrawDemosceneBackdrop(const DemosceneSystem *demo, float time, float intens
         }
     }
 
-    // Low-contrast megacity silhouettes establish scale behind the playable
-    // trench without adding geometry or draw distance pressure.
-    for (int i = 0; i < 54; i++) {
-        uint32_t h = DemoHash(demo->seed ^ ((uint32_t)i * 0x85ebca6bu) ^ 0x43495459u);
-        int width = 11 + (int)(h & 23u);
-        int x = (i * (screenWidth + 80) / 53) - 40;
-        int height = 18 + (int)((h >> 8) & 83u);
-        Color silhouette = MixColor((Color){ 2, 4, 12, 255 }, demo->secondary,
-                                    0.045f, 215);
-        DrawRectangle(x, horizonY - height, width, height + 42, silhouette);
-        if (((h >> 20) & 3u) == 0u) {
-            DrawRectangle(x + width / 2, horizonY - height - 14, 1, 14,
-                          (Color){ demo->primary.r, demo->primary.g,
-                                   demo->primary.b, 62 });
+    // Layered skyline converges on a dense central destination. Every tower
+    // extends below the frame so no generated baseline can become visible.
+    int centerX = screenWidth / 2;
+    for (int layer = 0; layer < 3; layer++) {
+        int buildingCount = 34 + layer * 12;
+        int layerHorizon = horizonY + layer * 25;
+        float depthScale = 0.55f + (float)layer * 0.32f;
+        for (int i = 0; i < buildingCount; i++) {
+            uint32_t h = DemoHash(demo->seed ^ ((uint32_t)i * 0x85ebca6bu) ^
+                                  ((uint32_t)layer * 0x27d4eb2du) ^ 0x43495459u);
+            float normalized = ((float)i + DemoHash01(h) * 0.7f) /
+                               (float)(buildingCount - 1);
+            float centerDistance = fabsf(normalized * 2.0f - 1.0f);
+            int width = (int)((9.0f + (float)(h & 19u)) * depthScale);
+            int x = (int)(normalized * (float)(screenWidth + 160)) - 80 - width / 2;
+            float centralRise = powf(1.0f - centerDistance, 2.1f) *
+                                (145.0f + (float)layer * 38.0f);
+            int height = (int)((24.0f + (float)((h >> 8) & 63u)) * depthScale +
+                               centralRise);
+            Color silhouette = MixColor((Color){ 1, 3, 10, 255 }, demo->secondary,
+                                        0.025f + (float)layer * 0.018f,
+                                        (unsigned char)(205 + layer * 16));
+            DrawRectangle(x, layerHorizon - height, width,
+                          screenHeight - (layerHorizon - height) + 4, silhouette);
+
+            if (((h >> 20) & 3u) == 0u) {
+                DrawRectangle(x + width / 2, layerHorizon - height - 10 - layer * 4,
+                              1, 10 + layer * 4,
+                              (Color){ demo->primary.r, demo->primary.g,
+                                       demo->primary.b, (unsigned char)(42 + layer * 16) });
+            }
+            if (layer > 0 && width > 12 && centerDistance < 0.72f) {
+                int windowY = layerHorizon - height + 9;
+                for (; windowY < layerHorizon - 5; windowY += 12) {
+                    unsigned char alpha = (unsigned char)(28 + ((h >> 16) & 31u));
+                    DrawRectangle(x + 4, windowY, 2, 1,
+                                  MixColor(demo->primary, demo->hot,
+                                           DemoHash01(h ^ (uint32_t)windowY), alpha));
+                }
+            }
         }
     }
+
+    // A distant axial spire gives the flight path an unmistakable focal point.
+    int spireHeight = 205;
+    DrawTriangle((Vector2){ (float)centerX, (float)(horizonY - spireHeight - 48) },
+                 (Vector2){ (float)(centerX - 5), (float)(horizonY - spireHeight) },
+                 (Vector2){ (float)(centerX + 5), (float)(horizonY - spireHeight) },
+                 (Color){ demo->hot.r, demo->hot.g, demo->hot.b, 92 });
 }
 
 void DrawSeedSelector(uint32_t seed, float time, float bpm, const char *keyName,

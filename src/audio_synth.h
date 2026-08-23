@@ -9,7 +9,7 @@
 #define BUFFER_FRAMES 4096
 #define MAX_SFX_VOICES 6
 #define SYNTH_DELAY_FRAMES 16384
-#define PAD_CHORD_NOTES 3
+#define PAD_CHORD_NOTES 4
 #define PAD_UNISON_VOICES 5
 #define REVERB_COMB_COUNT 4
 #define REVERB_ALLPASS_COUNT 2
@@ -106,6 +106,8 @@ typedef struct {
     float bassTargetFrequency;
     signed char bassPattern[16];
     LadderFilter bassFilter;
+    float subPhase;
+    float subEnv;
 
     int rootMidi;
     int chordRoot;
@@ -134,6 +136,8 @@ typedef struct {
     float hatMetalPhase[3];
 
     float atmospherePhase;
+    float dronePhaseLeft;
+    float dronePhaseRight;
     LadderFilter atmosphereFilterLeft;
     LadderFilter atmosphereFilterRight;
 

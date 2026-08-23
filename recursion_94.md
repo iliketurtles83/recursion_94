@@ -28,10 +28,10 @@ One seed compiles one coherent run identity — its own key, tempo, palette, ene
 ## 4. Gameplay Loop
 
 1. **Seed selection:** the opening screen previews a 32-bit run seed (`Left/Right` ±1, `Up/Down` ±100), showing its minor key, BPM, palette, and demoscene identity before `Enter` compiles the run. `--seed N` / `--boss N` bypass the selector for testing.
-2. **Flight & combat:** `WASD`/arrows move the probe on X/Y while the camera leads the same transform. The unified weapon (`J` / left mouse) fires a tap beam on releases ≤120ms, or acquires up to 4 (later 6) locked targets on longer holds for a charge volley.
-3. **Enemy pressure:** Drifters strafe and fire, Chasers telegraph a terminal dive, Splitters fire spreads and fracture into two Chasers on death. Encounter size, spawn rate, and archetype mix scale with a capped `log1p(distance / 350)` difficulty curve — enemies engage from farther away, fire cooldowns shorten, and projectile speed increases as the run advances, with hard lower bounds so the late game stays readable.
+2. **Flight & combat:** `WASD`/arrows move the probe on X/Y while the camera leads the same transform. The unified weapon (`J` / left mouse) fires one straight ball along the reticle lane on releases ≤120ms, or acquires up to 4 (later 6) locked targets on longer holds for a homing volley.
+3. **Enemy pressure:** Drifters strafe and fire, Chasers telegraph a terminal dive, Splitters fire spreads and fracture into two Chasers on death. Regular enemies settle into a close `z=-22..-28` engagement band. Encounter size, spawn rate, archetype mix, and fire cadence scale with a capped `log1p(distance / 350)` difficulty curve, increasing pressure without inflating enemy health or erasing attack telegraphs.
 4. **Risk/reward loop:** boosting (`SPACE`) consumes Core Energy; taking a hit drains Energy and breaks the kill combo; kills restore Energy (charge multi-kills the most). Energy reaching zero ends the run (`R` resets).
-5. **Chain weapon evolution:** the live kill combo gates weapon tier — x4 unlocks dual-link tap beams, x8 raises charged lock capacity to six, x12 enables four-way overdrive forks with boosted damage. Any hit or an expired chain drops the tier back to Pulse.
+5. **Chain weapon evolution:** the live kill combo gates weapon tier — tap balls gain speed and damage, x8 raises charged lock capacity to six, and x12 boosts charged damage. Tap fire always remains one straight, non-homing ball. Any hit or an expired chain drops the tier back to Pulse.
 6. **Recursive Core boss:** arrives at a seed-randomized distance (~1,600–2,000+ units) for an invulnerable approach, then a multi-phase fight (see §8).
 7. **Escalating identity, not escalating tempo:** progress reveals more rhythmic/visual layers and increases arrangement density, but the seed's BPM never changes — boosting and combat intensity affect the mix, not the clock.
 
@@ -96,11 +96,11 @@ Rather than reacting purely to instantaneous game state, the arrangement now fol
 
 ## 7. Gameplay Mechanics & Effects
 
-- **Unified weapon system:** a single input (hold/release) produces two archetypes — tap beam (≤120ms hold) or multi-target charge volley (longer hold, up to 4–6 locks depending on tier) — rather than separate weapon-select controls.
+- **Unified weapon system:** a single input (hold/release) produces two archetypes — one straight tap ball (≤120ms hold) or a multi-target homing volley (longer hold, up to 4–6 locks depending on tier) — rather than separate weapon-select controls.
 - **Enemy archetypes:** Drifters (strafe + fire), Chasers (telegraphed dive), Splitters (spread fire, fracture into two Chasers on death) — each with a distinct silhouette (flattened saucer, layered interceptor wedge, faceted cage with articulated arms) and its own accent color so types read apart at a glance.
-- **Chain weapon tiers:** combo-gated Pulse → Dual-Link → Six-Lock → Overdrive Fork progression, resetting on any hit or chain expiry, tying risk (staying alive/on-target) directly to weapon power.
-- **Logarithmic difficulty curve:** `game.difficulty = clamp(log1p(virtualPlayerZ/350) * scale)` drives enemy engagement distance, fire cooldowns, and projectile speed, with hard floors so late-game encounters stay readable instead of becoming unfair bullet spam.
-- **Feedback layers:** synthesized shot/impact/explosion/glitch cues paired with volumetric beam cores, impact flares, plasma-shell projectiles, velocity-stretched debris, two-axis shockwaves, lock-on orbit rings, and edge-only damage vignettes (center stays readable). Camera kick and FOV widen on boost/hits for kinesthetic feedback without obscuring the play field.
+- **Chain weapon tiers:** combo-gated Pulse → Accelerator → Six-Lock → Overdrive progression, resetting on any hit or chain expiry. Tiers increase the single tap ball's speed/damage and later expand or strengthen charged volleys.
+- **Logarithmic difficulty curve:** `game.difficulty = clamp(log1p(virtualPlayerZ/350) * scale)` drives formation density, archetype variety, fire cooldowns, and projectile speed. Regular enemies stay in a close engagement band while hard floors preserve readable telegraphs.
+- **Feedback layers:** synthesized shot/impact/explosion/glitch cues paired with plasma-shell projectiles, impact flares, velocity-stretched debris, two-axis shockwaves, lock-on orbit rings, and edge-only damage vignettes (center stays readable). Camera kick and FOV widen on boost/hits for kinesthetic feedback without obscuring the play field.
 - **HUD:** compact corner-bracket panels and segmented meters for Energy/Score/Chain/Boss health; the control legend fades after the opening seconds.
 
 ## 8. Leviathan (Recursive Core Boss) Implementation
