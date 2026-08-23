@@ -12,7 +12,9 @@
 // Distance (world units) over which the ambient intro gives way to a full beat.
 #define SONG_INTRO_END_DISTANCE 420.0f
 #define SONG_BUILD_END_DISTANCE 980.0f
-#define AUDIO_VALIDATION_HASH UINT64_C(0x10a55ade466a8266)
+#define MUSIC_BUS_GAIN 1.42f
+#define SFX_BUS_GAIN 0.22f
+#define AUDIO_VALIDATION_HASH UINT64_C(0x1b14333d7ef20f81)
 
 _Static_assert(ATOMIC_INT_LOCK_FREE == 2,
                "The audio callback requires lock-free atomic integers");
@@ -665,8 +667,8 @@ static void RenderAudioFrames(SynthSystem *synth, short *output, unsigned int fr
                reverbRight * reverbWet;
         float musicLeft = kick * (0.26f + bossIntensity * 0.015f) + musicBedLeft * 1.12f;
         float musicRight = kick * (0.26f + bossIntensity * 0.015f) + musicBedRight * 1.12f;
-        float left = musicLeft * 1.58f + sfx * 0.18f;
-        float right = musicRight * 1.58f + sfx * 0.18f;
+        float left = musicLeft * MUSIC_BUS_GAIN + sfx * SFX_BUS_GAIN;
+        float right = musicRight * MUSIC_BUS_GAIN + sfx * SFX_BUS_GAIN;
 
         if (synth->glitchAmount > 0.08f) {
             float levels = 32.0f - synth->glitchAmount * 20.0f;
