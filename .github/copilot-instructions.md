@@ -1,49 +1,49 @@
 # Copilot Cloud Agent Onboarding
 
-Trust this file first. Only search the repository when information here is missing or proven incorrect.
+Trust this file first. Only search the repository when information here is missing or contradicted by the current project state.
 
 ## Repository Summary
 
-- `RECURSION_94` is a small C11 + Raylib 6 procedural rail-shooter with hand-written GLSL and real-time synthesized audio.
-- No external art/audio assets are used at runtime; shaders are loaded from `shaders/`.
-- Repo footprint is small (about 21 files excluding `.git` internals and generated binaries).
-- Tech: C11 (`main.c`, `src/*.c`, `src/*.h`), GLSL 330 (`shaders/*.vs`, `shaders/*.fs`), Bash (`build.sh`, `build_windows.sh`).
+- `RECURSION_94` is a small procedural rail-shooter written in C11 with Raylib 6.
+- The game generates its environment, shaders, visuals, and synth audio at runtime instead of relying on external art or sound packs.
+- The project is intentionally compact: a small set of C modules under `src/`, a handful of shader programs in `shaders/`, and a couple of build scripts in the repo root.
+- Core tech: C11 (`main.c`, `src/*.c`, `src/*.h`), GLSL (`shaders/*.vs`, `shaders/*.fs`), Bash (`build.sh`, `build_windows.sh`).
 
 ## Validated Toolchain And Preconditions
 
-Validated on Linux host with:
+Validated on a Linux host with:
 
 - `gcc 11.4.0`
 - `upx 3.96`
 - Raylib static library at `/usr/local/lib/libraylib.a`
 
-Required preconditions for Linux build:
+Required preconditions for Linux builds:
 
 1. `gcc` must be installed.
-2. `/usr/local/lib/libraylib.a` must exist (script hardcodes this path).
-3. Link-time system libs must be available (`-lGL -lrt -lX11 -lXrandr -lXi -lXcursor -lXinerama -lasound -lm -ldl -lpthread`).
-4. `upx` is optional for build success, but strongly recommended for contest-size output.
+2. `/usr/local/lib/libraylib.a` must exist; the Linux build script hardcodes this path.
+3. Required link-time systems libraries must be available: `-lGL -lrt -lX11 -lXrandr -lXi -lXcursor -lXinerama -lasound -lm -ldl -lpthread`.
+4. `upx` is optional for build success, but is used automatically when present.
 
-Required preconditions for actually running gameplay on Linux:
+Required preconditions for actually running gameplay:
 
-1. An X11 display must be available (`DISPLAY` set, GLFW can open it).
-2. In headless environments, runtime fails quickly with GLFW/X11 errors.
+1. An X11 display must be available (`DISPLAY` set and GL/GLFW able to open it).
+2. In headless CI or remote agents, a quick X11 failure is expected and does not indicate a gameplay regression.
 
 Windows cross-build preconditions:
 
 1. MinGW cross-compiler (`x86_64-w64-mingw32-gcc`) must be installed.
-2. Windows Raylib static lib must exist at `$HOME/raylib-win/src/libraylib.a` or `RAYLIB_WIN_SOURCE/libraylib.a`.
+2. The Windows Raylib static lib must exist at `$HOME/raylib-win/src/libraylib.a` or `RAYLIB_WIN_SOURCE/libraylib.a`.
 3. Optional `UPX_BIN` or `upx` in `PATH` for compression.
 
-## Build, Validate, Run, Test, Lint
+## Build, Validate, Run, And Check Flow
 
-There is no separate test framework and no lint script. Validation is done via a deterministic generator check.
+This repository does not include a dedicated `Makefile`, `CMakeLists.txt`, or lint/test framework. Validation is done through the build script and deterministic runtime checks.
 
-Always run commands from repository root.
+Always run commands from the repository root.
 
 ### Bootstrap
 
-1. Verify prerequisites:
+1. Check the compiler and library:
    - `command -v gcc`
    - `ls /usr/local/lib/libraylib.a`
    - `command -v upx` (optional but recommended)
@@ -59,95 +59,108 @@ Always run commands from repository root.
 2. Expected result:
    - Builds `bin/recursion94`
    - Compresses with UPX when present
-   - Copies artifact to `recursion_94`
-   - Prints final size
-3. Observed timing: about 14.5s on this machine.
+   - Copies the artifact to `recursion_94`
+   - Prints the final binary size
+3. Observed timing on the validated host: about 14.5s.
 
-### Validation/Test (Deterministic Generator Audit)
+### Deterministic Validation
 
-1. Run: `VALIDATE_GENERATOR=1 ./build.sh`
-2. Expected output includes:
-   - `INFO: GENERATOR: zones=2048 repeats=0 landmark-spacing=0 peak=645 dropped=0`
-3. Observed timing: about 3.9s.
-4. Exit code should be 0.
+Use these checks when validating gameplay or generator logic:
+
+1. `VALIDATE_GENERATOR=1 ./build.sh`
+   - Expected output includes a generator report such as `INFO: GENERATOR: zones=2048 repeats=0 landmark-spacing=0 peak=645 dropped=0`
+   - Exit code should be 0.
+2. `VALIDATE_AUDIO=1 ./build.sh`
+   - Runs an audio-only validation harness that checks deterministic PCM output.
+3. `PROFILE_AUDIO=1 ./build.sh && ./bin/recursion94 --seed 94`
+   - Enables the audio callback profiler for a playable build and shows callback-time statistics.
 
 ### Important Order Constraint
 
-`VALIDATE_GENERATOR=1 ./build.sh` recompiles `bin/recursion94` with `RECURSION_VALIDATE_GENERATOR`, so that binary only runs validation and exits.
+`VALIDATE_GENERATOR=1 ./build.sh` recompiles the binary with `RECURSION_VALIDATE_GENERATOR`, so the executable exits after validation instead of launching the game.
 
-Always rebuild normal mode after validation before trying gameplay:
+Always restore the playable build before gameplay:
 
 1. `VALIDATE_GENERATOR=1 ./build.sh`
 2. `./build.sh`
 3. Then run the game.
 
-Also note: validation mode exits before `cp`, so root `recursion_94` can remain stale from a previous build while `bin/recursion94` changed.
+The validation build exits before the final `cp`, so the root `recursion_94` binary may remain stale until a normal build is run again.
 
 ### Run (Linux)
 
-1. Standard run: `./bin/recursion94`
+1. Normal run: `./bin/recursion94`
 2. Deterministic seed run: `./bin/recursion94 --seed 94`
 3. Boss debug start: `./bin/recursion94 --boss 94`
+4. Audio validation-only run: `VALIDATE_AUDIO=1 ./build.sh`
 
-Headless CI/agent environments without X11 will fail quickly (observed ~0.15s) with:
+Headless CI and agent environments without X11 will fail quickly with a message like:
 
 - `GLFW: X11: Failed to open display :0`
 
-This is expected infrastructure behavior, not a gameplay regression.
+This is expected infrastructure behavior and not a gameplay regression.
 
 ### Windows Cross-Build
 
-1. The script file is currently not executable; run it via:
-   - `bash ./build_windows.sh`
-2. If prerequisites are missing, expected failure is explicit, e.g.:
+1. Run the script as: `bash ./build_windows.sh`
+2. If prerequisites are missing, the expected failure is explicit, e.g.:
    - `Missing Windows compiler: x86_64-w64-mingw32-gcc`
+3. This build expects a Raylib static library at `$HOME/raylib-win/src/libraylib.a` unless `RAYLIB_WIN_SOURCE` is overridden.
 
 ## Architecture And File Map
 
-- `main.c`: app loop, seed selector, subsystem init, CLI shortcuts (`--seed`, `--boss`), validation-mode early exit.
-- `src/environment.c` + `src/environment.h`: deterministic environment generation/rendering and `ValidateEnvironmentGenerator`.
-- `src/gameplay.c` + `src/gameplay.h`: combat/gameplay state; fixed-size pools (`MAX_ENEMIES`, projectile/particle caps).
-- `src/audio_synth.c` + `src/audio_synth.h`: realtime procedural music/SFX via Raylib audio callback.
-- `src/demoscene.c` + `src/demoscene.h`: seeded backdrop/overlay/seed selector visuals.
-- `shaders/`: `craft`, `floor`, `tower`, `post` shader stages loaded via relative paths.
+- `main.c`: game loop, seed selection, subsystem initialization, CLI shortcuts (`--seed`, `--boss`), and validation-mode early exit.
+- `src/environment.c` + `src/environment.h`: deterministic environment generation and `ValidateEnvironmentGenerator`.
+- `src/gameplay.c` + `src/gameplay.h`: combat and runtime game state; fixed-size pools for enemies, projectiles, and particles.
+- `src/audio_synth.c` + `src/audio_synth.h`: procedural music and SFX generated in the Raylib audio callback.
+- `src/demoscene.c` + `src/demoscene.h`: seed selector visuals and runtime background/theme overlays.
+- `audio_validation.c`: standalone deterministic audio validation harness for the synth pipeline.
 
-## CI/Check Pipeline Reality
+### Shader Files
 
-- No `.github/workflows` were found.
-- No `README.md` / `CONTRIBUTING.md` were found.
-- No dedicated lint/test scripts or project files (`Makefile`, `CMakeLists.txt`, etc.) were found.
+The current shader set is:
 
-Practical pre-PR validation sequence for agents:
+- `shaders/backdrop.fs`
+- `shaders/craft.vs`
+- `shaders/craft.fs`
+- `shaders/terrain.vs`
+- `shaders/terrain.fs`
+- `shaders/tower.vs`
+- `shaders/tower.fs`
+- `shaders/post.fs`
 
-1. `./build.sh`
-2. `VALIDATE_GENERATOR=1 ./build.sh`
-3. `./build.sh` (restore gameplay binary)
-4. If GUI available: quick launch `./bin/recursion94 --seed 94`
+These are loaded via relative paths from the project root, so run the binary from the repository root or keep the relative layout intact when distributing builds.
 
-## Root And Next-Level Layout
+## Repo Layout
 
-Repository root files:
+Root files:
 
 - `build.sh`
 - `build_windows.sh`
+- `README.md`
 - `main.c`
-- `RECURSION_94.md`
-- `recursion_94` (generated binary copy)
+- `audio_validation.c`
+- `recursion_94` (generated Linux binary copy)
+- `recursion_94.md` (project notes)
 
 Top-level directories:
 
-- `bin/` (`recursion94` generated binary)
-- `src/` (all C source/header modules)
-- `shaders/` (GLSL shader programs)
+- `bin/` (generated binaries)
+- `src/` (game modules)
+- `shaders/` (GLSL programs)
 - `.git/` (git metadata)
 
-`src/` files: `audio_synth.c/.h`, `demoscene.c/.h`, `environment.c/.h`, `gameplay.c/.h`.
+`src/` folders and files:
 
-`shaders/` files: `craft.fs/.vs`, `floor.fs/.vs`, `post.fs`, `tower.fs/.vs`.
+- `audio_synth.c/.h`
+- `demoscene.c/.h`
+- `environment.c/.h`
+- `gameplay.c/.h`
 
 ## Agent Behavior Expectations
 
-- Prefer the command sequences above over rediscovery.
-- Treat X11/display failures in headless environments as expected infra limitations.
-- Always rerun normal `./build.sh` after validation mode before run checks.
-- Only perform extra repository search when these instructions are incomplete or contradicted by current repo state.
+- Prefer the validated command sequence above over ad hoc discovery.
+- Treat X11/display failures in headless environments as expected infrastructure limitations.
+- Always rerun the regular `./build.sh` after validation mode before trying gameplay or launch checks.
+- Do not assume a separate test suite exists; trust deterministic builds and runtime validation harnesses instead.
+- Only perform extra repository search when the file is missing or contradicts the current project state.
