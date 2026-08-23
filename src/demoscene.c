@@ -224,3 +224,66 @@ void DrawDemosceneOverlay(const DemosceneSystem *demo, float time, float intensi
     DrawText(TextFormat("SEED %08X", (unsigned int)demo->seed), screenWidth - 142, screenHeight - 24,
              12, (Color){ demo->primary.r, demo->primary.g, demo->primary.b, 145 });
 }
+
+void DrawCoreTransition(const DemosceneSystem *oldDemo, const DemosceneSystem *nextDemo,
+                        float time, float progress, Vector2 focus,
+                        int screenWidth, int screenHeight) {
+    if (progress < 0.0f) progress = 0.0f;
+    if (progress > 1.0f) progress = 1.0f;
+    float collapse = fminf(progress / 0.58f, 1.0f);
+    float reveal = fmaxf(0.0f, (progress - 0.48f) / 0.52f);
+    reveal = reveal * reveal * (3.0f - 2.0f * reveal);
+    float blackout = sinf(progress * 3.14159265f);
+    Color primary = MixColor(oldDemo->primary, nextDemo->primary, reveal, 255);
+    Color secondary = MixColor(oldDemo->secondary, nextDemo->secondary, reveal, 255);
+    Color hot = MixColor(oldDemo->hot, nextDemo->hot, reveal, 255);
+
+    DrawRectangle(0, 0, screenWidth, screenHeight,
+                  (Color){ 0, 1, 6, (unsigned char)(blackout * 222.0f) });
+
+    for (int shard = 0; shard < 42; shard++) {
+        uint32_t hash = DemoHash(oldDemo->seed ^ nextDemo->seed ^
+                                 (uint32_t)shard * 0x9e3779b9u);
+        float angle = DemoHash01(hash) * 6.2831853f + time * (0.08f + (float)(shard & 3) * 0.025f);
+        float outer = 90.0f + DemoHash01(hash ^ 0x51u) * (float)screenWidth * 0.56f;
+        float radius = outer * fabsf(1.0f - collapse * 1.82f);
+        if (reveal > 0.0f) radius += reveal * reveal * outer * 0.72f;
+        float length = 18.0f + DemoHash01(hash ^ 0xa7u) * 150.0f;
+        float flatten = 0.58f;
+        Vector2 start = { focus.x + cosf(angle) * radius,
+                          focus.y + sinf(angle) * radius * flatten };
+        Vector2 end = { focus.x + cosf(angle) * (radius + length * (0.35f + blackout)),
+                        focus.y + sinf(angle) * (radius + length * (0.35f + blackout)) * flatten };
+        unsigned char alpha = (unsigned char)((0.35f + blackout * 0.65f) * 185.0f);
+        DrawLineEx(start, end, 1.0f + (float)(hash & 3u),
+                   MixColor(primary, secondary, DemoHash01(hash ^ 0x94u), alpha));
+    }
+
+    for (int ring = 0; ring < 9; ring++) {
+        float phase = fmodf(collapse * 2.1f + (float)ring / 9.0f, 1.0f);
+        float radius = 12.0f + (1.0f - phase) * (float)screenHeight * 0.48f;
+        unsigned char alpha = (unsigned char)((1.0f - phase) * blackout * 150.0f);
+        DrawEllipseLines((int)focus.x, (int)focus.y, radius, radius * 0.58f,
+                         (ring & 1) ? (Color){ secondary.r, secondary.g, secondary.b, alpha }
+                                    : (Color){ hot.r, hot.g, hot.b, alpha });
+    }
+
+    float flash = expf(-progress * 24.0f);
+    DrawCircleGradient(focus, 38.0f + flash * (float)screenHeight * 0.72f,
+                       (Color){ 245, 252, 255, (unsigned char)(flash * 245.0f) },
+                       (Color){ hot.r, hot.g, hot.b, 0 });
+
+    const char *status = progress < 0.48f ? "RECURSIVE CORE // COLLAPSING"
+                         : "NEXT RECURSION // COMPILING";
+    float statusEnvelope = progress < 0.48f ? 1.0f - progress / 0.48f : reveal;
+    unsigned char statusAlpha = (unsigned char)(fminf(statusEnvelope * 2.2f, 1.0f) * 235.0f);
+    int statusWidth = MeasureText(status, 20);
+    DrawText(status, screenWidth / 2 - statusWidth / 2, screenHeight / 2 + 112,
+             20, (Color){ primary.r, primary.g, primary.b, statusAlpha });
+    if (progress >= 0.48f) {
+        const char *seedText = TextFormat("SEED %08X", (unsigned int)nextDemo->seed);
+        DrawText(seedText, screenWidth / 2 - MeasureText(seedText, 15) / 2,
+                 screenHeight / 2 + 142, 15,
+                 (Color){ hot.r, hot.g, hot.b, (unsigned char)(reveal * 210.0f) });
+    }
+}

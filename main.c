@@ -208,6 +208,12 @@ int main(int argc, char **argv) {
     float virtualPlayerZ = bossTestStart ? game.boss.nextSpawnDistance + 1.0f : 0.0f;
     float baseSpeed = 20.0f;
     float glitchAmount = 0.0f;
+    float coreTransitionTimer = 0.0f;
+    uint32_t pendingSeed = activeSeed;
+    bool seedTransitionPending = false;
+    bool seedTransitionCommitted = false;
+    DemosceneSystem transitionFromDemo = { 0 };
+    DemosceneSystem transitionToDemo = { 0 };
     bool debugOverlay = false;
 
     SetTargetFPS(60);
@@ -255,11 +261,15 @@ int main(int argc, char **argv) {
             SetPostProcessTheme(&post, activeSeed, demo.primary, demo.secondary);
             virtualPlayerZ = 0.0f;
             glitchAmount = 0.0f;
+            coreTransitionTimer = 0.0f;
+            seedTransitionPending = false;
+            seedTransitionCommitted = false;
         }
         if (IsKeyPressed(KEY_F3)) debugOverlay = !debugOverlay;
 
         bool boosting = IsKeyDown(KEY_SPACE) && CanGameplayBoost(&game);
-        float speedMultiplier = game.gameOver ? 0.0f : (boosting ? 2.2f : 1.0f);
+        float speedMultiplier = game.gameOver || seedTransitionPending
+            ? 0.0f : (boosting ? 2.2f : 1.0f);
         float currentSpeed = baseSpeed * speedMultiplier;
         virtualPlayerZ += currentSpeed * dt;
 
@@ -285,13 +295,30 @@ int main(int argc, char **argv) {
             TriggerSynthSFX(&synth, SFX_BOSS_RISER);
         }
         if (gameplayEvents.bossDefeated) {
-            activeSeed = DeriveLoopSeed(selectedSeed, game.boss.encounterIndex);
-            AdvanceGameplayLoop(&game, activeSeed, virtualPlayerZ);
-            ReseedEnvironment(&env, activeSeed);
-            ReseedAudioSynth(&synth, activeSeed);
-            InitDemoscene(&demo, activeSeed);
-            SetPostProcessTheme(&post, activeSeed, demo.primary, demo.secondary);
-            TriggerSynthSFX(&synth, SFX_POWER_UP);
+            pendingSeed = DeriveLoopSeed(selectedSeed, game.boss.encounterIndex);
+            transitionFromDemo = demo;
+            InitDemoscene(&transitionToDemo, pendingSeed);
+            coreTransitionTimer = CORE_TRANSITION_DURATION;
+            seedTransitionPending = true;
+            seedTransitionCommitted = false;
+            TriggerSynthSFX(&synth, SFX_CORE_COLLAPSE);
+        }
+        if (seedTransitionPending) {
+            coreTransitionTimer = fmaxf(0.0f, coreTransitionTimer - dt);
+            if (!seedTransitionCommitted && coreTransitionTimer <= 1.82f) {
+                activeSeed = pendingSeed;
+                AdvanceGameplayLoop(&game, activeSeed, virtualPlayerZ);
+                ReseedEnvironment(&env, activeSeed);
+                ReseedAudioSynth(&synth, activeSeed);
+                demo = transitionToDemo;
+                SetPostProcessTheme(&post, activeSeed, demo.primary, demo.secondary);
+                TriggerSynthSFX(&synth, SFX_POWER_UP);
+                seedTransitionCommitted = true;
+            }
+            if (coreTransitionTimer <= 0.0f) {
+                seedTransitionPending = false;
+                seedTransitionCommitted = false;
+            }
         }
 
         // Decay glitch state
@@ -317,6 +344,13 @@ int main(int argc, char **argv) {
             }
         }
         musicIntensity *= (1.0f - preBossHush * 0.5f);
+        if (seedTransitionPending) {
+            float transitionProgress = 1.0f - coreTransitionTimer / CORE_TRANSITION_DURATION;
+            float transitionHush = sinf(fminf(fmaxf(transitionProgress, 0.0f), 1.0f) *
+                                             3.14159265f);
+            musicIntensity *= 1.0f - transitionHush * 0.88f;
+            preBossHush = fmaxf(preBossHush, transitionHush);
+        }
 
         if (game.gameOver) musicIntensity = 0.10f;
         musicIntensity = fmaxf(0.0f, fminf(musicIntensity, 1.0f));
@@ -368,6 +402,12 @@ int main(int argc, char **argv) {
             DrawPostProcess(&post, game.runTime, musicIntensity, beatPulse, bossTransition,
                             screenWidth, screenHeight);
             DrawGameplayHUD(&game, camera, screenWidth, screenHeight);
+            if (seedTransitionPending) {
+                float transitionProgress = 1.0f - coreTransitionTimer / CORE_TRANSITION_DURATION;
+                Vector2 coreScreen = GetWorldToScreen(game.boss.position, camera);
+                DrawCoreTransition(&transitionFromDemo, &transitionToDemo, game.runTime,
+                                   transitionProgress, coreScreen, screenWidth, screenHeight);
+            }
             if (debugOverlay) {
                 DrawFPS(10, 82);
                 DrawText(TextFormat("Z %.1f  SPEED %.1fx  BPM %.1f  INT %.2f  GATE %.2f",

@@ -415,6 +415,7 @@ static void RegisterKill(GameplaySystem *game, Enemy *enemy, bool charged,
         game->boss.active = false;
         game->boss.phase = BOSS_DORMANT;
         game->boss.defeatFlash = 1.0f;
+        game->loopTransitionTimer = CORE_TRANSITION_DURATION;
         game->boss.encounterIndex++;
         game->player.energy = 100.0f;
         game->score += 10000 * game->boss.encounterIndex;
@@ -818,11 +819,11 @@ void AdvanceGameplayLoop(GameplaySystem *game, uint32_t runSeed, float virtualPl
     game->boss.nextSpawnDistance = virtualPlayerZ + 1900.0f +
         Hash01(runSeed ^ (uint32_t)game->boss.encounterIndex * 0x51c3u) * 400.0f;
     game->spawnTimer = 0.45f;
-    game->loopTransitionTimer = 3.0f;
 }
 
 bool CanGameplayBoost(const GameplaySystem *game) {
-    return !game->gameOver && game->player.energy > 1.0f;
+    return !game->gameOver && game->loopTransitionTimer <= 0.0f &&
+           game->player.energy > 1.0f;
 }
 
 GameplayEvents UpdateGameplay(GameplaySystem *game, float dt, float virtualPlayerZ,
@@ -842,6 +843,7 @@ GameplayEvents UpdateGameplay(GameplaySystem *game, float dt, float virtualPlaye
         }
     }
     if (game->gameOver) return events;
+    if (game->loopTransitionTimer > 0.0f) return events;
 
     UpdatePlayer(game, dt, boosting, &events);
     game->difficulty = ClampFloat(log1pf(fmaxf(virtualPlayerZ, 0.0f) / 350.0f) *
@@ -881,6 +883,15 @@ void UpdateGameplayCamera(const GameplaySystem *game, Camera3D *camera, float dt
                          game->boss.position.x * arrivalPull * 0.42f;
         desiredTargetY = desiredTargetY * (1.0f - arrivalPull * 0.34f) +
                          game->boss.position.y * arrivalPull * 0.34f;
+    }
+    if (game->loopTransitionTimer > 0.0f) {
+        float progress = 1.0f - game->loopTransitionTimer / CORE_TRANSITION_DURATION;
+        float collapsePull = sinf(ClampFloat(progress, 0.0f, 1.0f) * 3.14159265f);
+        arrivalPull = fmaxf(arrivalPull, collapsePull * 0.78f);
+        desiredTargetX = desiredTargetX * (1.0f - collapsePull * 0.72f) +
+                         game->boss.position.x * collapsePull * 0.72f;
+        desiredTargetY = desiredTargetY * (1.0f - collapsePull * 0.64f) +
+                         game->boss.position.y * collapsePull * 0.64f;
     }
     camera->position.x = Approach(camera->position.x, desiredPositionX, 6.0f, dt);
     camera->position.y = Approach(camera->position.y, desiredPositionY, 6.0f, dt);
@@ -1432,6 +1443,38 @@ void DrawGameplay3D(const GameplaySystem *game, Shader craftShader, int objectCl
         SetShaderValue(craftShader, objectClassLoc, &objectClass, SHADER_UNIFORM_INT);
     }
     DrawPlayerShip(game);
+    if (game->loopTransitionTimer > 0.0f) {
+        float progress = 1.0f - game->loopTransitionTimer / CORE_TRANSITION_DURATION;
+        float collapse = ClampFloat(progress / 0.58f, 0.0f, 1.0f);
+        float dissipate = 1.0f - ClampFloat((progress - 0.52f) / 0.48f, 0.0f, 1.0f);
+        Vector3 core = game->boss.position;
+        for (int ring = 0; ring < 11; ring++) {
+            float phase = fmodf(collapse * 2.4f + (float)ring / 11.0f, 1.0f);
+            float radius = (1.0f - phase) * (28.0f + (float)(ring & 2) * 3.0f) + 0.8f;
+            unsigned char alpha = (unsigned char)(dissipate * (1.0f - phase) * 190.0f);
+            Color color = (ring & 1)
+                ? (Color){ game->secondaryColor.r, game->secondaryColor.g,
+                           game->secondaryColor.b, alpha }
+                : (Color){ game->hotColor.r, game->hotColor.g, game->hotColor.b, alpha };
+            DrawCircle3D((Vector3){ core.x, core.y, core.z + (float)ring * 0.16f },
+                         radius, (Vector3){ 1.0f, 0.0f, 0.0f },
+                         game->runTime * (45.0f + (float)ring * 7.0f), color);
+        }
+        for (int spoke = 0; spoke < 24; spoke++) {
+            float angle = (float)spoke * 0.2617994f + game->runTime * 0.42f;
+            float radius = (1.0f - collapse) * 18.0f + 1.2f + (float)(spoke % 3) * 1.6f;
+            Vector3 fragment = { core.x + cosf(angle) * radius,
+                                 core.y + sinf(angle) * radius * 0.62f,
+                                 core.z + sinf(angle * 3.0f) * radius * 0.24f };
+            DrawLine3D(fragment, core,
+                       (Color){ game->primaryColor.r, game->primaryColor.g,
+                                game->primaryColor.b,
+                                (unsigned char)(dissipate * 125.0f) });
+            DrawSphereEx(fragment, 0.12f + (float)(spoke % 4) * 0.05f,
+                         4, 6, (Color){ 235, 250, 255,
+                                       (unsigned char)(dissipate * 210.0f) });
+        }
+    }
     objectClass = 1;
     if (objectClassLoc >= 0) {
         SetShaderValue(craftShader, objectClassLoc, &objectClass, SHADER_UNIFORM_INT);
@@ -1585,17 +1628,6 @@ static void DrawSegmentMeter(int x, int y, int width, int height, float amount,
 }
 
 void DrawGameplayHUD(const GameplaySystem *game, Camera3D camera, int screenWidth, int screenHeight) {
-    if (game->loopTransitionTimer > 0.0f) {
-        float fade = ClampFloat(game->loopTransitionTimer, 0.0f, 1.0f);
-        const char *loopText = TextFormat("RECURSION %02d // SEED %u",
-                                          game->boss.encounterIndex + 1, game->runSeed);
-        int textWidth = MeasureText(loopText, 22);
-        DrawRectangle(screenWidth / 2 - textWidth / 2 - 18, 96,
-                      textWidth + 36, 42, (Color){ 2, 5, 14, (unsigned char)(190.0f * fade) });
-        DrawText(loopText, screenWidth / 2 - textWidth / 2, 106, 22,
-                 (Color){ game->primaryColor.r, game->primaryColor.g,
-                          game->primaryColor.b, (unsigned char)(255.0f * fade) });
-    }
     if (game->boss.active && game->boss.phase == BOSS_APPROACH) {
         float progress = ClampFloat(game->boss.phaseTime / 2.6f, 0.0f, 1.0f);
         float envelope = sinf(progress * 3.14159265f);

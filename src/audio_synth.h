@@ -24,7 +24,8 @@ typedef enum {
     SFX_GLITCH_HIT,
     SFX_EXPLOSION,
     SFX_POWER_UP,
-    SFX_BOSS_RISER
+    SFX_BOSS_RISER,
+    SFX_CORE_COLLAPSE
 } SFXType;
 
 typedef struct {
@@ -49,6 +50,16 @@ typedef struct {
     float cutoff;
     float resonance;
 } LadderFilter;
+
+enum {
+    BASS_STEP_SLIDE = 1u << 0,
+    BASS_STEP_ACCENT = 1u << 1
+};
+
+typedef struct {
+    signed char note;
+    unsigned char flags;
+} BassStep;
 
 typedef struct {
     SFXType type;
@@ -96,6 +107,8 @@ typedef struct {
     float targetBossIntensity;
     float bossIntensity;
     float glitchAmount;
+    float targetPreBossHush;
+    float preBossHush;
     float beatPulse;
     // Song-arrangement gate: 0 during the ambient intro, ramps to 1 through the
     // buildup, dips again for the pre-boss hush, and snaps back on the drop.
@@ -123,7 +136,9 @@ typedef struct {
     float rootFrequency;
     float bassFrequency;
     float bassTargetFrequency;
-    signed char bassPattern[16];
+    BassStep bassPattern[16];
+    float bassAccent;
+    bool bassSlide;
     LadderFilter bassFilter;
     float subPhase;
     float subEnv;
@@ -151,6 +166,8 @@ typedef struct {
     float hatTime;
     float openHatTime;
     float clapTime;
+    float hatVelocity;
+    float clapVelocity;
     float previousNoise;
     float hatMetalPhase[3];
 

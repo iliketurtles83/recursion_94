@@ -18,5 +18,8 @@ void DrawDemosceneBackdrop(const DemosceneSystem *demo, float time, float intens
                            int screenWidth, int screenHeight);
 void DrawDemosceneOverlay(const DemosceneSystem *demo, float time, float intensity,
                           float beatPulse, int screenWidth, int screenHeight);
+void DrawCoreTransition(const DemosceneSystem *oldDemo, const DemosceneSystem *nextDemo,
+                        float time, float progress, Vector2 focus,
+                        int screenWidth, int screenHeight);
 
 #endif // DEMOSCENE_H
