@@ -248,7 +248,7 @@ static void SpawnPlayerProjectile(GameplaySystem *game, Vector3 origin, Vector3 
     projectile->charged = charged;
 }
 
-static void SpawnBoss(GameplaySystem *game, float virtualPlayerZ, GameplayEvents *events) {
+static void SpawnBoss(GameplaySystem *game, double virtualPlayerZ, GameplayEvents *events) {
     BossState *boss = &game->boss;
     uint32_t encounterSeed = game->runSeed ^
         (uint32_t)(boss->encounterIndex + 1) * 0x9e3779b9u;
@@ -288,7 +288,7 @@ static void SpawnBoss(GameplaySystem *game, float virtualPlayerZ, GameplayEvents
     events->bossStarted = true;
 }
 
-static void UpdateBoss(GameplaySystem *game, float dt, float virtualPlayerZ,
+static void UpdateBoss(GameplaySystem *game, float dt, double virtualPlayerZ,
                        GameplayEvents *events) {
     BossState *boss = &game->boss;
     if (!boss->active) {
@@ -439,7 +439,17 @@ static void RegisterKill(GameplaySystem *game, Enemy *enemy, bool charged,
         game->weaponFlash = 1.0f;
         events->weaponTierAdvanced = true;
     }
-    game->score += 100 * game->combo * (deadType == ENEMY_SPLITTER ? 2 : 1);
+    int overdriveMultiplier = game->overdriveActive ? 2 : 1;
+    game->score += 100 * game->combo * (deadType == ENEMY_SPLITTER ? 2 : 1) *
+                   overdriveMultiplier;
+    if (!game->suppressLinkRewards) {
+        int linkReward = deadType == ENEMY_BOSS_CORE ? 10
+                       : deadType == ENEMY_BOSS_NODE ? 5
+                       : deadType == ENEMY_SPLITTER ? 2 : 1;
+        if (game->overdriveActive && deadType != ENEMY_BOSS_CORE) linkReward++;
+        game->chainLinks = game->chainLinks + linkReward > MAX_CHAIN_LINKS
+            ? MAX_CHAIN_LINKS : game->chainLinks + linkReward;
+    }
     game->player.energy = ClampFloat(game->player.energy + (charged ? 3.5f : 1.0f), 0.0f, 100.0f);
     game->cameraKick = fmaxf(game->cameraKick, deadType == ENEMY_SPLITTER ? 0.55f : 0.28f);
     game->killSerial++;
@@ -502,6 +512,47 @@ static void FireCharge(GameplaySystem *game, GameplayEvents *events) {
     }
     events->chargeShots++;
     ClearLocks(game);
+}
+
+static void FireLinkBeam(GameplaySystem *game, GameplayEvents *events) {
+    if (game->chainLinks < BEAM_LINK_COST) return;
+    game->chainLinks -= BEAM_LINK_COST;
+    game->beamTimer = 0.34f;
+    game->cameraKick = fmaxf(game->cameraKick, 0.85f);
+    game->suppressLinkRewards = true;
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        Enemy *enemy = &game->enemies[i];
+        if (!IsEnemyTargetable(game, enemy)) continue;
+        float dx = enemy->position.x - game->player.position.x;
+        float dy = enemy->position.y - game->player.position.y;
+        float radius = 1.1f + enemy->size.x * 0.35f;
+        if (LengthSquared2D(dx, dy) > radius * radius) continue;
+        float damage = enemy->type == ENEMY_BOSS_CORE ? 8.0f
+                     : enemy->type == ENEMY_BOSS_NODE ? 4.0f : 1000.0f;
+        DamageEnemy(game, enemy, damage, true, events);
+    }
+    game->suppressLinkRewards = false;
+    events->beamFired = true;
+}
+
+static void FireLinkBomb(GameplaySystem *game, GameplayEvents *events) {
+    if (game->chainLinks < BOMB_LINK_COST) return;
+    game->chainLinks -= BOMB_LINK_COST;
+    game->bombTimer = 0.72f;
+    game->cameraKick = fmaxf(game->cameraKick, 1.4f);
+    for (int i = 0; i < MAX_ENEMY_PROJECTILES; i++) {
+        game->projectiles[i].active = false;
+    }
+    game->suppressLinkRewards = true;
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        Enemy *enemy = &game->enemies[i];
+        if (!IsEnemyTargetable(game, enemy)) continue;
+        float damage = enemy->type == ENEMY_BOSS_CORE ? 12.0f
+                     : enemy->type == ENEMY_BOSS_NODE ? 7.0f : 1000.0f;
+        DamageEnemy(game, enemy, damage, true, events);
+    }
+    game->suppressLinkRewards = false;
+    events->bombFired = true;
 }
 
 static void UpdateLocks(GameplaySystem *game) {
@@ -575,7 +626,10 @@ static void UpdatePlayer(GameplaySystem *game, float dt, bool boosting,
     game->player.position.y = ClampFloat(game->player.position.y, PLAYER_MIN_Y, PLAYER_MAX_Y);
     game->player.bank = Approach(game->player.bank, -inputX * 0.7f, 8.0f, dt);
 
-    if (boosting) game->player.energy = fmaxf(0.0f, game->player.energy - 4.5f * dt);
+    if (IsKeyPressed(KEY_K)) FireLinkBeam(game, events);
+    if (IsKeyPressed(KEY_L)) FireLinkBomb(game, events);
+
+    if (boosting) game->player.energy = fmaxf(0.0f, game->player.energy - 10.0f * dt);
     else game->player.energy = fminf(100.0f, game->player.energy + 1.6f * dt);
 
     bool fireHeld = IsKeyDown(KEY_J) || IsMouseButtonDown(MOUSE_BUTTON_LEFT);
@@ -595,7 +649,7 @@ static void SetEnemyPhase(Enemy *enemy, EnemyPhase phase) {
     enemy->phaseTime = 0.0f;
 }
 
-static void UpdateEnemy(GameplaySystem *game, Enemy *enemy, float dt, float worldSpeed,
+static void UpdateEnemy(GameplaySystem *game, Enemy *enemy, float dt, bool overdrive,
                         GameplayEvents *events) {
     if (enemy->type == ENEMY_BOSS_NODE || enemy->type == ENEMY_BOSS_CORE) return;
     enemy->age += dt;
@@ -608,7 +662,7 @@ static void UpdateEnemy(GameplaySystem *game, Enemy *enemy, float dt, float worl
 
     switch (enemy->phase) {
         case ENEMY_APPROACH:
-            enemy->position.z += (12.0f + worldSpeed * 0.22f) * dt;
+            enemy->position.z += (13.0f + game->difficulty * 3.0f) * dt;
             enemy->position.x += sinf(enemy->age * 1.8f + identity) * dt * 1.1f;
             if (enemy->position.z >= holdZ) {
                 enemy->position.z = holdZ;
@@ -643,18 +697,24 @@ static void UpdateEnemy(GameplaySystem *game, Enemy *enemy, float dt, float worl
             float delay = enemy->type == ENEMY_CHASER
                 ? 0.62f - game->difficulty * 0.12f
                 : 0.90f - game->difficulty * 0.24f;
+            if (overdrive) delay -= 0.10f;
             if (enemy->phaseTime >= delay) {
                 if (enemy->type == ENEMY_CHASER) {
-                    float travel = fmaxf(0.2f, -enemy->position.z / (32.0f + game->difficulty * 10.0f));
+                    float attackSpeed = 32.0f + game->difficulty * 10.0f +
+                                        (overdrive ? 6.0f : 0.0f);
+                    float travel = fmaxf(0.2f, -enemy->position.z / attackSpeed);
                     enemy->velocity.x = (game->player.position.x - enemy->position.x) / travel;
                     enemy->velocity.y = (game->player.position.y - enemy->position.y) / travel;
-                    enemy->velocity.z = 32.0f + game->difficulty * 10.0f;
+                    enemy->velocity.z = attackSpeed;
                 } else if (enemy->type == ENEMY_SPLITTER) {
-                    SpawnProjectile(game, enemy->position, 21.0f + game->difficulty * 6.0f, -1.6f);
-                    SpawnProjectile(game, enemy->position, 23.0f + game->difficulty * 6.0f, 0.0f);
-                    SpawnProjectile(game, enemy->position, 21.0f + game->difficulty * 6.0f, 1.6f);
+                    float pressure = overdrive ? 4.0f : 0.0f;
+                    SpawnProjectile(game, enemy->position, 21.0f + game->difficulty * 6.0f + pressure, -1.6f);
+                    SpawnProjectile(game, enemy->position, 23.0f + game->difficulty * 6.0f + pressure, 0.0f);
+                    SpawnProjectile(game, enemy->position, 21.0f + game->difficulty * 6.0f + pressure, 1.6f);
                 } else {
-                    SpawnProjectile(game, enemy->position, 22.0f + game->difficulty * 7.0f, 0.0f);
+                    SpawnProjectile(game, enemy->position,
+                                    22.0f + game->difficulty * 7.0f +
+                                    (overdrive ? 4.0f : 0.0f), 0.0f);
                 }
                 SetEnemyPhase(enemy, ENEMY_ATTACK);
             }
@@ -797,6 +857,8 @@ static void UpdateEffects(GameplaySystem *game, float dt) {
     game->hitFlash = fmaxf(0.0f, game->hitFlash - dt * 2.7f);
     game->cameraKick = fmaxf(0.0f, game->cameraKick - dt * 3.5f);
     game->weaponFlash = fmaxf(0.0f, game->weaponFlash - dt * 1.25f);
+    game->beamTimer = fmaxf(0.0f, game->beamTimer - dt);
+    game->bombTimer = fmaxf(0.0f, game->bombTimer - dt);
     game->loopTransitionTimer = fmaxf(0.0f, game->loopTransitionTimer - dt);
     game->boss.introFlash = fmaxf(0.0f, game->boss.introFlash - dt * 0.48f);
     game->boss.defeatFlash = fmaxf(0.0f, game->boss.defeatFlash - dt * 0.42f);
@@ -814,7 +876,7 @@ void InitGameplay(GameplaySystem *game, uint32_t runSeed) {
     game->boss.nextSpawnDistance = 1600.0f + Hash01(runSeed ^ 0xb05594u) * 400.0f;
 }
 
-void AdvanceGameplayLoop(GameplaySystem *game, uint32_t runSeed, float virtualPlayerZ) {
+void AdvanceGameplayLoop(GameplaySystem *game, uint32_t runSeed, double virtualPlayerZ) {
     game->runSeed = runSeed;
     SetGameplayPalette(game);
 
@@ -830,13 +892,132 @@ void AdvanceGameplayLoop(GameplaySystem *game, uint32_t runSeed, float virtualPl
     game->spawnTimer = 0.45f;
 }
 
-bool CanGameplayBoost(const GameplaySystem *game) {
-    return !game->gameOver && game->loopTransitionTimer <= 0.0f &&
-           game->player.energy > 1.0f;
+bool ValidateGameplaySpecials(void) {
+    GameplaySystem game;
+    GameplayEvents events = { 0 };
+    InitGameplay(&game, 94u);
+
+    Enemy *target = &game.enemies[0];
+    target->active = true;
+    target->type = ENEMY_DRIFTER;
+    target->health = 1.0f;
+    target->size = (Vector3){ 1.0f, 1.0f, 1.0f };
+    target->position = (Vector3){ game.player.position.x, game.player.position.y, -24.0f };
+
+    game.chainLinks = BEAM_LINK_COST - 1;
+    FireLinkBeam(&game, &events);
+    bool insufficientFunds = game.chainLinks == BEAM_LINK_COST - 1 &&
+                             target->active && !events.beamFired;
+
+    game.chainLinks = BEAM_LINK_COST;
+    FireLinkBeam(&game, &events);
+    bool beamValid = game.chainLinks == 0 && !target->active && events.beamFired &&
+                     events.enemiesDestroyed == 1;
+
+    game.chainLinks = 73;
+    AdvanceGameplayLoop(&game, 1337u, 2000.0);
+    bool loopPersistence = game.chainLinks == 73;
+
+    game.combo = 8;
+    game.weaponTier = 2;
+    HitPlayer(&game, game.player.position, &events);
+    bool hitPersistence = game.chainLinks == 73 && game.combo == 0 && game.weaponTier == 0;
+
+    for (int i = 0; i < 2; i++) {
+        Enemy *enemy = &game.enemies[i];
+        enemy->active = true;
+        enemy->type = ENEMY_DRIFTER;
+        enemy->health = 1.0f;
+        enemy->size = (Vector3){ 1.0f, 1.0f, 1.0f };
+        enemy->position = (Vector3){ (float)i * 4.0f, 2.0f, -30.0f };
+    }
+    game.projectiles[0].active = true;
+    game.chainLinks = BOMB_LINK_COST;
+    events = (GameplayEvents){ 0 };
+    FireLinkBomb(&game, &events);
+    bool bombValid = game.chainLinks == 0 && !game.enemies[0].active &&
+                     !game.enemies[1].active && !game.projectiles[0].active &&
+                     events.bombFired && events.enemiesDestroyed == 2;
+
+    Enemy *core = &game.enemies[0];
+    core->active = true;
+    core->type = ENEMY_BOSS_CORE;
+    core->health = 30.0f;
+    core->size = (Vector3){ 7.0f, 7.0f, 7.0f };
+    game.boss.active = true;
+    game.boss.phase = BOSS_EXPOSED;
+    game.boss.shieldNodes = 0;
+    game.boss.coreSlot = 0;
+    game.boss.maxHealth = 34.0f;
+    game.chainLinks = BOMB_LINK_COST;
+    events = (GameplayEvents){ 0 };
+    FireLinkBomb(&game, &events);
+    bool bossCapValid = fabsf(core->health - 18.0f) < 0.001f && core->active &&
+                        game.chainLinks == 0;
+
+    core->active = false;
+    Enemy *rewardTarget = &game.enemies[1];
+    rewardTarget->active = true;
+    rewardTarget->type = ENEMY_DRIFTER;
+    rewardTarget->health = 1.0f;
+    rewardTarget->position = (Vector3){ 0.0f, 2.0f, -20.0f };
+    game.chainLinks = MAX_CHAIN_LINKS - 1;
+    events = (GameplayEvents){ 0 };
+    DamageEnemy(&game, rewardTarget, 1.0f, false, &events);
+    bool capValid = game.chainLinks == MAX_CHAIN_LINKS;
+
+    GameplaySystem speedGame;
+    InitGameplay(&speedGame, 94u);
+    float startSpeed = GetGameplayTravelSpeed(&speedGame, 0.0, false);
+    float lateSpeed = GetGameplayTravelSpeed(&speedGame, 1800.0, false);
+    float boostSpeed = GetGameplayTravelSpeed(&speedGame, 1800.0, true);
+    speedGame.boss.active = true;
+    speedGame.boss.phase = BOSS_APPROACH;
+    speedGame.boss.phaseTime = 0.75f;
+    float approachSpeed = GetGameplayTravelSpeed(&speedGame, 1800.0, false);
+    speedGame.boss.phase = BOSS_SHIELDED;
+    float combatSpeed = GetGameplayTravelSpeed(&speedGame, 1800.0, false);
+    bool speedValid = fabsf(startSpeed - 18.0f) < 0.001f &&
+                      fabsf(lateSpeed - 30.0f) < 0.001f &&
+                      boostSpeed > lateSpeed * 1.8f &&
+                      fabsf(approachSpeed - 6.0f) < 0.001f &&
+                      fabsf(combatSpeed - 6.0f) < 0.001f &&
+                      !CanGameplayBoost(&speedGame);
+
+    bool valid = insufficientFunds && beamValid && loopPersistence && hitPersistence &&
+                 bombValid && bossCapValid && capValid && speedValid;
+    TraceLog(valid ? LOG_INFO : LOG_ERROR,
+             "GAMEPLAY: funds=%s beam=%s loop=%s hit=%s bomb=%s boss-cap=%s link-cap=%s speed=%s",
+             insufficientFunds ? "yes" : "no", beamValid ? "yes" : "no",
+             loopPersistence ? "yes" : "no", hitPersistence ? "yes" : "no",
+             bombValid ? "yes" : "no", bossCapValid ? "yes" : "no",
+             capValid ? "yes" : "no", speedValid ? "yes" : "no");
+    return valid;
 }
 
-GameplayEvents UpdateGameplay(GameplaySystem *game, float dt, float virtualPlayerZ,
-                              float worldSpeed, bool boosting) {
+bool CanGameplayBoost(const GameplaySystem *game) {
+    return !game->gameOver && game->loopTransitionTimer <= 0.0f &&
+           !game->boss.active && game->player.energy > 1.0f;
+}
+
+float GetGameplayTravelSpeed(const GameplaySystem *game, double virtualPlayerZ,
+                             bool boosting) {
+    float progress = ClampFloat((float)(fmax(virtualPlayerZ, 0.0) / 1800.0), 0.0f, 1.0f);
+    float cruise = 18.0f + progress * 12.0f +
+                   fminf((float)game->boss.encounterIndex * 2.0f, 6.0f);
+    if (game->boss.active) {
+        if (game->boss.phase == BOSS_APPROACH) {
+            float slowdown = ClampFloat(game->boss.phaseTime / 0.75f, 0.0f, 1.0f);
+            slowdown = slowdown * slowdown * (3.0f - 2.0f * slowdown);
+            return cruise + (6.0f - cruise) * slowdown;
+        }
+        return 6.0f;
+    }
+    return boosting ? cruise * 1.85f : cruise;
+}
+
+GameplayEvents UpdateGameplay(GameplaySystem *game, float dt, double virtualPlayerZ,
+                              bool boosting) {
     GameplayEvents events = { 0 };
     dt = fminf(dt, 0.05f);
     game->runTime += dt;
@@ -854,21 +1035,25 @@ GameplayEvents UpdateGameplay(GameplaySystem *game, float dt, float virtualPlaye
     if (game->gameOver) return events;
     if (game->loopTransitionTimer > 0.0f) return events;
 
+    game->overdriveActive = boosting;
     UpdatePlayer(game, dt, boosting, &events);
-    game->difficulty = ClampFloat(log1pf(fmaxf(virtualPlayerZ, 0.0f) / 350.0f) *
+    game->difficulty = ClampFloat(log1pf((float)(fmax(virtualPlayerZ, 0.0) / 350.0)) *
                                   0.43429448f, 0.0f, 1.0f);
     UpdateBoss(game, dt, virtualPlayerZ, &events);
     if (!game->boss.active) {
-        game->spawnTimer -= dt;
+        game->spawnTimer -= dt * (boosting ? 1.8f : 1.0f);
         if (game->spawnTimer <= 0.0f) {
             SpawnFormation(game);
             game->spawnTimer = (1.18f - game->difficulty * 0.68f) *
-                               (1.0f - LoopPressure(game) * 0.45f);
+                               (1.0f - LoopPressure(game) * 0.45f) *
+                               (boosting ? 0.72f : 1.0f);
         }
     }
 
     for (int i = 0; i < MAX_ENEMIES; i++) {
-        if (game->enemies[i].active) UpdateEnemy(game, &game->enemies[i], dt, worldSpeed, &events);
+        if (game->enemies[i].active) {
+            UpdateEnemy(game, &game->enemies[i], dt, boosting, &events);
+        }
     }
     UpdateProjectiles(game, dt, &events);
     UpdatePlayerProjectiles(game, dt, &events);
@@ -1452,6 +1637,33 @@ void DrawGameplay3D(const GameplaySystem *game, Shader craftShader, int objectCl
         SetShaderValue(craftShader, objectClassLoc, &objectClass, SHADER_UNIFORM_INT);
     }
     DrawPlayerShip(game);
+    if (game->beamTimer > 0.0f) {
+        float envelope = sinf(ClampFloat(game->beamTimer / 0.34f, 0.0f, 1.0f) * 3.14159265f);
+        Vector3 start = { game->player.position.x, game->player.position.y,
+                          game->player.position.z - 1.0f };
+        Vector3 end = { start.x, start.y, -210.0f };
+        DrawCylinderEx(start, end, 0.13f + envelope * 0.42f,
+                       0.04f + envelope * 0.20f, 12,
+                       (Color){ game->hotColor.r, game->hotColor.g,
+                                game->hotColor.b, (unsigned char)(150.0f * envelope) });
+        DrawCylinderEx(start, end, 0.045f + envelope * 0.12f,
+                       0.025f + envelope * 0.06f, 10,
+                       (Color){ 245, 255, 255, (unsigned char)(245.0f * envelope) });
+    }
+    if (game->bombTimer > 0.0f) {
+        float progress = 1.0f - game->bombTimer / 0.72f;
+        float radius = 4.0f + progress * 78.0f;
+        unsigned char alpha = (unsigned char)((1.0f - progress) * 220.0f);
+        Vector3 center = game->player.position;
+        for (int ring = 0; ring < 3; ring++) {
+            DrawCircle3D((Vector3){ center.x, center.y, center.z - (float)ring * 0.35f },
+                         radius + (float)ring * 2.8f,
+                         (Vector3){ 1.0f, 0.0f, 0.0f },
+                         game->runTime * (70.0f + (float)ring * 18.0f),
+                         (Color){ game->secondaryColor.r, game->secondaryColor.g,
+                                  game->secondaryColor.b, alpha });
+        }
+    }
     if (game->loopTransitionTimer > 0.0f) {
         float progress = 1.0f - game->loopTransitionTimer / CORE_TRANSITION_DURATION;
         float collapse = ClampFloat(progress / 0.58f, 0.0f, 1.0f);
@@ -1676,6 +1888,26 @@ void DrawGameplayHUD(const GameplaySystem *game, Camera3D camera, int screenWidt
              (Color){ game->secondaryColor.r, game->secondaryColor.g,
                       game->secondaryColor.b, 95 });
 
+    int linkPanelY = barY + 70;
+    Color linkColor = game->chainLinks >= BOMB_LINK_COST ? game->hotColor
+                    : game->chainLinks >= BEAM_LINK_COST ? game->secondaryColor
+                    : (Color){ 95, 145, 180, 235 };
+    DrawHudPanel(barX, linkPanelY, barWidth, 58,
+                 (Color){ game->hotColor.r, game->hotColor.g, game->hotColor.b, 125 });
+    DrawText("CHAIN LINKS", barX + 12, linkPanelY + 8, 13,
+             (Color){ 155, 205, 220, 235 });
+    const char *linkText = TextFormat("%03d", game->chainLinks);
+    DrawText(linkText, barX + barWidth - MeasureText(linkText, 15) - 12,
+             linkPanelY + 7, 15, linkColor);
+    DrawSegmentMeter(barX + 12, linkPanelY + 30, barWidth - 24, 9,
+                     (float)game->chainLinks / (float)MAX_CHAIN_LINKS, 20, linkColor,
+                     (Color){ 18, 33, 49, 205 });
+    const char *specialText = game->chainLinks >= BOMB_LINK_COST ? "K BEAM 50 // L BOMB READY"
+                            : game->chainLinks >= BEAM_LINK_COST ? "K BEAM READY // L BOMB 100"
+                            : "K BEAM 50 // L BOMB 100";
+    DrawText(specialText, barX + 12, linkPanelY + 43, 10,
+             (Color){ linkColor.r, linkColor.g, linkColor.b, 220 });
+
     const char *scoreText = TextFormat("SCORE %08d", game->score);
     int rightPanelWidth = 290;
     int rightPanelX = screenWidth - rightPanelWidth - 20;
@@ -1773,7 +2005,7 @@ void DrawGameplayHUD(const GameplaySystem *game, Camera3D camera, int screenWidt
 
     float helpFade = ClampFloat((12.0f - game->runTime) / 3.0f, 0.0f, 1.0f);
     if (helpFade > 0.001f) {
-        const char *help = "MOVE  WASD / ARROWS     FIRE  J / LEFT MOUSE     BOOST  SPACE";
+        const char *help = "MOVE WASD / ARROWS   FIRE J / MOUSE   BEAM K   BOMB L   BOOST SPACE";
         unsigned char alpha = (unsigned char)(helpFade * 195.0f);
         int helpWidth = MeasureText(help, 14);
         DrawRectangle(18, screenHeight - 38, helpWidth + 22, 25,

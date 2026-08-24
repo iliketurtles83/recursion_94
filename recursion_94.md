@@ -13,7 +13,7 @@ One seed compiles one coherent run identity — its own key, tempo, palette, ene
 ## 2. Tech Stack
 
 - **Language / Engine:** C11 on a custom loop built with Raylib 6 (unused subsystems stripped), no scene graph or entity framework beyond hand-written fixed-size pools.
-- **Shaders:** Hand-written GLSL 330 (`shaders/*.vs`, `shaders/*.fs`), loaded from disk during development; the contest release embeds the source directly into the executable.
+- **Shaders:** Hand-written GLSL 330 (`shaders/*.vs`, `shaders/*.fs`), converted into one generated C translation unit by `tools/embed_shaders.sh` and loaded from memory at runtime.
 - **Audio:** A single Raylib `AudioStream` driven by a native callback (`NativeAudioCallback` in [src/audio_synth.c](src/audio_synth.c)) that synthesizes every drum, bass, pad, arpeggio, and SFX sample-by-sample in real time — no sequencer, no samples.
 - **Build:** `build.sh` compiles with `-O2 -s -ffunction-sections -fdata-sections -Wl,--gc-sections`, links Raylib statically, and packs the result with UPX. `build_windows.sh` cross-compiles via MinGW.
 - **Memory model:** No gameplay-time heap allocation. Enemies (48), enemy projectiles (128), player projectiles (32), and combat particles (96) all live in fixed C arrays in [src/gameplay.h](src/gameplay.h); the environment caps at 1024 active structures in [src/environment.h](src/environment.h).
@@ -40,7 +40,7 @@ One seed compiles one coherent run identity — its own key, tempo, palette, ene
 ### 5.1 High-Level Design
 
 - **Non-collidable dressing:** the environment is pure background; the CPU tracks no terrain hitboxes. All collision tension comes from enemies, keeping the trance-like flow uninterrupted by cheap wall crashes.
-- **Stationary treadmill:** the camera/craft never truly translate on Z; they stay near the origin. Forward motion is an illusion driven by a single `virtualPlayerZ` float that accumulates `baseSpeed * dt` (boosted 2.2x), avoiding floating-point precision loss at extreme distances.
+- **Stationary treadmill:** the camera/craft never truly translate on Z; they stay near the origin. Forward motion is driven by a double-precision `virtualPlayerZ` accumulator while visible transforms are narrowed to float only after subtracting their nearby sector origins.
 - **JIT horizon:** the full-detail draw distance (384 units, [src/environment.h](src/environment.h)) is a diegetic feature — structures fade in via a `compileScale` factor that ramps from 0 at the far clip to 1 near the player, while sparse terrain and silhouettes continue to 640 units.
 
 ### 5.2 Hierarchical Generation Architecture
@@ -73,14 +73,14 @@ Environment generation is fully derived from `virtualPlayerZ` through nested lay
 
 ### 6.1 High-Level Design
 
-The soundtrack is not a music file — it is a single native audio callback (`NativeAudioCallback`, [src/audio_synth.c](src/audio_synth.c)) that synthesizes drums, bass, pads, arpeggio, hats, atmosphere, delay, and reverb sample-by-sample, every frame, entirely from oscillators/noise/filters. `GetSynthSeedBpm` maps the seed to one of five BPM values (128–138°); `GetSynthSeedKeyName`/`SeedRootIndex` pick one of 12 natural-minor keys. Tempo is fixed per seed once the intro ramp completes — progress and boost reveal more layers and density, never a faster or slower clock.
+The soundtrack is not a music file — it is a single native audio callback (`NativeAudioCallback`, [src/audio_synth.c](src/audio_synth.c)) that synthesizes drums, bass, pads, arpeggio, hats, atmosphere, delay, and reverb sample-by-sample, every frame, entirely from oscillators/noise/filters. `GetSynthSeedBpm` maps the seed to one of 16 integer BPM values from 120 through 135; `GetSynthSeedKeyName` selects D Aeolian or D Dorian. Tempo is fixed per seed once the intro ramp completes — progress and boost reveal more layers and density, never a faster or slower clock.
 
 ### 6.2 Song Structure
 
 Rather than reacting purely to instantaneous game state, the arrangement now follows a distance-driven song structure over `virtualPlayerZ`:
 
-- **Intro ramp (0–650 units, `SONG_INTRO_END_DISTANCE`):** BPM eases from a slower `ambientBpm` (`baseBpm − 20`, floor 92) up to the seed's `baseBpm` via a smoothstep (`introEase`); only a sparse downbeat melody plays (`introMelodyStep`, steps 0 and 8).
-- **Buildup (650–1300 units, `SONG_BUILD_END_DISTANCE`):** `songBuildProgress` ramps 0→1 and directly drives `targetDrumGate` — a slow-smoothed multiplier (`drumGate`) that scales kick/bass/hat amplitude, so the full beat gradually "arrives" rather than snapping on.
+- **Intro ramp (0–650 units, `SONG_INTRO_END_DISTANCE`):** BPM eases from `ambientBpm` (`baseBpm − 6`) up to the seed's `baseBpm` via a smoothstep (`introEase`); only a sparse downbeat melody plays (`introMelodyStep`, steps 0 and 8).
+- **Buildup (650–1250 units, `SONG_BUILD_END_DISTANCE`):** `songBuildProgress` ramps 0→1 and directly drives `targetDrumGate` — a slow-smoothed multiplier (`drumGate`) that scales kick/bass/hat amplitude, so the full beat gradually "arrives" rather than snapping on.
 - **Pre-boss hush:** in the final 350 units before the boss's `nextSpawnDistance`, `main.c` computes `preBossHush` (0→1) and both dampens `musicIntensity` and cuts `targetDrumGate` by up to 94%, creating a quiet drop-in moment.
 - **Boss arrival drop:** the hush cancels the instant `BOSS_APPROACH` begins, so the arrangement snaps back to full density under the boss riser.
 - **Reactive arp:** once the buildup completes, `reactiveArpStep` triggers a denser, intensity-driven arpeggio pattern in place of the ambient intro melody.
@@ -89,11 +89,11 @@ Rather than reacting purely to instantaneous game state, the arrangement now fol
 
 - **Kick:** sine tone with an exponential 38→150Hz pitch sweep plus a fast decaying noise "click," combined and driven through `tanhf` soft saturation. Gated by `drumGate` so it fades in with the buildup.
 - **Bass:** blended saw/pulse/sine oscillator through a 4-pole Moog-style ladder filter (`LadderFilter`/`ProcessLadder`, tanh-saturated stages, 2x oversampled) with a resonance LFO and kick-triggered sidechain ducking (`bassSidechain`).
-- **Pads:** a supersaw of `PAD_UNISON_VOICES` (5) detuned saws per chord note across `PAD_CHORD_NOTES` (3) notes, each voice individually panned and independently drifting in pitch, gliding through seeded natural-minor two-bar chord progressions (`SetPadChord`) chosen from four progression templates.
+- **Pads:** a supersaw of `PAD_UNISON_VOICES` (5) detuned saws per chord note across `PAD_CHORD_NOTES` (5) notes, each voice individually panned and independently drifting in pitch, gliding through seeded two-bar modal chord progressions (`SetPadChord`) chosen from six progression templates.
 - **Arpeggio:** triangle/FM-style tone stepping through chord tones, with a per-seed modulation ratio (`arpModRatio` from `{1, 1.5, 2, 3}`) and its own resonant filter.
 - **Hats / clap:** a TR-909-style inharmonic square-oscillator bank (`MetallicTone`, three detuned ratios) blended with filtered noise for metallic transients instead of plain hiss.
 - **Atmosphere:** a decorrelated noise bed run through independent left/right ladder filters for a stereo ambient field.
-- **Delay & reverb:** a stereo cross-delay with mismatched left/right tap lengths (`delayFrames` vs. `delayFramesRight`, ~2/3 ratio) so echoes ping-pong across channels, feeding into a small Freeverb-style tank — four damped feedback combs in parallel (`ProcessComb`) into two series allpasses (`ProcessAllpass`), with a width tap read off the last allpass buffer for stereo spread.
+- **Delay & reverb:** a stereo cross-delay with subtly mismatched left/right tap lengths (`0.750` vs. `0.755` beats) so echoes spread across channels, feeding into a small Freeverb-style tank — four damped feedback combs in parallel (`ProcessComb`) into two series allpasses (`ProcessAllpass`), with a width tap read off the last allpass buffer for stereo spread.
 - **Humanization:** each step gets seeded (not real-time random) micro-timing jitter (`stepJitter`) and velocity drift (`hitVelocity`), keeping the grid deterministic per seed while avoiding a quantized/robotic feel.
 - **SFX pool:** six-voice pool (`MAX_SFX_VOICES`) covering laser tap/charge, glitch hit, explosion (swept ladder-filtered noise + pitch-dropping sub thump + crackle), power-up chord, and a 2.55-second boss riser (48→720Hz eased sweep with rising noise lift) that resolves into the boss arrangement.
 
@@ -101,6 +101,8 @@ Rather than reacting purely to instantaneous game state, the arrangement now fol
 
 - **Unified weapon system:** a single input (hold/release) produces two archetypes — one straight tap ball (≤120ms hold) or a multi-target homing volley (longer hold, up to 4–6 locks depending on tier) — rather than separate weapon-select controls.
 - **Enemy archetypes:** Drifters (strafe + fire), Chasers (telegraphed dive), Splitters (spread fire, fracture into two Chasers on death) — each with a distinct silhouette (flattened saucer, layered interceptor wedge, faceted cage with articulated arms) and its own accent color so types read apart at a glance.
+- **Enemy lifecycle:** regular enemies use four explicit phases (`Approach → Hover → Telegraph → Attack`). Non-Chasers return to Hover after their attack cooldown; Chaser attacks resolve by impact or by leaving the arena.
+- **Collision model:** player bolts use swept segment-sphere tests to prevent tunneling. Enemy bolts and Chaser dives use bounded Z plus radial XY tests. Terrain remains non-collidable and no gameplay AABB tree is maintained.
 - **Chain weapon tiers:** combo-gated Pulse → Accelerator → Six-Lock → Overdrive progression, resetting on any hit or chain expiry. Tiers increase the single tap ball's speed/damage and later expand or strengthen charged volleys.
 - **Logarithmic difficulty curve:** `game.difficulty = clamp(log1p(virtualPlayerZ/350) * scale)` drives formation density, archetype variety, fire cooldowns, and projectile speed. Regular enemies stay in a close engagement band while hard floors preserve readable telegraphs.
 - **Feedback layers:** synthesized shot/impact/explosion/glitch cues paired with plasma-shell projectiles, impact flares, velocity-stretched debris, two-axis shockwaves, lock-on orbit rings, and edge-only damage vignettes (center stays readable). Camera kick and FOV widen on boost/hits for kinesthetic feedback without obscuring the play field.
@@ -112,7 +114,7 @@ The boss encounter ("Recursive Core," internally the `BossState` in [src/gamepla
 
 ### 8.1 Spawn & Encounter Setup
 
-- Triggered when `virtualPlayerZ >= boss->nextSpawnDistance` (first encounter ~1,600–2,000+ units, later encounters scheduled progressively farther via `nextSpawnDistance = virtualPlayerZ + 2250 + seeded 0–500`).
+- Triggered when `virtualPlayerZ >= boss->nextSpawnDistance` (first encounter ~1,600–2,000 units, later encounters scheduled 1,900–2,300 units after each loop transition).
 - `SpawnBoss` clears all active enemies/projectiles/locks so the encounter reads as a deliberate arena, seeds an `encounterSeed` from the run seed and `encounterIndex`, and spawns one `ENEMY_BOSS_CORE` plus four `ENEMY_BOSS_NODE` shield satellites.
 
 ### 8.2 Phase State Machine

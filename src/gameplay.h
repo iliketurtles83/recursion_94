@@ -11,6 +11,9 @@
 #define MAX_COMBAT_PARTICLES 96
 #define MAX_LOCK_TARGETS 6
 #define CORE_TRANSITION_DURATION 5.2f
+#define MAX_CHAIN_LINKS 100
+#define BEAM_LINK_COST 50
+#define BOMB_LINK_COST 100
 
 typedef enum {
     ENEMY_DRIFTER = 0,
@@ -89,6 +92,8 @@ typedef struct {
     int tapShots;
     int chargeShots;
     int enemiesDestroyed;
+    bool beamFired;
+    bool bombFired;
     bool playerHit;
     bool weaponTierAdvanced;
     bool bossStarted;
@@ -110,7 +115,7 @@ typedef struct {
     float fireTimer;
     float reinforcementTimer;
     float rotation;
-    float nextSpawnDistance;
+    double nextSpawnDistance;
     float introFlash;
     float defeatFlash;
     int coreSlot;
@@ -135,6 +140,7 @@ typedef struct {
 
     int score;
     int combo;
+    int chainLinks;
     int lockedCount;
     int spawnSerial;
     int killSerial;
@@ -144,20 +150,27 @@ typedef struct {
     float hitFlash;
     float cameraKick;
     float weaponFlash;
+    float beamTimer;
+    float bombTimer;
     float loopTransitionTimer;
     float runTime;
     int weaponTier;
+    bool suppressLinkRewards;
+    bool overdriveActive;
     bool gameOver;
 } GameplaySystem;
 
 void InitGameplay(GameplaySystem *game, uint32_t runSeed);
-void AdvanceGameplayLoop(GameplaySystem *game, uint32_t runSeed, float virtualPlayerZ);
+void AdvanceGameplayLoop(GameplaySystem *game, uint32_t runSeed, double virtualPlayerZ);
 bool CanGameplayBoost(const GameplaySystem *game);
-GameplayEvents UpdateGameplay(GameplaySystem *game, float dt, float virtualPlayerZ,
-                              float worldSpeed, bool boosting);
+float GetGameplayTravelSpeed(const GameplaySystem *game, double virtualPlayerZ,
+                             bool boosting);
+GameplayEvents UpdateGameplay(GameplaySystem *game, float dt, double virtualPlayerZ,
+                              bool boosting);
 void UpdateGameplayCamera(const GameplaySystem *game, Camera3D *camera, float dt, bool boosting);
 void DrawGameplay3D(const GameplaySystem *game, Shader craftShader, int objectClassLoc,
                     int enemyTypeLoc);
 void DrawGameplayHUD(const GameplaySystem *game, Camera3D camera, int screenWidth, int screenHeight);
+bool ValidateGameplaySpecials(void);
 
 #endif // GAMEPLAY_H

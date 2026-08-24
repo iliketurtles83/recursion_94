@@ -3,12 +3,13 @@
 #include "audio_synth.h"
 #include "gameplay.h"
 #include "demoscene.h"
+#include "shader_sources.h"
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
-#ifndef RECURSION_VALIDATE_GENERATOR
+#if !defined(RECURSION_VALIDATE_GENERATOR) && !defined(RECURSION_VALIDATE_GAMEPLAY)
 typedef struct {
     RenderTexture2D target;
     Shader shader;
@@ -69,7 +70,7 @@ static void InitPostProcess(PostProcessSystem *post, int width, int height,
                             uint32_t seed, Color primary, Color secondary) {
     post->target = LoadRenderTexture(width, height);
     SetTextureFilter(post->target.texture, TEXTURE_FILTER_BILINEAR);
-    post->shader = LoadShader(NULL, "shaders/post.fs");
+    post->shader = LoadShaderFromMemory(NULL, shader_post_fs);
     post->timeLoc = GetShaderLocation(post->shader, "uTime");
     post->intensityLoc = GetShaderLocation(post->shader, "uIntensity");
     post->beatLoc = GetShaderLocation(post->shader, "uBeatPulse");
@@ -81,7 +82,7 @@ static void InitPostProcess(PostProcessSystem *post, int width, int height,
     Vector2 resolution = { (float)width, (float)height };
     SetShaderValue(post->shader, resolutionLoc, &resolution, SHADER_UNIFORM_VEC2);
 
-    post->craftShader = LoadShader("shaders/craft.vs", "shaders/craft.fs");
+    post->craftShader = LoadShaderFromMemory(shader_craft_vs, shader_craft_fs);
     post->craftTimeLoc = GetShaderLocation(post->craftShader, "uTime");
     post->craftIntensityLoc = GetShaderLocation(post->craftShader, "uIntensity");
     post->craftObjectClassLoc = GetShaderLocation(post->craftShader, "uObjectClass");
@@ -89,7 +90,7 @@ static void InitPostProcess(PostProcessSystem *post, int width, int height,
     post->craftPrimaryLoc = GetShaderLocation(post->craftShader, "uPrimaryColor");
     post->craftSecondaryLoc = GetShaderLocation(post->craftShader, "uSecondaryColor");
 
-    post->backdropShader = LoadShader(NULL, "shaders/backdrop.fs");
+    post->backdropShader = LoadShaderFromMemory(NULL, shader_backdrop_fs);
     post->backdropTimeLoc = GetShaderLocation(post->backdropShader, "uTime");
     post->backdropIntensityLoc = GetShaderLocation(post->backdropShader, "uIntensity");
     int backdropResolutionLoc = GetShaderLocation(post->backdropShader, "uResolution");
@@ -165,11 +166,21 @@ int main(int argc, char **argv) {
              generationReport.unsupportedFarStructures,
              generationReport.droppedStructures);
     return generationValid ? 0 : 1;
+#elif defined(RECURSION_VALIDATE_GAMEPLAY)
+    (void)argc;
+    (void)argv;
+    return ValidateGameplaySpecials() ? 0 : 1;
 #else
     const int screenWidth = 1280;
     const int screenHeight = 720;
     SetConfigFlags(FLAG_VSYNC_HINT | FLAG_MSAA_4X_HINT);
     InitWindow(screenWidth, screenHeight, "RECURSION_94 - Procedural Cyberspace Trench");
+    int renderWidth = GetScreenWidth();
+    int renderHeight = GetScreenHeight();
+    if (!IsWindowReady()) {
+        TraceLog(LOG_ERROR, "Unable to initialize the graphics window");
+        return 1;
+    }
 
     Camera3D camera = { 0 };
     camera.position = (Vector3){ 0.0f, 5.5f, 8.0f };
@@ -204,14 +215,14 @@ int main(int argc, char **argv) {
             InitAudioSynth(&synth, activeSeed);
             InitGameplay(&game, activeSeed);
             InitDemoscene(&demo, activeSeed);
-            InitPostProcess(&post, screenWidth, screenHeight, activeSeed,
+            InitPostProcess(&post, renderWidth, renderHeight, activeSeed,
                             demo.primary, demo.secondary);
             runStarted = true;
         }
     }
 
-    float virtualPlayerZ = bossTestStart ? game.boss.nextSpawnDistance + 1.0f : 0.0f;
-    float baseSpeed = 20.0f;
+    double virtualPlayerZ = bossTestStart ? game.boss.nextSpawnDistance + 1.0 : 0.0;
+    double musicArrangementOriginZ = 0.0;
     float glitchAmount = 0.0f;
     float coreTransitionTimer = 0.0f;
     uint32_t pendingSeed = activeSeed;
@@ -226,6 +237,20 @@ int main(int argc, char **argv) {
     while (!WindowShouldClose()) {
         float dt = GetFrameTime();
 
+        if (IsKeyPressed(KEY_F)) ToggleFullscreen();
+
+        int currentWidth = GetScreenWidth();
+        int currentHeight = GetScreenHeight();
+        if (currentWidth != renderWidth || currentHeight != renderHeight) {
+            renderWidth = currentWidth;
+            renderHeight = currentHeight;
+            if (runStarted) {
+                UnloadPostProcess(&post);
+                InitPostProcess(&post, renderWidth, renderHeight, activeSeed,
+                                demo.primary, demo.secondary);
+            }
+        }
+
         if (!runStarted) {
             selectorTime += dt;
             if (IsKeyPressed(KEY_LEFT)) selectedSeed -= 1u;
@@ -239,9 +264,10 @@ int main(int argc, char **argv) {
                 InitAudioSynth(&synth, activeSeed);
                 InitGameplay(&game, activeSeed);
                 InitDemoscene(&demo, activeSeed);
-                InitPostProcess(&post, screenWidth, screenHeight, activeSeed,
+                InitPostProcess(&post, renderWidth, renderHeight, activeSeed,
                                 demo.primary, demo.secondary);
                 virtualPlayerZ = 0.0f;
+                musicArrangementOriginZ = 0.0f;
                 glitchAmount = 0.0f;
                 runStarted = true;
             }
@@ -251,7 +277,7 @@ int main(int argc, char **argv) {
                 DrawSeedSelector(selectedSeed, selectorTime,
                                  GetSynthSeedBpm(selectedSeed),
                                  GetSynthSeedKeyName(selectedSeed),
-                                 screenWidth, screenHeight);
+                                 renderWidth, renderHeight);
             EndDrawing();
             continue;
         }
@@ -265,6 +291,7 @@ int main(int argc, char **argv) {
             InitDemoscene(&demo, activeSeed);
             SetPostProcessTheme(&post, activeSeed, demo.primary, demo.secondary);
             virtualPlayerZ = 0.0f;
+            musicArrangementOriginZ = 0.0f;
             glitchAmount = 0.0f;
             coreTransitionTimer = 0.0f;
             seedTransitionPending = false;
@@ -273,13 +300,12 @@ int main(int argc, char **argv) {
         if (IsKeyPressed(KEY_F3)) debugOverlay = !debugOverlay;
 
         bool boosting = IsKeyDown(KEY_SPACE) && CanGameplayBoost(&game);
-        float speedMultiplier = game.gameOver || seedTransitionPending
-            ? 0.0f : (boosting ? 2.2f : 1.0f);
-        float currentSpeed = baseSpeed * speedMultiplier;
+        float currentSpeed = game.gameOver || seedTransitionPending
+            ? 0.0f : GetGameplayTravelSpeed(&game, virtualPlayerZ, boosting);
         virtualPlayerZ += currentSpeed * dt;
 
         GameplayEvents gameplayEvents = UpdateGameplay(
-            &game, dt, virtualPlayerZ, currentSpeed, boosting);
+            &game, dt, virtualPlayerZ, boosting);
         for (int shot = 0; shot < gameplayEvents.tapShots; shot++) {
             TriggerSynthSFX(&synth, SFX_LASER_TAP);
         }
@@ -289,6 +315,8 @@ int main(int argc, char **argv) {
         for (int enemy = 0; enemy < gameplayEvents.enemiesDestroyed; enemy++) {
             TriggerSynthSFX(&synth, SFX_EXPLOSION);
         }
+        if (gameplayEvents.beamFired) TriggerSynthSFX(&synth, SFX_LASER_CHARGE);
+        if (gameplayEvents.bombFired) TriggerSynthSFX(&synth, SFX_POWER_UP);
         if (gameplayEvents.playerHit) {
             TriggerSynthSFX(&synth, SFX_GLITCH_HIT);
             glitchAmount = 1.0f;
@@ -315,6 +343,7 @@ int main(int argc, char **argv) {
                 AdvanceGameplayLoop(&game, activeSeed, virtualPlayerZ);
                 ReseedEnvironment(&env, activeSeed);
                 ReseedAudioSynth(&synth, activeSeed);
+                musicArrangementOriginZ = virtualPlayerZ - 400.0f;
                 demo = transitionToDemo;
                 SetPostProcessTheme(&post, activeSeed, demo.primary, demo.secondary);
                 TriggerSynthSFX(&synth, SFX_POWER_UP);
@@ -343,7 +372,7 @@ int main(int argc, char **argv) {
         float preBossHush = 0.0f;
         const float bossHushWindow = 350.0f;
         if (!game.boss.active) {
-            float distanceToBoss = game.boss.nextSpawnDistance - virtualPlayerZ;
+            double distanceToBoss = game.boss.nextSpawnDistance - virtualPlayerZ;
             if (distanceToBoss > 0.0f && distanceToBoss < bossHushWindow) {
                 preBossHush = 1.0f - distanceToBoss / bossHushWindow;
             }
@@ -376,8 +405,10 @@ int main(int argc, char **argv) {
 
         // Update Subsystems
         UpdateEnvironment(&env, virtualPlayerZ, game.runTime, musicIntensity);
+        float musicArrangementDistance = (float)fmax(
+            0.0, virtualPlayerZ - musicArrangementOriginZ);
         UpdateAudioSynth(&synth, musicIntensity, glitchAmount, bossMusicIntensity,
-                        virtualPlayerZ, preBossHush);
+                        musicArrangementDistance, preBossHush);
         UpdateGameplayCamera(&game, &camera, dt, boosting);
 
         SynthTelemetry audioTelemetry = GetSynthTelemetry(&synth);
@@ -390,9 +421,9 @@ int main(int argc, char **argv) {
             BeginTextureMode(post.target);
                 ClearBackground((Color){ 2, 3, 10, 255 });
                 DrawRaymarchBackdrop(&post, game.runTime, musicIntensity,
-                                      screenWidth, screenHeight);
+                                      renderWidth, renderHeight);
                 DrawDemosceneBackdrop(&demo, game.runTime, musicIntensity,
-                                      screenWidth, screenHeight);
+                                      renderWidth, renderHeight);
                 BeginMode3D(camera);
                     DrawEnvironment(&env, camera, virtualPlayerZ);
                     BeginCraftPass(&post, game.runTime, musicIntensity);
@@ -401,23 +432,23 @@ int main(int argc, char **argv) {
                     EndShaderMode();
                 EndMode3D();
                 DrawDemosceneOverlay(&demo, game.runTime, musicIntensity,
-                                     beatPulse, screenWidth, screenHeight);
+                                     beatPulse, renderWidth, renderHeight);
             EndTextureMode();
 
             ClearBackground((Color){ 2, 3, 9, 255 });
             DrawPostProcess(&post, game.runTime, musicIntensity, beatPulse, bossTransition,
-                            screenWidth, screenHeight);
-            DrawGameplayHUD(&game, camera, screenWidth, screenHeight);
+                            renderWidth, renderHeight);
+            DrawGameplayHUD(&game, camera, renderWidth, renderHeight);
             if (seedTransitionPending) {
                 float transitionProgress = 1.0f - coreTransitionTimer / CORE_TRANSITION_DURATION;
                 Vector2 coreScreen = GetWorldToScreen(game.boss.position, camera);
                 DrawCoreTransition(&transitionFromDemo, &transitionToDemo, game.runTime,
-                                   transitionProgress, coreScreen, screenWidth, screenHeight);
+                                   transitionProgress, coreScreen, renderWidth, renderHeight);
             }
             if (debugOverlay) {
                 DrawFPS(10, 82);
-                DrawText(TextFormat("Z %.1f  SPEED %.1fx  BPM %.1f  INT %.2f  GATE %.2f",
-                                    virtualPlayerZ, speedMultiplier, audioTelemetry.currentBpm,
+                DrawText(TextFormat("Z %.1f  SPEED %.1f  BPM %.1f  INT %.2f  GATE %.2f",
+                                    virtualPlayerZ, currentSpeed, audioTelemetry.currentBpm,
                                     musicIntensity, audioTelemetry.drumGate),
                          10, 104, 16, (Color){ 90, 190, 215, 220 });
                 DrawText(TextFormat("STRUCTURES %d  DROPPED %d", env.structureCount,
@@ -433,6 +464,12 @@ int main(int argc, char **argv) {
                                         audioTelemetry.maxCallbackMicros / 1000.0f,
                                         callbackBudgetMs, callbackFrames),
                              10, 164, 16, (Color){ 110, 205, 190, 220 });
+                }
+                if (audioTelemetry.controlDrops > 0u || audioTelemetry.sfxCommandDrops > 0u) {
+                    DrawText(TextFormat("AUDIO DROPS CONTROL %u  SFX %u",
+                                        audioTelemetry.controlDrops,
+                                        audioTelemetry.sfxCommandDrops),
+                             10, 184, 16, (Color){ 255, 120, 90, 230 });
                 }
             }
         EndDrawing();

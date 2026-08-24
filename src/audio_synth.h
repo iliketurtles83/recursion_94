@@ -16,6 +16,25 @@
 #define REVERB_ALLPASS_COUNT 2
 #define SFX_COMMAND_CAPACITY 32
 #define SYNTH_CONTROL_CAPACITY 16
+#define SYNTH_MIN_BPM 120.0f
+#define SYNTH_MAX_BPM 135.0f
+
+typedef enum {
+    SYNTH_MODE_AEOLIAN = 0,
+    SYNTH_MODE_DORIAN
+} SynthScaleMode;
+
+typedef enum {
+    SYNTH_STATE_AMBIENT = 0,
+    SYNTH_STATE_CRUISING,
+    SYNTH_STATE_HAZARD
+} SynthMusicState;
+
+typedef struct {
+    float bpm;
+    int rootMidi;
+    SynthScaleMode mode;
+} SynthMusicConfig;
 
 typedef enum {
     SFX_NONE = 0,
@@ -42,6 +61,8 @@ typedef struct {
     float currentBpm;
     unsigned int maxCallbackMicros;
     unsigned int callbackFrames;
+    unsigned int controlDrops;
+    unsigned int sfxCommandDrops;
 } SynthTelemetry;
 
 // 4-pole Moog-style ladder filter (tanh-saturated stages, 2x oversampled).
@@ -95,6 +116,8 @@ typedef struct {
     AudioStream stream;
     uint32_t runSeed;
     uint32_t noiseState;
+    SynthMusicConfig musicConfig;
+    SynthMusicState musicState;
 
     // Seed defines the baseline tempo; it stays fixed once the intro ramp
     // (ambientBpm -> baseBpm) completes. No runtime intensity/boss nudging.
@@ -124,12 +147,17 @@ typedef struct {
     float hitVelocity;
     int currentStep;
     int barCount;
+    unsigned char progressionVariant;
+    unsigned char introMotifVariant;
+    unsigned char introTimbreVariant;
+    unsigned char introRegister;
 
     float resonanceLfoPhase;
 
     float kickTime;
     float kickPhase;
     bool kickTrigger;
+    float sidechainGain;
 
     float bassPhase;
     float bassEnv;
@@ -138,6 +166,7 @@ typedef struct {
     float bassTargetFrequency;
     BassStep bassPattern[16];
     float bassAccent;
+    float bassFilterEnv;
     bool bassSlide;
     LadderFilter bassFilter;
     float subPhase;
@@ -162,6 +191,16 @@ typedef struct {
     float arpModPhase;
     float arpModRatio;
     LadderFilter arpFilter;
+
+    float leadPhase;
+    float leadFrequency;
+    float leadEnv;
+    LadderFilter leadFilter;
+
+    float transitionFxTime;
+    float transitionFxDirection;
+    float glitchRepeat;
+    LadderFilter transitionFilter;
 
     float hatTime;
     float openHatTime;
@@ -201,10 +240,14 @@ typedef struct {
     atomic_uint maxCallbackMicros;
     atomic_uint lastCallbackFrames;
     atomic_uint telemetrySequence;
+    atomic_uint controlDrops;
+    atomic_uint sfxCommandDrops;
     atomic_bool initialized;
 } SynthSystem;
 
 void InitAudioSynth(SynthSystem *synth, uint32_t runSeed);
+void InitAudioSynthConfigured(SynthSystem *synth, uint32_t runSeed,
+                              SynthMusicConfig config);
 void ReseedAudioSynth(SynthSystem *synth, uint32_t runSeed);
 void UpdateAudioSynth(SynthSystem *synth, float intensity, float glitchAmount,
                       float bossIntensity, float virtualPlayerZ, float preBossHush);

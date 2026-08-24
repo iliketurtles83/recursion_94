@@ -19,12 +19,15 @@ fi
 
 mkdir -p bin
 
+bash tools/embed_shaders.sh bin/shader_sources.c
+
 CFLAGS="-std=c11 -O2 -s -Wall -Wextra -Wpedantic -ffunction-sections -fdata-sections"
 
 "$WINDOWS_CC" $CFLAGS -Wl,--gc-sections -static -static-libgcc \
     -Isrc -I"$RAYLIB_WIN_SOURCE" \
     -o bin/recursion94.exe \
     main.c src/environment.c src/audio_synth.c src/gameplay.c src/demoscene.c \
+    bin/shader_sources.c \
     "$RAYLIB_WIN_SOURCE/libraylib.a" \
     -lopengl32 -lgdi32 -lwinmm
 
@@ -34,16 +37,23 @@ elif [ -z "$UPX_BIN" ] && [ -x "$HOME/.local/bin/upx" ]; then
     UPX_BIN="$HOME/.local/bin/upx"
 fi
 
-if [ -n "$UPX_BIN" ]; then
-    "$UPX_BIN" --best --lzma bin/recursion94.exe
-    "$UPX_BIN" -t bin/recursion94.exe
-else
-    echo "upx not found; skipping compression"
+if [ -z "$UPX_BIN" ]; then
+    echo "ERROR: upx is required for a contest release build"
+    exit 1
+fi
+
+"$UPX_BIN" --best --lzma bin/recursion94.exe
+"$UPX_BIN" -t bin/recursion94.exe
+
+MAX_SIZE=1474560
+ACTUAL_SIZE=$(stat -c%s bin/recursion94.exe)
+if [ "$ACTUAL_SIZE" -gt "$MAX_SIZE" ]; then
+    echo "ERROR: packed binary is $ACTUAL_SIZE bytes; limit is $MAX_SIZE bytes"
+    exit 1
 fi
 
 cp bin/recursion94.exe recursion_94.exe
 
 echo "Native Windows build complete:"
 file bin/recursion94.exe
-echo "Final size (bin/recursion94.exe):"
-stat -c%s bin/recursion94.exe
+echo "Final size (bin/recursion94.exe): $ACTUAL_SIZE / $MAX_SIZE bytes"

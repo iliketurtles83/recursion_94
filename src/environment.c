@@ -1,4 +1,5 @@
 #include "environment.h"
+#include "shader_sources.h"
 #include "raymath.h"
 #include <math.h>
 #include <stddef.h>
@@ -148,45 +149,45 @@ static int TerrainCellForX(float x) {
     return (int)floorf(x / TERRAIN_CELL_WIDTH + 0.5f);
 }
 
-static void GroundFlankStructures(EnvironmentSystem *env, float virtualPlayerZ) {
+static void GroundFlankStructures(EnvironmentSystem *env, double virtualPlayerZ) {
     for (int i = 0; i < env->structureCount; i++) {
         EnvironmentStructure *structure = &env->structures[i];
         if (fabsf(structure->position.x) < CORRIDOR_EDGE_X) continue;
 
         int cellX = TerrainCellForX(structure->position.x);
-        int sector = (int)floorf((virtualPlayerZ - structure->position.z) / SECTOR_DEPTH);
+        int sector = (int)floor((virtualPlayerZ - structure->position.z) / SECTOR_DEPTH);
         TerrainSupport support = SampleTerrainSupport(cellX, sector);
         structure->position.y += support.topY + 3.0f;
     }
 }
 
-static bool TerrainCellSupportsStructure(const EnvironmentSystem *env, float virtualPlayerZ,
+static bool TerrainCellSupportsStructure(const EnvironmentSystem *env, double virtualPlayerZ,
                                          int cellX, int sector) {
     for (int i = 0; i < env->structureCount; i++) {
         const EnvironmentStructure *structure = &env->structures[i];
         if (fabsf(structure->position.x) < CORRIDOR_EDGE_X) continue;
         if (TerrainCellForX(structure->position.x) != cellX) continue;
-        int structureSector = (int)floorf((virtualPlayerZ - structure->position.z) / SECTOR_DEPTH);
+        int structureSector = (int)floor((virtualPlayerZ - structure->position.z) / SECTOR_DEPTH);
         if (structureSector == sector) return true;
     }
     for (int i = 0; i < env->farStructureCount; i++) {
         const EnvironmentStructure *structure = &env->farStructures[i];
         if (TerrainCellForX(structure->position.x) != cellX) continue;
-        int structureSector = (int)floorf((virtualPlayerZ - structure->position.z) / SECTOR_DEPTH);
+        int structureSector = (int)floor((virtualPlayerZ - structure->position.z) / SECTOR_DEPTH);
         if (structureSector == sector) return true;
     }
     return false;
 }
 
-static void GenerateTerrain(EnvironmentSystem *env, float virtualPlayerZ) {
+static void GenerateTerrain(EnvironmentSystem *env, double virtualPlayerZ) {
     env->terrainCount = 0;
-    int currentSector = (int)floorf(virtualPlayerZ / SECTOR_DEPTH) - 2;
+    int currentSector = (int)floor(virtualPlayerZ / SECTOR_DEPTH) - 2;
     int visibleSectors = (int)(TERRAIN_DRAW_DISTANCE / SECTOR_DEPTH) + 4;
 
     for (int offset = 0; offset < visibleSectors; offset++) {
         int sector = currentSector + offset;
-        float worldZ = (float)sector * SECTOR_DEPTH;
-        float relativeZ = -(worldZ - virtualPlayerZ) - SECTOR_DEPTH * 0.5f;
+        double worldZ = (double)sector * SECTOR_DEPTH;
+        float relativeZ = (float)(-(worldZ - virtualPlayerZ) - SECTOR_DEPTH * 0.5);
         bool farTier = -relativeZ > DRAW_DISTANCE;
 
         for (int cellX = -12; cellX <= 12; cellX++) {
@@ -209,9 +210,9 @@ static void GenerateTerrain(EnvironmentSystem *env, float virtualPlayerZ) {
     }
 }
 
-static void GenerateFarSilhouettes(EnvironmentSystem *env, float virtualPlayerZ) {
+static void GenerateFarSilhouettes(EnvironmentSystem *env, double virtualPlayerZ) {
     env->farStructureCount = 0;
-    int currentSector = (int)floorf(virtualPlayerZ / SECTOR_DEPTH);
+    int currentSector = (int)floor(virtualPlayerZ / SECTOR_DEPTH);
     int firstFarSector = currentSector + (int)(DRAW_DISTANCE / SECTOR_DEPTH);
     int lastFarSector = currentSector + (int)(TERRAIN_DRAW_DISTANCE / SECTOR_DEPTH) + 1;
 
@@ -222,7 +223,7 @@ static void GenerateFarSilhouettes(EnvironmentSystem *env, float virtualPlayerZ)
         TerrainSupport support = SampleTerrainSupport(cellX, sector);
         float height = 13.0f + HashFloat(sector, 15004) * 24.0f;
         float width = 5.0f + HashFloat(sector, 15005) * 7.0f;
-        float worldZ = (float)sector * SECTOR_DEPTH;
+        double worldZ = (double)sector * SECTOR_DEPTH;
 
         if (env->farStructureCount >= MAX_FAR_STRUCTURES) return;
         EnvironmentStructure *structure = &env->farStructures[env->farStructureCount++];
@@ -230,7 +231,8 @@ static void GenerateFarSilhouettes(EnvironmentSystem *env, float virtualPlayerZ)
                                                             : STRUCT_MEMORY_SLAB;
         structure->position = (Vector3){ ScaleEnvironmentX((float)cellX * TERRAIN_CELL_WIDTH),
                                          support.topY - 0.35f + height * 0.5f,
-                                         -(worldZ - virtualPlayerZ) - SECTOR_DEPTH * 0.5f };
+                                         (float)(-(worldZ - virtualPlayerZ) -
+                                             SECTOR_DEPTH * 0.5) };
         structure->size = (Vector3){ ScaleEnvironmentX(width), height, width * 0.82f };
         structure->compileScale = 1.0f;
         structure->active = true;
@@ -600,7 +602,7 @@ void InitEnvironment(EnvironmentSystem *env, uint32_t runSeed) {
     env->unitCubeMesh = GenMeshChamferedCube();
     env->unitPrismMesh = GenMeshCenteredPrism(8);
     env->towerMaterial = LoadMaterialDefault();
-    env->towerMaterial.shader = LoadShader("shaders/tower.vs", "shaders/tower.fs");
+    env->towerMaterial.shader = LoadShaderFromMemory(shader_tower_vs, shader_tower_fs);
     env->towerScrollLoc = GetShaderLocation(env->towerMaterial.shader, "virtualPlayerZ");
     env->towerTimeLoc = GetShaderLocation(env->towerMaterial.shader, "uTime");
     env->towerIntensityLoc = GetShaderLocation(env->towerMaterial.shader, "uIntensity");
@@ -615,7 +617,7 @@ void InitEnvironment(EnvironmentSystem *env, uint32_t runSeed) {
     SetShaderValue(env->towerMaterial.shader, env->towerSecondaryLoc, &secondary, SHADER_UNIFORM_VEC3);
 
     env->terrainMaterial = LoadMaterialDefault();
-    env->terrainMaterial.shader = LoadShader("shaders/terrain.vs", "shaders/terrain.fs");
+    env->terrainMaterial.shader = LoadShaderFromMemory(shader_terrain_vs, shader_terrain_fs);
     env->terrainTimeLoc = GetShaderLocation(env->terrainMaterial.shader, "uTime");
     env->terrainIntensityLoc = GetShaderLocation(env->terrainMaterial.shader, "uIntensity");
     env->terrainSeedLoc = GetShaderLocation(env->terrainMaterial.shader, "uRunSeed");
@@ -1104,17 +1106,17 @@ static void GenerateRavineObject(EnvironmentSystem *env, int targetSector,
                        (Vector3){ width, height, width * 0.84f }, compileScale, 0.04f);
 }
 
-static void GenerateEnvironmentStructures(EnvironmentSystem *env, float virtualPlayerZ) {
+static void GenerateEnvironmentStructures(EnvironmentSystem *env, double virtualPlayerZ) {
     env->structureCount = 0;
     env->droppedStructures = 0;
 
-    int currentSector = (int)floorf(virtualPlayerZ / SECTOR_DEPTH);
+    int currentSector = (int)floor(virtualPlayerZ / SECTOR_DEPTH);
     int visibleSectors = (int)(DRAW_DISTANCE / SECTOR_DEPTH) + 2;
 
     for (int i = 0; i < visibleSectors; i++) {
         int targetSector = currentSector + i;
-        float worldZ = (float)targetSector * SECTOR_DEPTH;
-        float relativeZ = -(worldZ - virtualPlayerZ); // Negative Z is forward
+        double worldZ = (double)targetSector * SECTOR_DEPTH;
+        float relativeZ = (float)(-(worldZ - virtualPlayerZ)); // Negative Z is forward
 
         if (relativeZ > 10.0f || relativeZ < -DRAW_DISTANCE - 16.0f) continue;
 
@@ -1227,8 +1229,9 @@ static void GenerateEnvironmentStructures(EnvironmentSystem *env, float virtualP
     }
 }
 
-void UpdateEnvironment(EnvironmentSystem *env, float virtualPlayerZ, float time, float intensity) {
-    SetShaderValue(env->towerMaterial.shader, env->towerScrollLoc, &virtualPlayerZ, SHADER_UNIFORM_FLOAT);
+void UpdateEnvironment(EnvironmentSystem *env, double virtualPlayerZ, float time, float intensity) {
+    float shaderScroll = (float)virtualPlayerZ;
+    SetShaderValue(env->towerMaterial.shader, env->towerScrollLoc, &shaderScroll, SHADER_UNIFORM_FLOAT);
     SetShaderValue(env->towerMaterial.shader, env->towerTimeLoc, &time, SHADER_UNIFORM_FLOAT);
     SetShaderValue(env->towerMaterial.shader, env->towerIntensityLoc, &intensity, SHADER_UNIFORM_FLOAT);
     SetShaderValue(env->terrainMaterial.shader, env->terrainTimeLoc, &time, SHADER_UNIFORM_FLOAT);
@@ -1239,14 +1242,14 @@ void UpdateEnvironment(EnvironmentSystem *env, float virtualPlayerZ, float time,
     GenerateTerrain(env, virtualPlayerZ);
 }
 
-static bool HasTerrainFoundation(const EnvironmentSystem *env, float virtualPlayerZ,
+static bool HasTerrainFoundation(const EnvironmentSystem *env, double virtualPlayerZ,
                                  const EnvironmentStructure *structure) {
     int objectCell = TerrainCellForX(structure->position.x);
-    int objectSector = (int)floorf((virtualPlayerZ - structure->position.z) / SECTOR_DEPTH);
+    int objectSector = (int)floor((virtualPlayerZ - structure->position.z) / SECTOR_DEPTH);
     for (int i = 0; i < env->terrainCount; i++) {
         const TerrainInstance *terrain = &env->terrain[i];
         if (TerrainCellForX(terrain->position.x) != objectCell) continue;
-        int terrainSector = (int)floorf((virtualPlayerZ - terrain->position.z) / SECTOR_DEPTH);
+        int terrainSector = (int)floor((virtualPlayerZ - terrain->position.z) / SECTOR_DEPTH);
         if (terrainSector == objectSector) return true;
     }
     return false;
@@ -1296,7 +1299,7 @@ bool ValidateEnvironmentGenerator(EnvironmentValidationReport *report) {
          seedIndex++) {
         g_environmentSeed = validationSeeds[seedIndex];
         for (int sector = 0; sector < 4096; sector += 31) {
-            float virtualPlayerZ = (float)sector * SECTOR_DEPTH + 3.25f;
+            double virtualPlayerZ = (double)sector * SECTOR_DEPTH + 3.25;
             GenerateEnvironmentStructures(&probe, virtualPlayerZ);
             GroundFlankStructures(&probe, virtualPlayerZ);
             GenerateFarSilhouettes(&probe, virtualPlayerZ);
@@ -1416,7 +1419,7 @@ static void DrawFarStructureBatch(const EnvironmentSystem *env, StructureType ty
 // It therefore adds authored density without changing generation, collision,
 // pool pressure or validation results. Each layer remains one instanced call.
 static void DrawArchitectureDetailBatch(const EnvironmentSystem *env, int detailMode,
-                                        float virtualPlayerZ) {
+                                        double virtualPlayerZ) {
     static Matrix transforms[MAX_STRUCTURES];
     int count = 0;
 
@@ -1430,9 +1433,11 @@ static void DrawArchitectureDetailBatch(const EnvironmentSystem *env, int detail
         // entered the pool and as the player advanced, which looked like roof
         // flicker even though the primary building itself was stable.
         int32_t worldXKey = (int32_t)lroundf(s->position.x * 16.0f);
-        int32_t worldZKey = (int32_t)lroundf((virtualPlayerZ - s->position.z) * 8.0f);
+        int64_t worldZKey = llround((virtualPlayerZ - s->position.z) * 8.0);
+        uint64_t worldZBits = (uint64_t)worldZKey;
+        uint32_t foldedWorldZ = (uint32_t)worldZBits ^ (uint32_t)(worldZBits >> 32);
         uint32_t identity = (uint32_t)worldXKey * UINT32_C(0x9e3779b9) ^
-                            (uint32_t)worldZKey * UINT32_C(0x85ebca6b) ^
+                    foldedWorldZ * UINT32_C(0x85ebca6b) ^
                             (uint32_t)s->type * UINT32_C(0xc2b2ae35);
         uint32_t hash = PaletteHash(env->runSeed ^ identity);
         Vector3 position = s->position;
@@ -1670,7 +1675,7 @@ static void DrawInfrastructureDetailBatch(const EnvironmentSystem *env, int deta
     DrawMeshInstanced(env->unitCubeMesh, env->towerMaterial, transforms, count);
 }
 
-void DrawEnvironment(const EnvironmentSystem *env, Camera3D camera, float virtualPlayerZ) {
+void DrawEnvironment(const EnvironmentSystem *env, Camera3D camera, double virtualPlayerZ) {
     (void)camera;
     (void)virtualPlayerZ;
 

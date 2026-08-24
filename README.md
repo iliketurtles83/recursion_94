@@ -33,7 +33,7 @@ The project build expects Raylib at `/usr/local/lib/libraylib.a`. Confirm that i
 ls /usr/local/lib/libraylib.a
 ```
 
-[UPX](https://upx.github.io/) is optional. When it is available in `PATH`, the build script compresses the executable automatically.
+[UPX](https://upx.github.io/) is required for release builds. The build fails unless the packed executable passes UPX's integrity check and fits within 1,474,560 bytes.
 
 ### Build and run
 
@@ -44,7 +44,7 @@ From the project root:
 ./bin/recursion94
 ```
 
-The build creates `bin/recursion94` and copies it to `recursion_94`. Run the game from the project root because it loads shaders using relative paths.
+The build embeds the GLSL sources into the executable, creates `bin/recursion94`, and copies it to `recursion_94`. The resulting executable has no runtime asset-directory dependency.
 
 Useful launch options:
 
@@ -65,6 +65,12 @@ To render the procedural synth without an audio device and verify its determinis
 
 ```bash
 VALIDATE_AUDIO=1 ./build.sh
+```
+
+To validate chain-link earning and special-attack behavior without opening a window:
+
+```bash
+VALIDATE_GAMEPLAY=1 ./build.sh
 ```
 
 To measure audio callback duration in a playable build:
@@ -105,7 +111,7 @@ Confirm that the cross-compiled static library exists:
 ls "$HOME/raylib-win/src/libraylib.a"
 ```
 
-UPX is optional for Windows builds too. Set `UPX_BIN` to its executable path if it is not in `PATH`.
+UPX is required for Windows release builds too. Set `UPX_BIN` to its executable path if it is not in `PATH`.
 
 ### Build
 
@@ -115,7 +121,7 @@ From the project root:
 bash ./build_windows.sh
 ```
 
-The build creates `bin/recursion94.exe` and copies it to `recursion_94.exe`. Copy the executable together with the `shaders` directory to the Windows machine, keep their relative layout intact, and start the executable from that directory.
+The build creates `bin/recursion94.exe` and copies it to `recursion_94.exe`. Shader sources are embedded, so the executable can be distributed on its own.
 
 Custom toolchain locations can be supplied through environment variables:
 
@@ -130,5 +136,8 @@ bash ./build_windows.sh
 
 - `WASD` or arrow keys: move
 - `J` or left mouse button: tap for a straight shot; hold to lock homing shots
-- `Space`: boost
+- `K`: spend 50 chain links on a piercing beam
+- `L`: spend 100 chain links on a projectile-clearing bomb
+- `Space`: engage overdrive for higher speed, pressure, and rewards
+- `F`: toggle fullscreen
 - `R`: restart after game over
