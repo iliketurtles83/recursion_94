@@ -46,6 +46,7 @@ typedef struct {
     int unsupportedFlankStructures;
     int unsupportedRavineStructures;
     int unsupportedFarStructures;
+    int fieldCoverageViolations;
 } EnvironmentValidationReport;
 
 typedef struct {

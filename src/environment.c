@@ -49,10 +49,13 @@ static const unsigned char ZONE_PATTERNS[][4] = {
 #define CORRIDOR_EDGE_X (15.0f * ENVIRONMENT_LATERAL_SCALE)
 #define TERRAIN_CELL_WIDTH 8.0f
 #define TERRAIN_BASE_Y -28.0f
-#define FLANK_OUTWARD_SHIFT 8.0f
-#define FLANK_SKIP_CHANCE 0.25f
-#define FLANK_SKIP_LEFT_SEED 16001
-#define FLANK_SKIP_RIGHT_SEED 16002
+// Field site placement band, in unscaled X. Sites stay just outside the
+// corridor edge so GroundFlankStructures grounds them onto terrain cells.
+#define FIELD_X_MIN 15.6f
+#define FIELD_X_MAX 36.0f
+#define FIELD_X_FLOOR 15.5f
+#define FIELD_BREATHING_CHANCE 0.30f
+#define FIELD_BREATHING_SEED 17001
 
 typedef struct {
     bool occupied;
@@ -309,44 +312,20 @@ static bool IsGantryZone(int zoneKey) {
     return true;
 }
 
-static void PickFlankPair(const ZoneDescriptor *zone, int *leftArchetype, int *rightArchetype) {
-    // Even and odd zones use disjoint archetype families. Immediate repeats are
-    // therefore impossible without recursively evaluating earlier zones.
-    static const unsigned char choices[DISTRICT_THEME_COUNT][2][8] = {
-        { { 0, 6, 2, 8, 8, 6, 4, 6 }, { 1, 1, 3, 5, 7, 5, 1, 3 } },
-        { { 2, 6, 4, 6, 8, 6, 2, 4 }, { 5, 5, 3, 7, 1, 5, 3, 7 } },
-        { { 2, 6, 4, 8, 0, 2, 4, 6 }, { 1, 3, 5, 1, 7, 3, 5, 1 } },
-        { { 4, 6, 8, 4, 2, 6, 4, 6 }, { 7, 7, 3, 5, 1, 7, 3, 5 } },
-        { { 6, 6, 0, 6, 6, 8, 4, 6 }, { 5, 7, 1, 5, 3, 7, 5, 1 } }
-    };
-
-    int parity = FloorMod(zone->key, 2);
-    int leftIndex = (int)(SeededHash((uint32_t)zone->key, UINT32_C(0x53a9d21f)) & 7u);
-    int rightIndex = (int)(SeededHash((uint32_t)zone->key, UINT32_C(0xc3e94791)) & 7u);
-    *leftArchetype = choices[zone->theme][parity][leftIndex];
-    *rightArchetype = choices[zone->theme][parity][rightIndex];
-
-    // Compose the whole frame rather than allowing identical silhouettes on
-    // both flanks. Rotate through the same themed family for the second role.
-    for (int attempt = 0; attempt < 8 && *rightArchetype == *leftArchetype; attempt++) {
-        rightIndex = (rightIndex + 1) & 7;
-        *rightArchetype = choices[zone->theme][parity][rightIndex];
-    }
-
-    if (IsLandmarkZone(zone->key)) {
-        if (HashFloat(zone->key, 9095) < 0.5f) *leftArchetype = 9;
-        else *rightArchetype = 9;
-    }
-}
-
 // Jitter multiplier in range [1.0 - maxVar, 1.0 + maxVar]
 static inline float JitterMult(int zoneIdx, int seed, float maxVar) {
     return 1.0f + (HashFloat(zoneIdx, seed) * 2.0f - 1.0f) * maxVar;
 }
 
-static bool ShouldSkipFlank(int targetSector, float side) {
-    int seed = side < 0.0f ? FLANK_SKIP_LEFT_SEED : FLANK_SKIP_RIGHT_SEED;
-    return HashFloat(targetSector, seed) < FLANK_SKIP_CHANCE;
+// Zone-level "breathing room" roll: a whole zone drops to low density so some
+// stretches of the field read as open. The local-minimum window guarantees two
+// adjacent zones can never both be breathing, keeping the transition visible.
+static bool IsBreathingZone(int zoneKey) {
+    float score = HashFloat(zoneKey, FIELD_BREATHING_SEED);
+    if (score > FIELD_BREATHING_CHANCE) return false;
+    if (HashFloat(zoneKey - 1, FIELD_BREATHING_SEED) <= score) return false;
+    if (HashFloat(zoneKey + 1, FIELD_BREATHING_SEED) <= score) return false;
+    return true;
 }
 
 // Safely append a structure while reserving space for higher-value layers.
@@ -661,421 +640,96 @@ void ReseedEnvironment(EnvironmentSystem *env, uint32_t runSeed) {
     env->emissionSerial = 0;
 }
 
-// Procedurally generate a single flank (left or right) for a sector based on its macro-zone archetype
-static void GenerateFlank(EnvironmentSystem *env, float side, int targetSector, const ZoneDescriptor *zone,
-                          int sectorInZone, int archetype, float relativeZ, float sectorCenterZ,
-                          float compileScale) {
-    if (ShouldSkipFlank(targetSector, side)) return;
-
+// Places this sector's structure sites across the full visible width in one
+// correlated pass. Sites near the corridor edge stay low and short; the height
+// allowance grows with distance so the far field can carry megatower-scale
+// mass. Both sides are samples of the same continuous distribution, so the
+// corridor reads as an open field rather than two mirrored walls.
+static void GenerateFieldSites(EnvironmentSystem *env, const ZoneDescriptor *zone,
+                               int sectorInZone, float sectorCenterZ, float compileScale) {
+    int targetSector = zone->startSector + sectorInZone;
     int zoneIdx = zone->key;
-    float hwyX = side * 14.1f; // Outermost line of the 3-lane trench highway
-    float flankShift = zone->openness * 9.0f;
-    float heightScale = zone->heightScale;
+    float relativeZ = sectorCenterZ + (SECTOR_DEPTH * 0.5f);
+    float breathing = IsBreathingZone(zoneIdx) ? 0.3f : 1.0f;
 
-    switch (archetype) {
-        // =========================================================================
-        // ARCHETYPE 0: DIMM RAM BANKS (Dense rows of modular memory sticks)
-        // =========================================================================
-        case 0: {
-            float jBank = JitterMult(zoneIdx, 1010, 0.08f);
-            float jWidth = JitterMult(zoneIdx, 1011, 0.15f);
-            float bankX = side * ((18.5f + FLANK_OUTWARD_SHIFT + flankShift) * jBank);
-            float socketW = 8.5f * jWidth;
-            
-            // Continuous motherboard socket rail along the base
-            AddStructure(env, STRUCT_MEMORY_SLAB, (Vector3){ bankX, -2.6f, sectorCenterZ },
-                         (Vector3){ socketW, 0.55f, SECTOR_DEPTH }, compileScale);
+    float countRoll = 0.75f + 0.5f * HashFloat(targetSector, 13101);
+    int siteCount = (int)floorf((4.0f + zone->density * 8.0f) * (1.0f - 0.5f * zone->openness) *
+                                breathing * countRoll);
+    if (siteCount > 9) siteCount = 9;
 
-            // 4 vertical memory modules per sector (forms 16 aligned sticks across the 4-sector zone)
-            for (int m = 0; m < 4; m++) {
-                float modZ = relativeZ - (m * 4.0f + 2.0f);
-                float stickH = (3.8f + HashFloat(zoneIdx * 10 + sectorInZone, 100 + m) * 2.2f) *
-                               heightScale * compileScale;
-                float stickW = 7.0f * jWidth;
-                float stickD = 1.1f * JitterMult(zoneIdx, 1012 + m, 0.18f);
+    int sideFlip = (int)(HashFloat(targetSector, 13120) * 2.0f);
+    for (int i = 0; i < siteCount; i++) {
+        // Stratified slot: each site owns a slice of the width band, so a
+        // sector covers the full range instead of clumping where hashes land.
+        float slot = (float)i + 0.5f + (HashFloat(targetSector, 13110 + i) - 0.5f) * 0.8f;
+        float t = Clamp(slot / (float)siteCount, 0.05f, 0.95f);
+        float side = ((i + sideFlip) & 1) == 0 ? -1.0f : 1.0f;
+        float magnitude = FIELD_X_MIN + t * (FIELD_X_MAX - FIELD_X_MIN) +
+                          (HashFloat(targetSector, 13130 + i) - 0.5f) * 2.4f;
+        if (magnitude < FIELD_X_FLOOR) magnitude = FIELD_X_FLOOR;
+        float siteX = side * magnitude;
+        float siteZ = relativeZ - (0.5f + HashFloat(targetSector, 13140 + i) * 0.9f) * SECTOR_DEPTH;
 
-                AddStructure(env, STRUCT_MEMORY_SLAB, (Vector3){ bankX, -2.3f + stickH * 0.5f, modZ },
-                             (Vector3){ stickW, stickH, stickD }, compileScale);
+        // Height allowance: low and short near the flight path, tall far out.
+        float heightMax = Lerp(3.5f, 68.0f, Smooth01(t)) * zone->heightScale;
+        float siteH = (0.35f + 0.65f * HashFloat(targetSector, 13150 + i)) * heightMax * compileScale;
+        float shapeRoll = HashFloat(targetSector, 13160 + i);
+        float widthJitter = JitterMult(zoneIdx, 13180 + i, 0.18f);
 
-                // Feeder conduit from highway into stick base socket
-                AddConduitFeeder(env, hwyX, bankX - side * (stickW * 0.5f), -2.5f, modZ, 0.6f, compileScale);
-
-                // Rear feeder conduit connecting stick to rear bus
-                float rearBusX = bankX + side * (5.0f * jBank);
-                AddConduitFeeder(env, bankX + side * (stickW * 0.5f), rearBusX, -2.5f, modZ, 0.6f, compileScale);
-            }
-
-            // Rear parallel bus conduit
-            AddStructure(env, STRUCT_BUS_CONDUIT, (Vector3){ bankX + side * (5.0f * jBank), -2.6f, sectorCenterZ },
-                         (Vector3){ 0.55f, 0.55f, SECTOR_DEPTH }, compileScale);
-
-            // Overhead daisy-chain conduit linking the module peaks
-            AddConduitSpanZ(env, bankX, -2.3f + 3.8f * compileScale, relativeZ - 2.0f, relativeZ - 14.0f, compileScale);
-            break;
+        if (shapeRoll < 0.18f && t > 0.5f) {
+            // Antenna spike: thin needle with a grounding collar at its base.
+            float spikeW = (1.2f + HashFloat(targetSector, 13170 + i) * 0.5f) * widthJitter;
+            AddStructure(env, STRUCT_CACHE_TOWER,
+                         (Vector3){ siteX, -2.4f + siteH * 0.5f, siteZ },
+                         (Vector3){ spikeW, siteH, spikeW }, compileScale);
+            AddStructure(env, STRUCT_MEMORY_SLAB,
+                         (Vector3){ siteX, -2.4f + 0.4f * compileScale, siteZ },
+                         (Vector3){ spikeW * 2.6f, 0.8f * compileScale, spikeW * 2.6f }, compileScale);
+        } else if (siteH > 8.0f * compileScale) {
+            float siteW = (4.0f + shapeRoll * 5.0f) * widthJitter;
+            AddStructure(env, STRUCT_CACHE_TOWER,
+                         (Vector3){ siteX, -1.8f + siteH * 0.5f, siteZ },
+                         (Vector3){ siteW, siteH, siteW }, compileScale);
+        } else {
+            float siteW = (3.0f + shapeRoll * 5.0f) * widthJitter;
+            float siteD = siteW * (0.75f + 0.5f * HashFloat(targetSector, 13190 + i));
+            AddStructure(env, STRUCT_MEMORY_SLAB,
+                         (Vector3){ siteX, -2.4f + siteH * 0.5f, siteZ },
+                         (Vector3){ siteW, siteH, siteD }, compileScale);
         }
-
-        // =========================================================================
-        // ARCHETYPE 1: MAINFRAME SERVER RACKS (Chassis cabinets with heat-sink crowns)
-        // =========================================================================
-        case 1: {
-            float jRack = JitterMult(zoneIdx, 1020, 0.10f);
-            float rackX = side * ((20.0f + flankShift) * jRack);
-            float rackW = 8.5f * JitterMult(zoneIdx, 1021, 0.15f);
-            float rackD = 5.2f * JitterMult(zoneIdx, 1022, 0.18f);
-
-            for (int m = 0; m < 2; m++) {
-                float rackZ = relativeZ - (m * 8.0f + 4.0f);
-                float rackH = (5.5f + HashFloat(targetSector, 200 + m) * 3.5f) * heightScale * compileScale;
-
-                // Main server chassis
-                AddStructure(env, STRUCT_MEMORY_SLAB, (Vector3){ rackX, -1.8f + rackH * 0.5f, rackZ },
-                             (Vector3){ rackW, rackH, rackD }, compileScale);
-
-                // Heat sink crown on top of chassis
-                AddStructure(env, STRUCT_CACHE_TOWER, (Vector3){ rackX, -1.8f + rackH + (0.6f * compileScale), rackZ },
-                             (Vector3){ rackW * 0.8f, 1.2f * compileScale, rackD * 0.8f }, compileScale);
-
-                // Feeder conduit from trench highway to front face of server rack
-                float frontFaceX = rackX - side * (rackW * 0.5f);
-                AddConduitFeeder(env, hwyX, frontFaceX, -2.4f, rackZ, 1.2f, compileScale);
-
-                // Vertical riser conduit ascending rack front face
-                AddConduitRiser(env, frontFaceX - side * 0.3f, rackZ, -2.4f, -1.8f + rackH * 0.75f, compileScale);
-            }
-
-            // Daisy-chain conduit connecting the two chassis mid-height
-            AddConduitSpanZ(env, rackX, -1.8f + 2.5f * compileScale, relativeZ - 4.0f, relativeZ - 12.0f, compileScale);
-            break;
-        }
-
-        // =========================================================================
-        // ARCHETYPE 2: INTEGRATED PROCESSOR DIE (Large square BGA package & traces)
-        // =========================================================================
-        case 2: {
-            float jDie = JitterMult(zoneIdx, 1030, 0.08f);
-            float dieX = side * ((23.0f + flankShift) * jDie);
-            float dieSize = 13.5f * JitterMult(zoneIdx, 1031, 0.15f);
-
-            float zonePhase = ((float)sectorInZone + 0.5f) / (float)zone->length;
-            if (zonePhase > 0.20f && zonePhase < 0.80f) {
-                // Central microchip die
-                float substrateH = 1.4f * heightScale * compileScale;
-                float coreH = 3.0f * heightScale * compileScale;
-                float coreSize = dieSize * 0.55f;
-
-                // Substrate base
-                AddStructure(env, STRUCT_MEMORY_SLAB, (Vector3){ dieX, -2.4f + substrateH * 0.5f, sectorCenterZ },
-                             (Vector3){ dieSize, substrateH, dieSize }, compileScale);
-
-                // Silicon core die on top
-                AddStructure(env, STRUCT_CACHE_TOWER, (Vector3){ dieX, -2.4f + substrateH + coreH * 0.5f, sectorCenterZ },
-                             (Vector3){ coreSize, coreH, coreSize }, compileScale);
-
-                // 4 Corner Decoupling Capacitors
-                float capH = 4.0f * heightScale * compileScale;
-                float capOff = dieSize * 0.38f;
-                AddStructure(env, STRUCT_MEMORY_SLAB, (Vector3){ dieX - capOff, -2.4f + capH * 0.5f, sectorCenterZ - capOff },
-                             (Vector3){ 2.2f, capH, 2.2f }, compileScale);
-                AddStructure(env, STRUCT_MEMORY_SLAB, (Vector3){ dieX + capOff, -2.4f + capH * 0.5f, sectorCenterZ - capOff },
-                             (Vector3){ 2.2f, capH, 2.2f }, compileScale);
-                AddStructure(env, STRUCT_MEMORY_SLAB, (Vector3){ dieX - capOff, -2.4f + capH * 0.5f, sectorCenterZ + capOff },
-                             (Vector3){ 2.2f, capH, 2.2f }, compileScale);
-                AddStructure(env, STRUCT_MEMORY_SLAB, (Vector3){ dieX + capOff, -2.4f + capH * 0.5f, sectorCenterZ + capOff },
-                             (Vector3){ 2.2f, capH, 2.2f }, compileScale);
-
-                // 3 Radiating pin bus traces from die to trench highway
-                AddConduitFeeder(env, hwyX, dieX - side * (dieSize * 0.5f), -2.5f, sectorCenterZ - 3.5f, 0.7f, compileScale);
-                AddConduitFeeder(env, hwyX, dieX - side * (dieSize * 0.5f), -2.5f, sectorCenterZ,        0.9f, compileScale);
-                AddConduitFeeder(env, hwyX, dieX - side * (dieSize * 0.5f), -2.5f, sectorCenterZ + 3.5f, 0.7f, compileScale);
-
-                // Outer bus connection
-                AddConduitFeeder(env, dieX + side * (dieSize * 0.5f), side * 34.0f, -2.5f, sectorCenterZ, 0.9f, compileScale);
-            } else {
-                // Lead-in / lead-out auxiliary trace corridor
-                AddStructure(env, STRUCT_BUS_CONDUIT, (Vector3){ dieX, -2.6f, sectorCenterZ },
-                             (Vector3){ 0.6f, 0.6f, SECTOR_DEPTH }, compileScale);
-                AddStructure(env, STRUCT_MEMORY_SLAB, (Vector3){ side * ((19.0f + FLANK_OUTWARD_SHIFT + flankShift) * jDie), -2.0f, sectorCenterZ },
-                             (Vector3){ 6.0f, 1.2f * compileScale, 5.0f }, compileScale);
-                AddConduitFeeder(env, hwyX, side * ((16.0f + FLANK_OUTWARD_SHIFT + flankShift) * jDie), -2.5f, sectorCenterZ, 0.8f, compileScale);
-            }
-            break;
-        }
-
-        // =========================================================================
-        // ARCHETYPE 3: TRANSFORMER / CAPACITOR SUBSTATION (Power grid matrix)
-        // =========================================================================
-        case 3: {
-            float jDist = JitterMult(zoneIdx, 1040, 0.10f);
-            float node0X = side * ((16.5f + FLANK_OUTWARD_SHIFT + flankShift) * jDist);
-            float node0Z = relativeZ - 3.5f;
-            float node0H = (5.5f + HashFloat(targetSector, 301) * 2.5f) * heightScale * compileScale;
-            float node0W = 3.6f * JitterMult(zoneIdx, 1041, 0.18f);
-            AddStructure(env, STRUCT_CACHE_TOWER, (Vector3){ node0X, -1.8f + node0H * 0.5f, node0Z },
-                         (Vector3){ node0W, node0H, node0W }, compileScale);
-
-            float node1X = side * ((22.5f + flankShift) * jDist);
-            float node1Z = relativeZ - 8.0f;
-            float node1H = (8.0f + HashFloat(targetSector, 302) * 3.5f) * heightScale * compileScale;
-            float node1W = 4.5f * JitterMult(zoneIdx, 1042, 0.18f);
-            AddStructure(env, STRUCT_CACHE_TOWER, (Vector3){ node1X, -1.8f + node1H * 0.5f, node1Z },
-                         (Vector3){ node1W, node1H, node1W }, compileScale);
-
-            float node2X = side * ((17.0f + FLANK_OUTWARD_SHIFT + flankShift) * jDist);
-            float node2Z = relativeZ - 12.5f;
-            float node2H = (5.0f + HashFloat(targetSector, 303) * 2.0f) * heightScale * compileScale;
-            float node2W = 3.6f * JitterMult(zoneIdx, 1043, 0.18f);
-            AddStructure(env, STRUCT_CACHE_TOWER, (Vector3){ node2X, -1.8f + node2H * 0.5f, node2Z },
-                         (Vector3){ node2W, node2H, node2W }, compileScale);
-
-            // Elevated bus conduits linking node 0 -> 1 -> 2
-            AddConduitFeeder(env, node0X, node1X, -1.8f + node0H * 0.85f, (node0Z + node1Z) * 0.5f, 0.8f, compileScale);
-            AddConduitFeeder(env, node1X, node2X, -1.8f + node2H * 0.85f, (node1Z + node2Z) * 0.5f, 0.8f, compileScale);
-
-            // Feeder conduits connecting nodes to highway
-            AddConduitFeeder(env, hwyX, node0X - side * (node0W * 0.5f), -2.5f, node0Z, 0.6f, compileScale);
-            AddConduitFeeder(env, hwyX, node2X - side * (node2W * 0.5f), -2.5f, node2Z, 0.6f, compileScale);
-            break;
-        }
-
-        // =========================================================================
-        // ARCHETYPE 4: MONOLITH MEGATOWER DISTRICT (Sky-scraping towers & skybridges)
-        // =========================================================================
-        case 4: {
-            float jTow = JitterMult(zoneIdx, 1050, 0.10f);
-            float towerX = side * ((36.0f + flankShift) * jTow + HashFloat(targetSector, 401) * 10.0f);
-            float towerH = (32.0f + HashFloat(targetSector, 402) * 36.0f) * heightScale * compileScale;
-            float towerW = 9.0f * JitterMult(zoneIdx, 1051, 0.18f);
-
-            // Outer Mega-Monolith
-            AddStructure(env, STRUCT_CACHE_TOWER, (Vector3){ towerX, -1.5f + towerH * 0.5f, sectorCenterZ },
-                         (Vector3){ towerW, towerH, towerW }, compileScale);
-
-            // Midground relay pillar
-            float midX = side * ((22.5f + flankShift) * jTow);
-            float midH = (12.0f + HashFloat(targetSector, 403) * 8.0f) * heightScale * compileScale;
-            float midW = 5.5f * JitterMult(zoneIdx, 1052, 0.18f);
-            AddStructure(env, STRUCT_CACHE_TOWER, (Vector3){ midX, -1.8f + midH * 0.5f, sectorCenterZ },
-                         (Vector3){ midW, midH, midW }, compileScale);
-
-            // Inner pedestal block
-            float innerX = side * ((16.0f + FLANK_OUTWARD_SHIFT + flankShift) * jTow);
-            float innerH = (3.5f + HashFloat(targetSector, 404) * 2.5f) * heightScale * compileScale;
-            float innerW = 4.2f * JitterMult(zoneIdx, 1053, 0.18f);
-            AddStructure(env, STRUCT_MEMORY_SLAB, (Vector3){ innerX, -2.2f + innerH * 0.5f, sectorCenterZ },
-                         (Vector3){ innerW, innerH, innerW }, compileScale);
-
-            // High-altitude skybridge from monolith to midground relay
-            AddConduitFeeder(env, midX, towerX, -1.8f + midH * 0.85f, sectorCenterZ, 1.2f, compileScale);
-
-            // Lower bridge from midground relay to inner pedestal
-            AddConduitFeeder(env, innerX, midX, -2.2f + innerH * 0.85f, sectorCenterZ, 0.9f, compileScale);
-
-            // Feeder from inner pedestal into trench highway
-            AddConduitFeeder(env, hwyX, innerX - side * (innerW * 0.5f), -2.5f, sectorCenterZ, 0.8f, compileScale);
-            break;
-        }
-
-        // =========================================================================
-        // ARCHETYPE 5: CONDUIT EXCHANGE (5-lane multi-ribbon routing interchange)
-        // =========================================================================
-        case 5: {
-            float jCon = JitterMult(zoneIdx, 1060, 0.08f);
-            float line1X = side * ((15.6f + FLANK_OUTWARD_SHIFT + flankShift) * jCon);
-            float line2X = side * ((17.2f + FLANK_OUTWARD_SHIFT + flankShift) * jCon);
-
-            // Parallel high-speed data ribbons
-            AddStructure(env, STRUCT_BUS_CONDUIT, (Vector3){ line1X, -2.6f, sectorCenterZ },
-                         (Vector3){ 0.50f, 0.50f, SECTOR_DEPTH }, compileScale);
-            AddStructure(env, STRUCT_BUS_CONDUIT, (Vector3){ line2X, -2.6f, sectorCenterZ },
-                         (Vector3){ 0.50f, 0.50f, SECTOR_DEPTH }, compileScale);
-
-            // Central switching logic hub block
-            float hubX = side * ((19.8f + FLANK_OUTWARD_SHIFT + flankShift) * jCon);
-            float hubW = 6.5f * JitterMult(zoneIdx, 1061, 0.18f);
-            AddStructure(env, STRUCT_MEMORY_SLAB, (Vector3){ hubX, -2.2f, sectorCenterZ },
-                         (Vector3){ hubW, 1.2f * compileScale, 4.0f }, compileScale);
-
-            // Intersecting diagonal bus crossing between highway and hub
-            AddConduitFeeder(env, hwyX, hubX, -2.4f, sectorCenterZ - 3.5f, 0.7f, compileScale);
-            AddConduitFeeder(env, hwyX, hubX, -2.4f, sectorCenterZ + 3.5f, 0.7f, compileScale);
-            break;
-        }
-
-        // =========================================================================
-        // ARCHETYPE 6: SPARSE CORRIDOR (Visual negative space & telemetry nodes)
-        // =========================================================================
-        case 6: {
-            float jSparse = JitterMult(zoneIdx, 1070, 0.10f);
-            float nodeX = side * ((17.5f + FLANK_OUTWARD_SHIFT + flankShift) * jSparse);
-            float nodeW = 3.0f * JitterMult(zoneIdx, 1071, 0.20f);
-            float nodeH = (1.8f + HashFloat(targetSector, 601) * 1.5f) * heightScale * compileScale;
-            AddStructure(env, STRUCT_MEMORY_SLAB, (Vector3){ nodeX, -2.4f + nodeH * 0.5f, sectorCenterZ },
-                         (Vector3){ nodeW, nodeH, nodeW }, compileScale);
-
-            // Ground tap line to highway
-            AddConduitFeeder(env, hwyX, nodeX - side * (nodeW * 0.5f), -2.5f, sectorCenterZ, 0.6f, compileScale);
-            break;
-        }
-
-        // =========================================================================
-        // ARCHETYPE 7: ANTENNA SPIKE FIELD (Thin, tall spires & grounding slabs)
-        // =========================================================================
-        case 7: {
-            float jSpike = JitterMult(zoneIdx, 1080, 0.10f);
-            int spikeCount = (zone->density > 0.62f) ? 3 : 2;
-            for (int s = 0; s < spikeCount; s++) {
-                float spkZ = relativeZ - (s * 5.0f + 2.5f);
-                float spkX = side * (17.0f + FLANK_OUTWARD_SHIFT + flankShift + s * 4.0f + HashFloat(targetSector, 710 + s) * 3.0f) * jSpike;
-                float spkH = (16.0f + HashFloat(targetSector, 720 + s) * 20.0f) * heightScale * compileScale;
-                float spkW = (1.2f + HashFloat(targetSector, 730 + s) * 0.5f) * compileScale;
-
-                // Spire needle
-                AddStructure(env, STRUCT_CACHE_TOWER, (Vector3){ spkX, -2.4f + spkH * 0.5f, spkZ },
-                             (Vector3){ spkW, spkH, spkW }, compileScale);
-
-                // Base collar slab
-                AddStructure(env, STRUCT_MEMORY_SLAB, (Vector3){ spkX, -2.4f + 0.4f * compileScale, spkZ },
-                             (Vector3){ spkW * 2.6f, 0.8f * compileScale, spkW * 2.6f }, compileScale);
-
-                // Ground feeder line to highway
-                AddConduitFeeder(env, hwyX, spkX - side * (spkW * 1.3f), -2.5f, spkZ, 0.5f, compileScale);
-            }
-            break;
-        }
-
-        // =========================================================================
-        // ARCHETYPE 8: SERVER CRATE MAZE (Dense modular computing blocks)
-        // =========================================================================
-        case 8: {
-            float jCrate = JitterMult(zoneIdx, 1090, 0.10f);
-            float baseRackX = side * (18.0f + FLANK_OUTWARD_SHIFT + flankShift) * jCrate;
-            int crateColumns = (zone->density > 0.70f) ? 2 : 1;
-            for (int cx = 0; cx < crateColumns; cx++) {
-                for (int cz = 0; cz < 3; cz++) {
-                    float cZ = relativeZ - (cz * 5.0f + 2.5f);
-                    float cX = baseRackX + side * (cx * 5.2f * jCrate);
-                    float cH = (2.2f + HashFloat(targetSector, 810 + cx * 3 + cz) * 3.6f) * heightScale * compileScale;
-                    float cW = (3.4f + HashFloat(targetSector, 830 + cx * 3 + cz) * 1.0f) * compileScale;
-                    float cD = (3.4f + HashFloat(targetSector, 850 + cx * 3 + cz) * 1.0f) * compileScale;
-
-                    AddStructure(env, STRUCT_MEMORY_SLAB, (Vector3){ cX, -2.4f + cH * 0.5f, cZ },
-                                 (Vector3){ cW, cH, cD }, compileScale);
-
-                    // Cap tower accent on taller blocks
-                    if (cH > 3.8f * compileScale) {
-                        AddStructure(env, STRUCT_CACHE_TOWER, (Vector3){ cX, -2.4f + cH + 0.35f * compileScale, cZ },
-                                     (Vector3){ cW * 0.65f, 0.7f * compileScale, cD * 0.65f }, compileScale);
-                    }
-                }
-            }
-            AddConduitFeeder(env, hwyX, baseRackX, -2.5f, sectorCenterZ, 0.8f, compileScale);
-            break;
-        }
-
-        // =========================================================================
-        // ARCHETYPE 9: SUSPENDED LANDMARK BEACON (Rare magenta monolith showpiece)
-        // =========================================================================
-        case 9: {
-            float jBeacon = JitterMult(zoneIdx, 1100, 0.10f);
-            float beaconX = side * ((26.0f + flankShift) * jBeacon);
-            float beaconH = (36.0f + HashFloat(targetSector, 901) * 22.0f) * heightScale * compileScale;
-            float beaconW = (10.0f + HashFloat(targetSector, 902) * 4.0f) * compileScale;
-
-            // Core Monolithic Landmark (STRUCT_LANDMARK - magenta accent)
-            AddCriticalStructure(env, STRUCT_LANDMARK, (Vector3){ beaconX, -1.2f + beaconH * 0.5f, sectorCenterZ },
-                                 (Vector3){ beaconW, beaconH, beaconW }, compileScale);
-
-            // Surrounding stabilizer pylons (STRUCT_CACHE_TOWER)
-            float pylonH = beaconH * 0.45f;
-            float pylonOff = beaconW * 0.85f;
-            AddStructure(env, STRUCT_CACHE_TOWER, (Vector3){ beaconX - pylonOff, -2.2f + pylonH * 0.5f, sectorCenterZ - pylonOff },
-                         (Vector3){ 3.2f, pylonH, 3.2f }, compileScale);
-            AddStructure(env, STRUCT_CACHE_TOWER, (Vector3){ beaconX + pylonOff, -2.2f + pylonH * 0.5f, sectorCenterZ - pylonOff },
-                         (Vector3){ 3.2f, pylonH, 3.2f }, compileScale);
-            AddStructure(env, STRUCT_CACHE_TOWER, (Vector3){ beaconX - pylonOff, -2.2f + pylonH * 0.5f, sectorCenterZ + pylonOff },
-                         (Vector3){ 3.2f, pylonH, 3.2f }, compileScale);
-            AddStructure(env, STRUCT_CACHE_TOWER, (Vector3){ beaconX + pylonOff, -2.2f + pylonH * 0.5f, sectorCenterZ + pylonOff },
-                         (Vector3){ 3.2f, pylonH, 3.2f }, compileScale);
-
-            // High-altitude skybridge from landmark to trench highway
-            AddConduitFeeder(env, hwyX, beaconX - side * (beaconW * 0.5f), -2.0f + 2.5f * compileScale, sectorCenterZ, 1.4f, compileScale);
-            break;
-        }
-
-        default:
-            break;
-    }
-}
-
-// A compact composable grammar layered over the district archetype. Foundations,
-// stacked bodies, crowns, attachments, and network links are independently
-// derived, producing many silhouettes without adding meshes or asset data.
-static void GenerateModularSilhouette(EnvironmentSystem *env, float side, const ZoneDescriptor *zone,
-                                      int sectorInZone, float sectorCenterZ, float compileScale) {
-    if (sectorInZone != zone->length / 2) return;
-
-    int sideSeed = (side < 0.0f) ? 4101 : 4202;
-    float spawnChance = 0.18f + zone->density * 0.42f;
-    if (HashFloat(zone->key, sideSeed) > spawnChance) return;
-
-    float baseX = side * (27.0f + zone->openness * 14.0f + HashFloat(zone->key, sideSeed + 1) * 8.0f);
-    float baseW = 6.5f + HashFloat(zone->key, sideSeed + 2) * 6.0f;
-    float baseD = 5.5f + HashFloat(zone->key, sideSeed + 3) * 7.0f;
-    float foundationH = 0.8f * compileScale;
-
-    AddStructurePriority(env, STRUCT_MEMORY_SLAB,
-                         (Vector3){ baseX, -2.45f + foundationH * 0.5f, sectorCenterZ },
-                         (Vector3){ baseW * 1.18f, foundationH, baseD * 1.18f },
-                         compileScale, EMIT_STRUCTURAL, 0.0f);
-
-    int bodySegments = 1 + (int)(HashFloat(zone->key, sideSeed + 4) * 3.0f);
-    if (bodySegments > 3) bodySegments = 3;
-    float totalHeight = (9.0f + HashFloat(zone->key, sideSeed + 5) * 18.0f) *
-                        zone->heightScale * compileScale;
-    float segmentH = totalHeight / (float)bodySegments;
-    float bodyBottom = -2.45f + foundationH;
-    StructureType bodyType = (zone->theme == DISTRICT_MEMORY_CITY || zone->theme == DISTRICT_OPEN_VOID)
-                                 ? STRUCT_MEMORY_SLAB
-                                 : STRUCT_CACHE_TOWER;
-
-    for (int segment = 0; segment < bodySegments; segment++) {
-        float taper = 1.0f - 0.12f * (float)segment;
-        float twist = (HashFloat(zone->key, sideSeed + 20 + segment) - 0.5f) * baseW * 0.24f;
-        float y = bodyBottom + segmentH * ((float)segment + 0.5f);
-        AddStructurePriority(env, bodyType,
-                             (Vector3){ baseX + side * twist, y, sectorCenterZ },
-                             (Vector3){ baseW * taper, segmentH * 0.92f, baseD * taper },
-                             compileScale, EMIT_STRUCTURAL, 0.04f + 0.045f * (float)segment);
     }
 
-    // Crown profile: broad heat sink, narrow antenna, or offset processing cap.
-    int crown = (int)(HashFloat(zone->key, sideSeed + 6) * 3.0f);
-    float crownY = bodyBottom + totalHeight;
-    if (crown == 0) {
-        AddDetailStructure(env, STRUCT_CACHE_TOWER, (Vector3){ baseX, crownY + 0.45f, sectorCenterZ },
-                           (Vector3){ baseW * 1.12f, 0.9f, baseD * 0.78f }, compileScale, 0.16f);
-    } else if (crown == 1) {
-        AddDetailStructure(env, STRUCT_CACHE_TOWER, (Vector3){ baseX, crownY + 3.0f, sectorCenterZ },
-                           (Vector3){ 0.75f, 6.0f, 0.75f }, compileScale, 0.18f);
-    } else {
-        AddDetailStructure(env, STRUCT_MEMORY_SLAB,
-                           (Vector3){ baseX + side * baseW * 0.25f, crownY + 0.65f, sectorCenterZ },
-                           (Vector3){ baseW * 0.62f, 1.3f, baseD * 0.62f }, compileScale, 0.17f);
-    }
+    if (IsLandmarkZone(zoneIdx)) {
+        // The suspended landmark beacon keeps its rare-feature logic; the field
+        // sites above supply the surrounding context the archetypes used to.
+        float side = HashFloat(zoneIdx, 9095) < 0.5f ? -1.0f : 1.0f;
+        float jBeacon = JitterMult(zoneIdx, 1100, 0.10f);
+        float beaconX = side * ((26.0f + zone->openness * 9.0f) * jBeacon);
+        float beaconH = (36.0f + HashFloat(targetSector, 901) * 22.0f) * zone->heightScale * compileScale;
+        float beaconW = (10.0f + HashFloat(targetSector, 902) * 4.0f) * compileScale;
 
-    if (zone->density > 0.58f) {
-        float ribH = totalHeight * 0.42f;
-        float ribY = bodyBottom + ribH * 0.5f;
-        AddDetailStructure(env, STRUCT_MEMORY_SLAB,
-                           (Vector3){ baseX - side * baseW * 0.64f, ribY, sectorCenterZ },
-                           (Vector3){ 0.65f, ribH, baseD * 0.75f }, compileScale, 0.10f);
-        AddDetailStructure(env, STRUCT_MEMORY_SLAB,
-                           (Vector3){ baseX + side * baseW * 0.64f, ribY, sectorCenterZ },
-                           (Vector3){ 0.65f, ribH, baseD * 0.75f }, compileScale, 0.12f);
-    }
+        AddCriticalStructure(env, STRUCT_LANDMARK,
+                             (Vector3){ beaconX, -1.2f + beaconH * 0.5f, sectorCenterZ },
+                             (Vector3){ beaconW, beaconH, beaconW }, compileScale);
 
-    AddConduitFeeder(env, side * 14.1f, baseX - side * baseW * 0.6f, -2.5f,
-                     sectorCenterZ, 0.75f, compileScale);
+        float pylonH = beaconH * 0.45f;
+        float pylonOff = beaconW * 0.85f;
+        AddStructure(env, STRUCT_CACHE_TOWER,
+                     (Vector3){ beaconX - pylonOff, -2.2f + pylonH * 0.5f, sectorCenterZ - pylonOff },
+                     (Vector3){ 3.2f, pylonH, 3.2f }, compileScale);
+        AddStructure(env, STRUCT_CACHE_TOWER,
+                     (Vector3){ beaconX + pylonOff, -2.2f + pylonH * 0.5f, sectorCenterZ - pylonOff },
+                     (Vector3){ 3.2f, pylonH, 3.2f }, compileScale);
+        AddStructure(env, STRUCT_CACHE_TOWER,
+                     (Vector3){ beaconX - pylonOff, -2.2f + pylonH * 0.5f, sectorCenterZ + pylonOff },
+                     (Vector3){ 3.2f, pylonH, 3.2f }, compileScale);
+        AddStructure(env, STRUCT_CACHE_TOWER,
+                     (Vector3){ beaconX + pylonOff, -2.2f + pylonH * 0.5f, sectorCenterZ + pylonOff },
+                     (Vector3){ 3.2f, pylonH, 3.2f }, compileScale);
+
+        AddConduitFeeder(env, side * 14.1f, beaconX - side * (beaconW * 0.5f),
+                         -2.0f + 2.5f * compileScale, sectorCenterZ, 1.4f, compileScale);
+    }
 }
 
 static void GenerateRavineObject(EnvironmentSystem *env, int targetSector,
@@ -1150,24 +804,11 @@ static void GenerateEnvironmentStructures(EnvironmentSystem *env, double virtual
         AddCriticalStructure(env, STRUCT_BUS_CONDUIT, (Vector3){  14.1f, rightOuterY, sectorCenterZ }, (Vector3){ 0.40f, 0.40f, SECTOR_DEPTH }, compileScale);
 
         // =========================================================================
-        // 2. DISTRICT-COMPOSED PROCEDURAL FLANKS
+        // 2. 2D FIELD STRUCTURE SITES (continuous full-width distribution)
         // =========================================================================
         ZoneDescriptor zone = DescribeZoneForSector(targetSector);
         int sectorInZone = targetSector - zone.startSector;
-        int leftArchetype = 0;
-        int rightArchetype = 0;
-        PickFlankPair(&zone, &leftArchetype, &rightArchetype);
-
-        GenerateFlank(env, -1.0f, targetSector, &zone, sectorInZone, leftArchetype,
-                      relativeZ, sectorCenterZ, compileScale);
-        GenerateFlank(env,  1.0f, targetSector, &zone, sectorInZone, rightArchetype,
-                      relativeZ, sectorCenterZ, compileScale);
-        if (!ShouldSkipFlank(targetSector, -1.0f)) {
-            GenerateModularSilhouette(env, -1.0f, &zone, sectorInZone, sectorCenterZ, compileScale);
-        }
-        if (!ShouldSkipFlank(targetSector, 1.0f)) {
-            GenerateModularSilhouette(env, 1.0f, &zone, sectorInZone, sectorCenterZ, compileScale);
-        }
+        GenerateFieldSites(env, &zone, sectorInZone, sectorCenterZ, compileScale);
         GenerateRavineObject(env, targetSector, sectorCenterZ, compileScale);
 
         // =========================================================================
@@ -1269,24 +910,19 @@ bool ValidateEnvironmentGenerator(EnvironmentValidationReport *report) {
     report->unsupportedFlankStructures = 0;
     report->unsupportedRavineStructures = 0;
     report->unsupportedFarStructures = 0;
+    report->fieldCoverageViolations = 0;
 
-    int previousLeft = -1;
-    int previousRight = -1;
     int previousLandmark = -1000000;
     for (int zoneKey = -1024; zoneKey < 1024; zoneKey++) {
-        ZoneDescriptor zone = DescribeZoneByKey(zoneKey);
-        int left = 0;
-        int right = 0;
-        PickFlankPair(&zone, &left, &right);
-        if (left == previousLeft || right == previousRight) report->adjacentRepeatViolations++;
+        // The field has no per-zone archetype anymore; the macro-composition
+        // invariant is that breathing zones never sit next to each other.
+        if (IsBreathingZone(zoneKey) && IsBreathingZone(zoneKey - 1)) report->adjacentRepeatViolations++;
 
         if (IsLandmarkZone(zoneKey)) {
             if (zoneKey - previousLandmark <= 3) report->landmarkSpacingViolations++;
             previousLandmark = zoneKey;
         }
 
-        previousLeft = left;
-        previousRight = right;
         report->zonesChecked++;
     }
 
@@ -1295,6 +931,16 @@ bool ValidateEnvironmentGenerator(EnvironmentValidationReport *report) {
     };
     uint32_t originalSeed = g_environmentSeed;
     EnvironmentSystem probe = { 0 };
+
+    // Field X-coverage histogram (scaled |x|), per side. Guards against the
+    // old failure mode where all mass clustered into two narrow X bands: every
+    // side must reach both the corridor-adjacent and the far-reach bins, and
+    // no single bin may dominate the distribution.
+    enum { FIELD_BIN_COUNT = 5 };
+    const float fieldBinStart = CORRIDOR_EDGE_X;
+    const float fieldBinEnd = 66.0f;
+    int fieldBins[2][FIELD_BIN_COUNT] = { 0 };
+    int fieldTotal = 0;
     for (int seedIndex = 0; seedIndex < (int)(sizeof(validationSeeds) / sizeof(validationSeeds[0]));
          seedIndex++) {
         g_environmentSeed = validationSeeds[seedIndex];
@@ -1318,6 +964,16 @@ bool ValidateEnvironmentGenerator(EnvironmentValidationReport *report) {
             for (int i = 0; i < probe.structureCount; i++) {
                 const EnvironmentStructure *structure = &probe.structures[i];
                 float bottom = structure->position.y - structure->size.y * 0.5f;
+                if (fabsf(structure->position.x) >= CORRIDOR_EDGE_X) {
+                    int sideBin = structure->position.x < 0.0f ? 0 : 1;
+                    float binF = (fabsf(structure->position.x) - fieldBinStart) /
+                                 (fieldBinEnd - fieldBinStart);
+                    int bin = (int)floorf(binF * (float)FIELD_BIN_COUNT);
+                    if (bin < 0) bin = 0;
+                    if (bin >= FIELD_BIN_COUNT) bin = FIELD_BIN_COUNT - 1;
+                    fieldBins[sideBin][bin]++;
+                    fieldTotal++;
+                }
                 if (fabsf(structure->position.x) < CORRIDOR_EDGE_X && bottom >= -4.0f) continue;
                 if (!HasTerrainFoundation(&probe, virtualPlayerZ, structure)) {
                     report->unsupportedStructures++;
@@ -1338,8 +994,23 @@ bool ValidateEnvironmentGenerator(EnvironmentValidationReport *report) {
     }
     g_environmentSeed = originalSeed;
 
+    if (fieldTotal == 0) {
+        report->fieldCoverageViolations++;
+    } else {
+        for (int side = 0; side < 2; side++) {
+            if (fieldBins[side][0] == 0) report->fieldCoverageViolations++;
+            int farReach = fieldBins[side][FIELD_BIN_COUNT - 2] + fieldBins[side][FIELD_BIN_COUNT - 1];
+            if (farReach == 0) report->fieldCoverageViolations++;
+        }
+        for (int bin = 0; bin < FIELD_BIN_COUNT; bin++) {
+            int binTotal = fieldBins[0][bin] + fieldBins[1][bin];
+            if (binTotal * 100 > fieldTotal * 60) report->fieldCoverageViolations++;
+        }
+    }
+
     return report->adjacentRepeatViolations == 0 &&
            report->landmarkSpacingViolations == 0 &&
+           report->fieldCoverageViolations == 0 &&
            report->droppedStructures == 0 &&
            report->unsupportedStructures == 0;
 }
