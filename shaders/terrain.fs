@@ -16,25 +16,29 @@ uniform vec3 uSecondaryColor;
 void main()
 {
     vec3 normal = normalize(fragNormal);
-    vec3 lightDir = normalize(vec3(-0.32, 0.82, 0.38));
-    float diffuse = max(dot(normal, lightDir), 0.0);
     float upward = max(normal.y, 0.0);
 
-    float seedPhase = float(uint(uRunSeed) & 1023u) * 0.006135923;
-    float strata = 0.5 + 0.5 * sin(fragPosition.y * 1.7 + fragPosition.x * 0.08 + seedPhase);
-    float edge = 1.0 - smoothstep(0.34, 0.48,
-                                max(abs(fragLocalPos.x), abs(fragLocalPos.z)));
-    float terraceLine = 1.0 - smoothstep(0.035, 0.075,
-                                       abs(fract(fragPosition.y * 0.24 + seedPhase) - 0.5));
-
-    vec3 rock = mix(vec3(0.006, 0.009, 0.014), vec3(0.025, 0.032, 0.042),
-                    0.22 + diffuse * 0.58 + upward * 0.20);
-    rock += mix(uSecondaryColor, uPrimaryColor, 0.35) * strata * 0.018;
-
-    float digitalEnergy = (edge * 0.025 + terraceLine * upward * 0.045) *
-                          (0.55 + uIntensity * 0.45);
-    vec3 color = rock + mix(uSecondaryColor, uPrimaryColor, 0.58) * digitalEnergy;
-    vec3 fog = mix(vec3(0.004, 0.007, 0.016), uSecondaryColor, 0.018);
+    // Dark glass base
+    vec3 baseColor = mix(vec3(0.002, 0.005, 0.010), uSecondaryColor * 0.05, 0.5);
+    
+    // Grid lines in world space (X and Z)
+    float gridX = 1.0 - smoothstep(0.0, 0.05, abs(fract(fragPosition.x * 0.25) - 0.5));
+    float gridZ = 1.0 - smoothstep(0.0, 0.05, abs(fract(fragPosition.z * 0.25) - 0.5));
+    float grid = max(gridX, gridZ) * upward;
+    
+    // Moving data pulses along the grid
+    float pulse = sin(fragPosition.z * 0.5 - uTime * 4.0) * 0.5 + 0.5;
+    pulse *= sin(fragPosition.x * 0.5 + uTime * 2.0) * 0.5 + 0.5;
+    
+    // Edge highlights (from instanced cubes)
+    float edge = 1.0 - smoothstep(0.45, 0.49, max(abs(fragLocalPos.x), abs(fragLocalPos.z)));
+    
+    vec3 gridColor = mix(uSecondaryColor, uPrimaryColor, pulse);
+    vec3 glow = gridColor * (grid * 0.4 + edge * 0.3) * (0.5 + uIntensity * 1.5);
+    
+    vec3 color = baseColor + glow;
+    
+    vec3 fog = mix(vec3(0.002, 0.004, 0.012), uSecondaryColor * 0.035, uIntensity);
     color = mix(fog, color, fragFade);
 
     finalColor = vec4(color, 1.0);

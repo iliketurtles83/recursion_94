@@ -33,6 +33,7 @@ typedef struct {
     int backdropSeedLoc;
     int backdropPrimaryLoc;
     int backdropSecondaryLoc;
+    int backdropEncounterLoc;
     bool ready;
 } PostProcessSystem;
 
@@ -97,6 +98,7 @@ static void InitPostProcess(PostProcessSystem *post, int width, int height,
     post->backdropSeedLoc = GetShaderLocation(post->backdropShader, "uRunSeed");
     post->backdropPrimaryLoc = GetShaderLocation(post->backdropShader, "uPrimaryColor");
     post->backdropSecondaryLoc = GetShaderLocation(post->backdropShader, "uSecondaryColor");
+    post->backdropEncounterLoc = GetShaderLocation(post->backdropShader, "uEncounterIndex");
     SetShaderValue(post->backdropShader, backdropResolutionLoc, &resolution, SHADER_UNIFORM_VEC2);
     SetPostProcessTheme(post, seed, primary, secondary);
 
@@ -112,10 +114,12 @@ static void BeginCraftPass(PostProcessSystem *post, float time, float intensity)
 }
 
 static void DrawRaymarchBackdrop(PostProcessSystem *post, float time, float intensity,
-                                  int width, int height) {
+                                  int encounterIndex, int width, int height) {
     SetShaderValue(post->backdropShader, post->backdropTimeLoc, &time, SHADER_UNIFORM_FLOAT);
     SetShaderValue(post->backdropShader, post->backdropIntensityLoc, &intensity,
                    SHADER_UNIFORM_FLOAT);
+    SetShaderValue(post->backdropShader, post->backdropEncounterLoc, &encounterIndex,
+                   SHADER_UNIFORM_INT);
     BeginShaderMode(post->backdropShader);
         DrawRectangle(0, 0, width, height, WHITE);
     EndShaderMode();
@@ -153,11 +157,13 @@ int main(int argc, char **argv) {
     EnvironmentValidationReport generationReport;
     bool generationValid = ValidateEnvironmentGenerator(&generationReport);
     TraceLog(generationValid ? LOG_INFO : LOG_ERROR,
-             "GENERATOR: zones=%d repeats=%d landmark-spacing=%d field=%d peak=%d terrain=%d far=%d unsupported=%d(flank=%d ravine=%d far=%d) dropped=%d",
+             "GENERATOR: zones=%d repeats=%d landmark-spacing=%d field=%d clearance=%d conduit=%d peak=%d terrain=%d far=%d unsupported=%d(flank=%d ravine=%d far=%d) dropped=%d",
              generationReport.zonesChecked,
              generationReport.adjacentRepeatViolations,
              generationReport.landmarkSpacingViolations,
              generationReport.fieldCoverageViolations,
+             generationReport.crossingClearanceViolations,
+             generationReport.conduitFlowViolations,
              generationReport.peakStructureCount,
              generationReport.peakTerrainCount,
              generationReport.peakFarStructureCount,
@@ -422,7 +428,7 @@ int main(int argc, char **argv) {
             BeginTextureMode(post.target);
                 ClearBackground((Color){ 2, 3, 10, 255 });
                 DrawRaymarchBackdrop(&post, game.runTime, musicIntensity,
-                                      renderWidth, renderHeight);
+                                      game.boss.encounterIndex, renderWidth, renderHeight);
                 DrawDemosceneBackdrop(&demo, game.runTime, musicIntensity,
                                       renderWidth, renderHeight);
                 BeginMode3D(camera);

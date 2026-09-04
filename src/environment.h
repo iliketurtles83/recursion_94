@@ -27,6 +27,10 @@ typedef struct {
     StructureType type;
     float compileScale; // 0.0 to 1.0 based on horizon proximity
     bool active;
+    Vector3 edgeStart;
+    Vector3 edgeEnd;
+    float edgeLength;
+    uint32_t edgeSeed;
 } EnvironmentStructure;
 
 typedef struct {
@@ -47,6 +51,8 @@ typedef struct {
     int unsupportedRavineStructures;
     int unsupportedFarStructures;
     int fieldCoverageViolations;
+    int crossingClearanceViolations;
+    int conduitFlowViolations;
 } EnvironmentValidationReport;
 
 typedef struct {

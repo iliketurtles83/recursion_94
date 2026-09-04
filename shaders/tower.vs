@@ -54,8 +54,8 @@ void main()
     mat3 normalMatrix = transpose(inverse(mat3(instanceTransform)));
     fragNormal = normalize(normalMatrix * vertexNormal);
 
-    // Apply instance transform matrix to vertex position
-    vec4 worldPos = instanceTransform * vec4(localPos, 1.0);
+    // Apply instance transform matrix to vertex position (affine: 3x3 scale/rot + translation)
+    vec4 worldPos = vec4(mat3(instanceTransform) * localPos + instanceTransform[3].xyz, 1.0);
 
     // Architecture is deliberately rigid. Temporal vertex displacement made
     // separately instanced roof pieces shear against their parent buildings
@@ -74,7 +74,9 @@ void main()
     float horizonFactor = fadeIn * fadeOut;
 
     fragPosition = worldPos.xyz;
-    fragColor = vertexColor;
+    // Repurpose instance transform 4th row slack as per-instance channel
+    fragColor = vec4(instanceTransform[0].w, instanceTransform[1].w,
+                      instanceTransform[2].w, instanceTransform[3].w);
     fragDist = horizonFactor;
 
     // Project world space position to clip space

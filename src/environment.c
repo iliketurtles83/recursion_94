@@ -47,14 +47,22 @@ static const unsigned char ZONE_PATTERNS[][4] = {
 #define ZONE_PATTERN_COUNT ((int)(sizeof(ZONE_PATTERNS) / sizeof(ZONE_PATTERNS[0])))
 #define ENVIRONMENT_LATERAL_SCALE 1.5f
 #define CORRIDOR_EDGE_X (15.0f * ENVIRONMENT_LATERAL_SCALE)
+#define CONDUIT_PLAYER_MAX_Y 7.0f
+#define CONDUIT_PLAYER_MAX_X (10.0f * ENVIRONMENT_LATERAL_SCALE)
+#define CONDUIT_CLEARANCE_MARGIN_Y 3.5f
+#define CONDUIT_MIN_CROSSING_Y (CONDUIT_PLAYER_MAX_Y + CONDUIT_CLEARANCE_MARGIN_Y)
+#define MAX_SITES_PER_SECTOR 9
+#define MAX_CONDUIT_SPAN_DISTANCE 64.0f
 #define TERRAIN_CELL_WIDTH 8.0f
 #define TERRAIN_BASE_Y -28.0f
-// Field site placement band, in unscaled X. Sites stay just outside the
-// corridor edge so GroundFlankStructures grounds them onto terrain cells.
+// Field site placement band, in unscaled X. Sites range from just outside the
+// corridor edge to the outer edge of generated terrain (cellX +/-12 reaches 96.0f scaled).
 #define FIELD_X_MIN 15.6f
-#define FIELD_X_MAX 36.0f
+#define FIELD_X_MAX 62.0f
 #define FIELD_X_FLOOR 15.5f
-#define FIELD_BREATHING_CHANCE 0.30f
+// Effective breathing-zone rate after IsBreathingZone's local-minimum filter
+// (which multiplies by ~1/3) is ~18%, inside the 15-20% target band.
+#define FIELD_BREATHING_CHANCE 0.55f
 #define FIELD_BREATHING_SEED 17001
 
 typedef struct {
@@ -128,23 +136,19 @@ static float ValueNoise1D(float position, int seed) {
     return Lerp(a, b, Smooth01(local));
 }
 
-static TerrainSupport SampleTerrainSupport(int cellX, int sector) {
+static TerrainSupport SampleTerrainSupport(int cellX, int sector __attribute__((unused))) {
     TerrainSupport support = { 0 };
     int distanceFromCenter = cellX < 0 ? -cellX : cellX;
-    uint32_t identity = (uint32_t)cellX * UINT32_C(0x9e3779b9) ^
-                        (uint32_t)sector * UINT32_C(0x85ebca6b);
-    float detail = (float)(SeededHash(identity, UINT32_C(0x4cf5ad43)) & 0xffffu) / 65535.0f;
-    float longitudinal = ValueNoise1D((float)sector * 0.20f + (float)cellX * 0.11f, 14001);
-    float broadRelief = floorf(longitudinal * 4.0f) * 1.25f;
-    float localStep = floorf(detail * 3.0f) * 0.65f;
-    float shoulder = powf((float)distanceFromCenter /
-                          (4.0f * ENVIRONMENT_LATERAL_SCALE), 1.35f) * 5.2f;
-
+    
     support.occupied = true;
-    support.topY = -6.4f + shoulder + broadRelief + localStep;
-    if (distanceFromCenter <= 1) support.topY -= 0.9f;
-    if (support.topY > 2.0f) support.topY = 2.0f;
-    support.widthScale = 1.03f;
+    
+    // Clean geometric data trench
+    support.topY = -4.0f;
+    if (distanceFromCenter >= 2) support.topY = -2.0f;
+    if (distanceFromCenter >= 5) support.topY = 0.0f;
+    if (distanceFromCenter >= 8) support.topY = 2.0f;
+    
+    support.widthScale = 1.0f;
     return support;
 }
 
@@ -152,9 +156,16 @@ static int TerrainCellForX(float x) {
     return (int)floorf(x / TERRAIN_CELL_WIDTH + 0.5f);
 }
 
+static inline float GetTerrainGroundOffset(float unscaledX, int sector) {
+    int cellX = TerrainCellForX(ScaleEnvironmentX(unscaledX));
+    TerrainSupport support = SampleTerrainSupport(cellX, sector);
+    return support.topY + 3.0f;
+}
+
 static void GroundFlankStructures(EnvironmentSystem *env, double virtualPlayerZ) {
     for (int i = 0; i < env->structureCount; i++) {
         EnvironmentStructure *structure = &env->structures[i];
+        if (structure->type == STRUCT_BUS_CONDUIT) continue;
         if (fabsf(structure->position.x) < CORRIDOR_EDGE_X) continue;
 
         int cellX = TerrainCellForX(structure->position.x);
@@ -329,8 +340,8 @@ static bool IsBreathingZone(int zoneKey) {
 }
 
 // Safely append a structure while reserving space for higher-value layers.
-static inline void AddStructurePriority(EnvironmentSystem *env, StructureType type, Vector3 pos, Vector3 size,
-                                        float compileScale, EmitPriority priority, float phaseOffset) {
+static inline int AddStructurePriority(EnvironmentSystem *env, StructureType type, Vector3 pos, Vector3 size,
+                                       float compileScale, EmitPriority priority, float phaseOffset) {
     int serial = env->emissionSerial++;
     float typePhase = 0.0f;
     if (type == STRUCT_CACHE_TOWER) typePhase = 0.07f;
@@ -338,7 +349,7 @@ static inline void AddStructurePriority(EnvironmentSystem *env, StructureType ty
     else if (type == STRUCT_BUS_CONDUIT) typePhase = 0.18f;
     float jitterPhase = HashFloat(env->emissionSector, 12000 + serial * 17) * 0.07f;
     float gate = Smooth01((compileScale - typePhase - phaseOffset - jitterPhase) / 0.30f);
-    if (gate <= 0.001f) return;
+    if (gate <= 0.001f) return -1;
 
     int limit = MAX_STRUCTURES;
     if (priority == EMIT_DETAIL) limit -= 192;
@@ -347,7 +358,7 @@ static inline void AddStructurePriority(EnvironmentSystem *env, StructureType ty
 
     if (env->structureCount >= limit) {
         env->droppedStructures++;
-        return;
+        return -1;
     }
 
     // Existing archetypes already apply the broad compile scale. This second,
@@ -366,6 +377,21 @@ static inline void AddStructurePriority(EnvironmentSystem *env, StructureType ty
     env->structures[idx].size = size;
     env->structures[idx].compileScale = gate;
     env->structures[idx].active = true;
+    env->structures[idx].edgeStart = (Vector3){ 0 };
+    env->structures[idx].edgeEnd = (Vector3){ 0 };
+    env->structures[idx].edgeLength = 0.0f;
+    env->structures[idx].edgeSeed = 0;
+    return idx;
+}
+
+static inline void AttachConduitEdgeData(EnvironmentSystem *env, int idx, Vector3 start, Vector3 end,
+                                         float length, uint32_t seed) {
+    if (idx >= 0 && idx < env->structureCount) {
+        env->structures[idx].edgeStart = start;
+        env->structures[idx].edgeEnd = end;
+        env->structures[idx].edgeLength = length;
+        env->structures[idx].edgeSeed = seed;
+    }
 }
 
 static inline void AddStructure(EnvironmentSystem *env, StructureType type, Vector3 pos, Vector3 size, float compileScale) {
@@ -382,29 +408,54 @@ static inline void AddDetailStructure(EnvironmentSystem *env, StructureType type
     AddStructurePriority(env, type, pos, size, compileScale, EMIT_DETAIL, phaseOffset);
 }
 
-// Exact geometric socket connectors
-static inline void AddConduitFeeder(EnvironmentSystem *env, float fromX, float toX, float y, float z, float widthZ, float compileScale) {
+// Geometric socket connectors with edge identity preservation
+static inline int AddConduitFeederEx(EnvironmentSystem *env, float fromX, float toX, float y, float z,
+                                     float sizeY, float sizeZ, float compileScale,
+                                     Vector3 edgeStart, Vector3 edgeEnd, float edgeLength, uint32_t edgeSeed) {
     float len = fabsf(toX - fromX);
-    if (len < 0.2f) return;
+    if (len < 0.2f) return -1;
     float midX = (fromX + toX) * 0.5f;
-    AddStructurePriority(env, STRUCT_BUS_CONDUIT, (Vector3){ midX, y, z }, (Vector3){ len, 0.45f, widthZ },
-                         compileScale, EMIT_CONNECTION, 0.0f);
+    int idx = AddStructurePriority(env, STRUCT_BUS_CONDUIT, (Vector3){ midX, y, z },
+                                   (Vector3){ len, sizeY, sizeZ }, compileScale, EMIT_CONNECTION, 0.0f);
+    AttachConduitEdgeData(env, idx, edgeStart, edgeEnd, edgeLength, edgeSeed);
+    return idx;
+}
+
+static inline int AddConduitRiserEx(EnvironmentSystem *env, float x, float z, float fromY, float toY,
+                                    float sizeX, float sizeZ, float compileScale,
+                                    Vector3 edgeStart, Vector3 edgeEnd, float edgeLength, uint32_t edgeSeed) {
+    float h = fabsf(toY - fromY);
+    if (h < 0.2f) return -1;
+    float midY = (fromY + toY) * 0.5f;
+    int idx = AddStructurePriority(env, STRUCT_BUS_CONDUIT, (Vector3){ x, midY, z },
+                                   (Vector3){ sizeX, h, sizeZ }, compileScale, EMIT_CONNECTION, 0.0f);
+    AttachConduitEdgeData(env, idx, edgeStart, edgeEnd, edgeLength, edgeSeed);
+    return idx;
+}
+
+static inline int AddConduitSpanZEx(EnvironmentSystem *env, float x, float y, float fromZ, float toZ,
+                                    float sizeX, float sizeY, float compileScale,
+                                    Vector3 edgeStart, Vector3 edgeEnd, float edgeLength, uint32_t edgeSeed) {
+    float lenZ = fabsf(toZ - fromZ);
+    if (lenZ < 0.2f) return -1;
+    float midZ = (fromZ + toZ) * 0.5f;
+    int idx = AddStructurePriority(env, STRUCT_BUS_CONDUIT, (Vector3){ x, y, midZ },
+                                   (Vector3){ sizeX, sizeY, lenZ }, compileScale, EMIT_CONNECTION, 0.0f);
+    AttachConduitEdgeData(env, idx, edgeStart, edgeEnd, edgeLength, edgeSeed);
+    return idx;
+}
+
+static inline void AddConduitFeeder(EnvironmentSystem *env, float fromX, float toX, float y, float z,
+                                    float widthZ, float compileScale) {
+    AddConduitFeederEx(env, fromX, toX, y, z, 0.45f, widthZ, compileScale, (Vector3){ 0 }, (Vector3){ 0 }, 0.0f, 0);
 }
 
 static inline void AddConduitRiser(EnvironmentSystem *env, float x, float z, float fromY, float toY, float compileScale) {
-    float h = fabsf(toY - fromY);
-    if (h < 0.2f) return;
-    float midY = (fromY + toY) * 0.5f;
-    AddStructurePriority(env, STRUCT_BUS_CONDUIT, (Vector3){ x, midY, z }, (Vector3){ 0.55f, h, 0.55f },
-                         compileScale, EMIT_CONNECTION, 0.0f);
+    AddConduitRiserEx(env, x, z, fromY, toY, 0.55f, 0.55f, compileScale, (Vector3){ 0 }, (Vector3){ 0 }, 0.0f, 0);
 }
 
 static inline void AddConduitSpanZ(EnvironmentSystem *env, float x, float y, float fromZ, float toZ, float compileScale) {
-    float lenZ = fabsf(toZ - fromZ);
-    if (lenZ < 0.2f) return;
-    float midZ = (fromZ + toZ) * 0.5f;
-    AddStructurePriority(env, STRUCT_BUS_CONDUIT, (Vector3){ x, y, midZ }, (Vector3){ 0.55f, 0.50f, lenZ },
-                         compileScale, EMIT_CONNECTION, 0.0f);
+    AddConduitSpanZEx(env, x, y, fromZ, toZ, 0.55f, 0.50f, compileScale, (Vector3){ 0 }, (Vector3){ 0 }, 0.0f, 0);
 }
 
 // A compact chamfered unit block replaces the razor-edged stock cube. The
@@ -640,68 +691,188 @@ void ReseedEnvironment(EnvironmentSystem *env, uint32_t runSeed) {
     env->emissionSerial = 0;
 }
 
-// Places this sector's structure sites across the full visible width in one
-// correlated pass. Sites near the corridor edge stay low and short; the height
-// allowance grows with distance so the far field can carry megatower-scale
-// mass. Both sides are samples of the same continuous distribution, so the
-// corridor reads as an open field rather than two mirrored walls.
+typedef struct {
+    Vector3 position;
+    Vector3 size;
+    Vector3 socket;
+    StructureType type;
+} FieldSite;
+
+static inline float Vec3Dist(Vector3 a, Vector3 b) {
+    float dx = a.x - b.x;
+    float dy = a.y - b.y;
+    float dz = a.z - b.z;
+    return sqrtf(dx * dx + dy * dy + dz * dz);
+}
+
+// Computes structure sites for a sector deterministically and returns site count.
+static int CollectSectorFieldSites(int targetSector, float sectorCenterZ, FieldSite *outSites, int maxSites) {
+    if (!outSites || maxSites <= 0) return 0;
+
+    ZoneDescriptor zone = DescribeZoneForSector(targetSector);
+    int zoneIdx = zone.key;
+    float relativeZ = sectorCenterZ + (SECTOR_DEPTH * 0.5f);
+    bool breathing = IsBreathingZone(zoneIdx);
+
+    float effectiveDensity = zone.density * (1.0f - zone.openness * 0.45f);
+    if (zone.theme == DISTRICT_OPEN_VOID) effectiveDensity *= 0.50f;
+    if (breathing) effectiveDensity *= 0.35f;
+
+    float gapRoll = HashFloat(targetSector, 13105);
+    float gapThreshold = 0.05f + zone.openness * 0.15f;
+    bool isGapSector = (gapRoll < gapThreshold) && !IsLandmarkZone(zoneIdx);
+
+    float countRoll = 0.75f + HashFloat(targetSector, 13101) * 0.5f;
+    float rawCount = isGapSector ? 1.0f : ((1.5f + effectiveDensity * 4.8f) * countRoll);
+    int siteCount = (int)floorf(rawCount);
+    if (HashFloat(targetSector, 13102) < (rawCount - (float)siteCount)) {
+        siteCount++;
+    }
+    if (siteCount > maxSites) siteCount = maxSites;
+
+    float corridorClearance = FIELD_X_MIN + zone.openness * 12.0f +
+                              HashFloat(targetSector, 13125) * 6.0f;
+    if (corridorClearance > 32.0f) corridorClearance = 32.0f;
+
+    float layoutMode = HashFloat(targetSector, 13122);
+
+    for (int i = 0; i < siteCount; i++) {
+        float side;
+        if (layoutMode < 0.36f) {
+            side = (HashFloat(targetSector, 13124 + i * 7) < 0.80f) ? -1.0f : 1.0f;
+        } else if (layoutMode < 0.72f) {
+            side = (HashFloat(targetSector, 13124 + i * 7) < 0.80f) ? 1.0f : -1.0f;
+        } else {
+            side = (HashFloat(targetSector, 13124 + i * 7) < 0.50f) ? -1.0f : 1.0f;
+        }
+
+        // Stratified slot with jitter across width
+        float slot = ((float)i + 0.5f + (HashFloat(targetSector, 13110 + i) - 0.5f) * 0.6f) / (float)siteCount;
+        float t = Clamp(slot, 0.04f, 0.96f);
+
+        // Power curve distributes structures across the full width while ensuring
+        // healthy presence in the outer field past the flanks.
+        float normX = powf(t, 0.85f);
+        float magnitude = corridorClearance + normX * (FIELD_X_MAX - corridorClearance) +
+                          (HashFloat(targetSector, 13130 + i) - 0.5f) * 2.0f;
+        if (magnitude < FIELD_X_FLOOR) magnitude = FIELD_X_FLOOR;
+        if (magnitude > FIELD_X_MAX) magnitude = FIELD_X_MAX;
+
+        float siteX = side * magnitude;
+        float siteZ = relativeZ - (0.15f + HashFloat(targetSector, 13140 + i) * 0.7f) * SECTOR_DEPTH;
+
+        // Perspective-correct height profile
+        float distFromCorridor = (magnitude - FIELD_X_MIN) / (FIELD_X_MAX - FIELD_X_MIN);
+        float heightMax;
+        if (distFromCorridor < 0.22f) {
+            heightMax = Lerp(1.5f, 4.5f, distFromCorridor / 0.22f) * zone.heightScale;
+        } else if (distFromCorridor < 0.58f) {
+            heightMax = Lerp(4.5f, 20.0f, (distFromCorridor - 0.22f) / 0.36f) * zone.heightScale;
+        } else {
+            heightMax = Lerp(20.0f, 68.0f, (distFromCorridor - 0.58f) / 0.42f) * zone.heightScale;
+        }
+
+        float siteH = (0.40f + 0.60f * HashFloat(targetSector, 13150 + i)) * heightMax;
+        float shapeRoll = HashFloat(targetSector, 13160 + i);
+        float widthJitter = JitterMult(zoneIdx, 13180 + i, 0.18f);
+
+        StructureType type;
+        Vector3 size;
+        Vector3 pos;
+
+        if (distFromCorridor < 0.22f) {
+            if (shapeRoll < 0.35f) {
+                type = STRUCT_CACHE_TOWER;
+                float spikeW = (0.9f + HashFloat(targetSector, 13170 + i) * 0.4f) * widthJitter;
+                float spikeH = 3.0f + HashFloat(targetSector, 13150 + i) * 3.0f;
+                size = (Vector3){ spikeW, spikeH, spikeW };
+                pos = (Vector3){ siteX, -2.4f + spikeH * 0.5f, siteZ };
+            } else {
+                type = STRUCT_MEMORY_SLAB;
+                float slabW = (2.5f + shapeRoll * 3.0f) * widthJitter;
+                float slabH = 1.2f + HashFloat(targetSector, 13150 + i) * 1.8f;
+                float slabD = (3.0f + HashFloat(targetSector, 13190 + i) * 3.5f) * widthJitter;
+                size = (Vector3){ slabW, slabH, slabD };
+                pos = (Vector3){ siteX, -2.4f + slabH * 0.5f, siteZ };
+            }
+        } else if (distFromCorridor > 0.60f && shapeRoll < 0.15f) {
+            type = STRUCT_CACHE_TOWER;
+            float spikeW = (1.2f + HashFloat(targetSector, 13170 + i) * 0.6f) * widthJitter;
+            size = (Vector3){ spikeW, siteH, spikeW };
+            pos = (Vector3){ siteX, -2.4f + siteH * 0.5f, siteZ };
+        } else if (siteH > 7.0f) {
+            type = STRUCT_CACHE_TOWER;
+            float siteW = (4.0f + shapeRoll * 5.0f) * widthJitter;
+            size = (Vector3){ siteW, siteH, siteW };
+            pos = (Vector3){ siteX, -1.8f + siteH * 0.5f, siteZ };
+        } else {
+            type = STRUCT_MEMORY_SLAB;
+            float siteW = (3.0f + shapeRoll * 4.5f) * widthJitter;
+            float siteD = siteW * (0.75f + 0.5f * HashFloat(targetSector, 13190 + i));
+            size = (Vector3){ siteW, siteH, siteD };
+            pos = (Vector3){ siteX, -2.4f + siteH * 0.5f, siteZ };
+        }
+
+        float groundOffset = GetTerrainGroundOffset(siteX, targetSector);
+        float socketH = fminf(siteH * 0.70f, 6.5f);
+        if (socketH < 1.8f) socketH = 1.8f;
+
+        outSites[i].type = type;
+        outSites[i].size = size;
+        outSites[i].position = pos;
+        outSites[i].socket = (Vector3){ siteX, -2.4f + groundOffset + socketH, siteZ };
+    }
+
+    return siteCount;
+}
+
+// Emits field structures for this sector based on collected sites
 static void GenerateFieldSites(EnvironmentSystem *env, const ZoneDescriptor *zone,
                                int sectorInZone, float sectorCenterZ, float compileScale) {
     int targetSector = zone->startSector + sectorInZone;
     int zoneIdx = zone->key;
-    float relativeZ = sectorCenterZ + (SECTOR_DEPTH * 0.5f);
-    float breathing = IsBreathingZone(zoneIdx) ? 0.3f : 1.0f;
 
-    float countRoll = 0.75f + 0.5f * HashFloat(targetSector, 13101);
-    int siteCount = (int)floorf((4.0f + zone->density * 8.0f) * (1.0f - 0.5f * zone->openness) *
-                                breathing * countRoll);
-    if (siteCount > 9) siteCount = 9;
+    FieldSite sites[MAX_SITES_PER_SECTOR];
+    int siteCount = CollectSectorFieldSites(targetSector, sectorCenterZ, sites, MAX_SITES_PER_SECTOR);
 
-    int sideFlip = (int)(HashFloat(targetSector, 13120) * 2.0f);
     for (int i = 0; i < siteCount; i++) {
-        // Stratified slot: each site owns a slice of the width band, so a
-        // sector covers the full range instead of clumping where hashes land.
-        float slot = (float)i + 0.5f + (HashFloat(targetSector, 13110 + i) - 0.5f) * 0.8f;
-        float t = Clamp(slot / (float)siteCount, 0.05f, 0.95f);
-        float side = ((i + sideFlip) & 1) == 0 ? -1.0f : 1.0f;
-        float magnitude = FIELD_X_MIN + t * (FIELD_X_MAX - FIELD_X_MIN) +
-                          (HashFloat(targetSector, 13130 + i) - 0.5f) * 2.4f;
-        if (magnitude < FIELD_X_FLOOR) magnitude = FIELD_X_FLOOR;
-        float siteX = side * magnitude;
-        float siteZ = relativeZ - (0.5f + HashFloat(targetSector, 13140 + i) * 0.9f) * SECTOR_DEPTH;
-
-        // Height allowance: low and short near the flight path, tall far out.
-        float heightMax = Lerp(3.5f, 68.0f, Smooth01(t)) * zone->heightScale;
-        float siteH = (0.35f + 0.65f * HashFloat(targetSector, 13150 + i)) * heightMax * compileScale;
+        FieldSite *s = &sites[i];
         float shapeRoll = HashFloat(targetSector, 13160 + i);
-        float widthJitter = JitterMult(zoneIdx, 13180 + i, 0.18f);
+        float magnitude = fabsf(s->position.x);
+        float distFromCorridor = (magnitude - FIELD_X_MIN) / (FIELD_X_MAX - FIELD_X_MIN);
 
-        if (shapeRoll < 0.18f && t > 0.5f) {
-            // Antenna spike: thin needle with a grounding collar at its base.
-            float spikeW = (1.2f + HashFloat(targetSector, 13170 + i) * 0.5f) * widthJitter;
+        if (distFromCorridor < 0.22f && shapeRoll < 0.35f) {
+            float spikeW = s->size.x;
+            float spikeH = s->size.y * compileScale;
             AddStructure(env, STRUCT_CACHE_TOWER,
-                         (Vector3){ siteX, -2.4f + siteH * 0.5f, siteZ },
+                         (Vector3){ s->position.x, -2.4f + spikeH * 0.5f, s->position.z },
+                         (Vector3){ spikeW, spikeH, spikeW }, compileScale);
+            AddStructure(env, STRUCT_MEMORY_SLAB,
+                         (Vector3){ s->position.x, -2.4f + 0.35f * compileScale, s->position.z },
+                         (Vector3){ spikeW * 2.5f, 0.7f * compileScale, spikeW * 2.5f }, compileScale);
+        } else if (distFromCorridor > 0.60f && shapeRoll < 0.15f) {
+            float spikeW = s->size.x;
+            float siteH = s->size.y * compileScale;
+            AddStructure(env, STRUCT_CACHE_TOWER,
+                         (Vector3){ s->position.x, -2.4f + siteH * 0.5f, s->position.z },
                          (Vector3){ spikeW, siteH, spikeW }, compileScale);
             AddStructure(env, STRUCT_MEMORY_SLAB,
-                         (Vector3){ siteX, -2.4f + 0.4f * compileScale, siteZ },
+                         (Vector3){ s->position.x, -2.4f + 0.4f * compileScale, s->position.z },
                          (Vector3){ spikeW * 2.6f, 0.8f * compileScale, spikeW * 2.6f }, compileScale);
-        } else if (siteH > 8.0f * compileScale) {
-            float siteW = (4.0f + shapeRoll * 5.0f) * widthJitter;
+        } else if (s->type == STRUCT_CACHE_TOWER) {
+            float siteH = s->size.y * compileScale;
             AddStructure(env, STRUCT_CACHE_TOWER,
-                         (Vector3){ siteX, -1.8f + siteH * 0.5f, siteZ },
-                         (Vector3){ siteW, siteH, siteW }, compileScale);
+                         (Vector3){ s->position.x, -1.8f + siteH * 0.5f, s->position.z },
+                         (Vector3){ s->size.x, siteH, s->size.z }, compileScale);
         } else {
-            float siteW = (3.0f + shapeRoll * 5.0f) * widthJitter;
-            float siteD = siteW * (0.75f + 0.5f * HashFloat(targetSector, 13190 + i));
+            float siteH = s->size.y * compileScale;
             AddStructure(env, STRUCT_MEMORY_SLAB,
-                         (Vector3){ siteX, -2.4f + siteH * 0.5f, siteZ },
-                         (Vector3){ siteW, siteH, siteD }, compileScale);
+                         (Vector3){ s->position.x, -2.4f + siteH * 0.5f, s->position.z },
+                         (Vector3){ s->size.x, siteH, s->size.z }, compileScale);
         }
     }
 
     if (IsLandmarkZone(zoneIdx)) {
-        // The suspended landmark beacon keeps its rare-feature logic; the field
-        // sites above supply the surrounding context the archetypes used to.
         float side = HashFloat(zoneIdx, 9095) < 0.5f ? -1.0f : 1.0f;
         float jBeacon = JitterMult(zoneIdx, 1100, 0.10f);
         float beaconX = side * ((26.0f + zone->openness * 9.0f) * jBeacon);
@@ -727,8 +898,206 @@ static void GenerateFieldSites(EnvironmentSystem *env, const ZoneDescriptor *zon
                      (Vector3){ beaconX + pylonOff, -2.2f + pylonH * 0.5f, sectorCenterZ + pylonOff },
                      (Vector3){ 3.2f, pylonH, 3.2f }, compileScale);
 
-        AddConduitFeeder(env, side * 14.1f, beaconX - side * (beaconW * 0.5f),
-                         -2.0f + 2.5f * compileScale, sectorCenterZ, 1.4f, compileScale);
+        AddConduitFeeder(env, beaconX, beaconX - side * pylonOff,
+                         -2.2f + 0.4f, sectorCenterZ, 1.2f, compileScale);
+    }
+}
+
+// Emits an edge in the procedural conduit graph with multi-conduit bundle variation
+static void EmitConduitEdge(EnvironmentSystem *env, Vector3 from, Vector3 to,
+                            bool crossesCenterline, uint32_t edgeSeed, float compileScale) {
+    float edgeLength = Vec3Dist(from, to);
+    if (edgeLength < 1.0f) return;
+
+    // Bundle style:
+    // 0: Single thick conduit (~45%)
+    // 1: Double parallel thinner conduits (~35%)
+    // 2: Triple parallel thinner conduits (~20%)
+    float styleRoll = HashFloat(edgeSeed, 2401);
+    int bundleCount = (styleRoll < 0.45f) ? 1 : ((styleRoll < 0.80f) ? 2 : 3);
+    float conduitSize;
+    float offsets[3] = { 0.0f, 0.0f, 0.0f };
+
+    if (bundleCount == 1) {
+        conduitSize = 1.20f;
+        offsets[0] = 0.0f;
+    } else if (bundleCount == 2) {
+        conduitSize = 0.72f;
+        offsets[0] = -0.70f;
+        offsets[1] =  0.70f;
+    } else {
+        conduitSize = 0.55f;
+        offsets[0] = -0.90f;
+        offsets[1] =  0.0f;
+        offsets[2] =  0.90f;
+    }
+
+    // Socket coupler collars at connection ports on both buildings
+    Vector3 couplerSize = (Vector3){ conduitSize * 1.8f, conduitSize * 1.8f, conduitSize * 1.8f };
+    AddDetailStructure(env, STRUCT_MEMORY_SLAB, from, couplerSize, compileScale, 0.0f);
+    AddDetailStructure(env, STRUCT_MEMORY_SLAB, to, couplerSize, compileScale, 0.0f);
+
+    if (crossesCenterline) {
+        // Crossing conduits: Connect from Building A (from) across to Building B (to)
+        // High overhead crossing clearing CONDUIT_PLAYER_MAX_Y with safe margin
+        float crossY = fmaxf(CONDUIT_MIN_CROSSING_Y, fmaxf(from.y, to.y) + 2.5f);
+
+        for (int b = 0; b < bundleCount; b++) {
+            float off = offsets[b];
+
+            // 1. Vertical riser on Building A: rises from building socket up to crossY
+            if (crossY > from.y + 0.3f) {
+                AddConduitRiserEx(env, from.x, from.z + off, from.y, crossY,
+                                  conduitSize, conduitSize, compileScale,
+                                  from, to, edgeLength, edgeSeed);
+            }
+
+            // 2. Overhead span from Building A across corridor to Building B at crossY
+            AddConduitFeederEx(env, from.x, to.x, crossY, from.z + off,
+                               conduitSize, conduitSize, compileScale,
+                               from, to, edgeLength, edgeSeed);
+
+            // 3. Span along Z from from.z to to.z at Building B's X at crossY
+            if (fabsf(to.z - from.z) > 0.8f) {
+                AddConduitSpanZEx(env, to.x + off, crossY, from.z, to.z,
+                                  conduitSize, conduitSize, compileScale,
+                                  from, to, edgeLength, edgeSeed);
+            }
+
+            // 4. Vertical riser on Building B: descends from crossY down into Building B socket
+            if (crossY > to.y + 0.3f) {
+                AddConduitRiserEx(env, to.x, to.z + off, to.y, crossY,
+                                  conduitSize, conduitSize, compileScale,
+                                  from, to, edgeLength, edgeSeed);
+            }
+        }
+    } else {
+        // Same-side elevated aerial span between Building A and Building B
+        float spanY = fmaxf(from.y, to.y);
+
+        for (int b = 0; b < bundleCount; b++) {
+            float off = offsets[b];
+
+            // Riser at Building A up to spanY if needed
+            if (fabsf(spanY - from.y) > 0.3f) {
+                AddConduitRiserEx(env, from.x, from.z + off, fminf(from.y, spanY), fmaxf(from.y, spanY),
+                                  conduitSize, conduitSize, compileScale,
+                                  from, to, edgeLength, edgeSeed);
+            }
+
+            // X-feeder between from.x and to.x at spanY
+            if (fabsf(to.x - from.x) > 0.6f) {
+                AddConduitFeederEx(env, from.x, to.x, spanY, from.z + off,
+                                   conduitSize, conduitSize, compileScale,
+                                   from, to, edgeLength, edgeSeed);
+            }
+
+            // Z-span between from.z and to.z at to.x, spanY
+            if (fabsf(to.z - from.z) > 0.6f) {
+                AddConduitSpanZEx(env, to.x + off, spanY, from.z, to.z,
+                                  conduitSize, conduitSize, compileScale,
+                                  from, to, edgeLength, edgeSeed);
+            }
+
+            // Riser at Building B down to to.y if needed
+            if (fabsf(spanY - to.y) > 0.3f) {
+                AddConduitRiserEx(env, to.x, to.z + off, fminf(to.y, spanY), fmaxf(to.y, spanY),
+                                  conduitSize, conduitSize, compileScale,
+                                  from, to, edgeLength, edgeSeed);
+            }
+        }
+    }
+}
+
+// Builds the procedural conduit graph connecting structure sites across sectors
+static void GenerateConduitGraph(EnvironmentSystem *env, int targetSector, float sectorCenterZ, float compileScale) {
+    FieldSite currSites[MAX_SITES_PER_SECTOR];
+    int currCount = CollectSectorFieldSites(targetSector, sectorCenterZ, currSites, MAX_SITES_PER_SECTOR);
+    if (currCount == 0) return;
+
+    FieldSite prevSites[MAX_SITES_PER_SECTOR];
+    int prevCount = CollectSectorFieldSites(targetSector - 1, sectorCenterZ + SECTOR_DEPTH, prevSites, MAX_SITES_PER_SECTOR);
+
+    ZoneDescriptor zone = DescribeZoneForSector(targetSector);
+
+    for (int i = 0; i < currCount; i++) {
+        FieldSite *siteA = &currSites[i];
+        uint32_t siteSeed = (uint32_t)targetSector * 100u + (uint32_t)i;
+
+        // Candidate 1: Intra-sector same-side neighbor
+        int bestJ = -1;
+        float bestDistJ = 9999.0f;
+        for (int j = i + 1; j < currCount; j++) {
+            FieldSite *siteB = &currSites[j];
+            if (siteA->position.x * siteB->position.x > 0.0f) {
+                float dist = Vec3Dist(siteA->socket, siteB->socket);
+                if (dist < bestDistJ) {
+                    bestDistJ = dist;
+                    bestJ = j;
+                }
+            }
+        }
+        if (bestJ >= 0 && bestDistJ <= MAX_CONDUIT_SPAN_DISTANCE) {
+            float prob = 0.80f * (1.0f - bestDistJ / MAX_CONDUIT_SPAN_DISTANCE) * (1.0f - zone.openness * 0.25f);
+            if (HashFloat(targetSector, 14100 + i * 19 + bestJ) < prob) {
+                uint32_t edgeSeed = HashUint(siteSeed ^ ((uint32_t)bestJ * 31u));
+                EmitConduitEdge(env, siteA->socket, currSites[bestJ].socket, false, edgeSeed, compileScale);
+            }
+        }
+
+        // Candidate 2: Inter-sector same-side neighbor (pipeline across sectors)
+        if (prevCount > 0) {
+            int bestK = -1;
+            float bestDist = 9999.0f;
+            for (int k = 0; k < prevCount; k++) {
+                if (prevSites[k].position.x * siteA->position.x > 0.0f) {
+                    float dist = Vec3Dist(siteA->socket, prevSites[k].socket);
+                    if (dist < bestDist) {
+                        bestDist = dist;
+                        bestK = k;
+                    }
+                }
+            }
+            if (bestK >= 0 && bestDist <= MAX_CONDUIT_SPAN_DISTANCE) {
+                float prob = 0.80f * (1.0f - bestDist / MAX_CONDUIT_SPAN_DISTANCE) * (1.0f - zone.openness * 0.25f);
+                if (HashFloat(targetSector, 14300 + i * 23 + bestK) < prob) {
+                    uint32_t edgeSeed = HashUint(siteSeed ^ ((uint32_t)bestK * 73u) ^ 0x5a5a5a5au);
+                    EmitConduitEdge(env, siteA->socket, prevSites[bestK].socket, false, edgeSeed, compileScale);
+                }
+            }
+        }
+
+        // Candidate 3: Cross-corridor candidate (overhead crossing connecting left to right)
+        float crossRoll = HashFloat(targetSector, 14500 + i * 37);
+        float crossChance = 0.28f + (zone.theme == DISTRICT_CONDUIT_EXCHANGE ? 0.32f : 0.0f);
+        if (crossRoll < crossChance) {
+            FieldSite *crossTarget = NULL;
+            float bestCrossDist = 9999.0f;
+            for (int j = 0; j < currCount; j++) {
+                if (currSites[j].position.x * siteA->position.x < 0.0f) {
+                    float d = Vec3Dist(siteA->socket, currSites[j].socket);
+                    if (d < bestCrossDist) {
+                        bestCrossDist = d;
+                        crossTarget = &currSites[j];
+                    }
+                }
+            }
+            if (!crossTarget && prevCount > 0) {
+                for (int k = 0; k < prevCount; k++) {
+                    if (prevSites[k].position.x * siteA->position.x < 0.0f) {
+                        float d = Vec3Dist(siteA->socket, prevSites[k].socket);
+                        if (d < bestCrossDist) {
+                            bestCrossDist = d;
+                            crossTarget = &prevSites[k];
+                        }
+                    }
+                }
+            }
+            if (crossTarget && bestCrossDist <= 85.0f) {
+                uint32_t edgeSeed = HashUint(siteSeed ^ 0xa5a5a5a5u);
+                EmitConduitEdge(env, siteA->socket, crossTarget->socket, true, edgeSeed, compileScale);
+            }
+        }
     }
 }
 
@@ -784,27 +1153,7 @@ static void GenerateEnvironmentStructures(EnvironmentSystem *env, double virtual
         env->emissionSerial = 0;
 
         // =========================================================================
-        // 1. CONTINUOUS 3-LANE PARALLEL HIGHWAY CONDUITS (Corridor Spine)
-        // =========================================================================
-        float leftInnerY = SampleTerrainSupport(TerrainCellForX(ScaleEnvironmentX(-11.5f)), targetSector).topY + 0.25f;
-        float leftMiddleY = SampleTerrainSupport(TerrainCellForX(ScaleEnvironmentX(-12.8f)), targetSector).topY + 0.25f;
-        float leftOuterY = SampleTerrainSupport(TerrainCellForX(ScaleEnvironmentX(-14.1f)), targetSector).topY + 0.20f;
-        float rightInnerY = SampleTerrainSupport(TerrainCellForX(ScaleEnvironmentX(11.5f)), targetSector).topY + 0.25f;
-        float rightMiddleY = SampleTerrainSupport(TerrainCellForX(ScaleEnvironmentX(12.8f)), targetSector).topY + 0.25f;
-        float rightOuterY = SampleTerrainSupport(TerrainCellForX(ScaleEnvironmentX(14.1f)), targetSector).topY + 0.20f;
-
-        // Left parallel highway lines
-        AddCriticalStructure(env, STRUCT_BUS_CONDUIT, (Vector3){ -11.5f, leftInnerY, sectorCenterZ }, (Vector3){ 0.50f, 0.50f, SECTOR_DEPTH }, compileScale);
-        AddCriticalStructure(env, STRUCT_BUS_CONDUIT, (Vector3){ -12.8f, leftMiddleY, sectorCenterZ }, (Vector3){ 0.50f, 0.50f, SECTOR_DEPTH }, compileScale);
-        AddCriticalStructure(env, STRUCT_BUS_CONDUIT, (Vector3){ -14.1f, leftOuterY, sectorCenterZ }, (Vector3){ 0.40f, 0.40f, SECTOR_DEPTH }, compileScale);
-
-        // Right parallel highway lines
-        AddCriticalStructure(env, STRUCT_BUS_CONDUIT, (Vector3){  11.5f, rightInnerY, sectorCenterZ }, (Vector3){ 0.50f, 0.50f, SECTOR_DEPTH }, compileScale);
-        AddCriticalStructure(env, STRUCT_BUS_CONDUIT, (Vector3){  12.8f, rightMiddleY, sectorCenterZ }, (Vector3){ 0.50f, 0.50f, SECTOR_DEPTH }, compileScale);
-        AddCriticalStructure(env, STRUCT_BUS_CONDUIT, (Vector3){  14.1f, rightOuterY, sectorCenterZ }, (Vector3){ 0.40f, 0.40f, SECTOR_DEPTH }, compileScale);
-
-        // =========================================================================
-        // 2. 2D FIELD STRUCTURE SITES (continuous full-width distribution)
+        // 1. 2D FIELD STRUCTURE SITES (continuous full-width distribution)
         // =========================================================================
         ZoneDescriptor zone = DescribeZoneForSector(targetSector);
         int sectorInZone = targetSector - zone.startSector;
@@ -812,42 +1161,15 @@ static void GenerateEnvironmentStructures(EnvironmentSystem *env, double virtual
         GenerateRavineObject(env, targetSector, sectorCenterZ, compileScale);
 
         // =========================================================================
-        // 3. CONTEXT-AWARE ZONE BOUNDARY COUPLERS
+        // 2. PROCEDURAL CONDUIT GRAPH (replaces disconnected highway pipes)
         // =========================================================================
-        if (sectorInZone == 0) {
-            ZoneDescriptor previous = DescribeZoneByKey(zone.key - 1);
-            float transitionOpen = (previous.openness + zone.openness) * 0.5f;
-            float anchorX = 16.0f + transitionOpen * 7.0f;
-            AddConduitSpanZ(env, -anchorX, -2.4f, relativeZ + 2.0f, relativeZ - 2.0f, compileScale);
-            AddConduitFeeder(env, -14.1f, -anchorX, -2.5f, relativeZ, 0.7f, compileScale);
-
-            AddConduitSpanZ(env,  anchorX, -2.4f, relativeZ + 2.0f, relativeZ - 2.0f, compileScale);
-            AddConduitFeeder(env,  14.1f,  anchorX, -2.5f, relativeZ, 0.7f, compileScale);
-
-            if (HashFloat(zone.key, 16101) < 0.30f) {
-                float crossAnchorX = 25.0f + transitionOpen * 8.0f;
-                float crossY = 7.0f + zone.heightScale * 4.0f;
-                AddConduitFeeder(env, -crossAnchorX, crossAnchorX, crossY,
-                                 relativeZ, 0.9f, compileScale);
-            }
-        }
-
-        if (zone.ordinal == 0 && sectorInZone == 0 &&
-            HashFloat(zone.districtIndex, 16201) < 0.68f) {
-            float trunkSide = HashFloat(zone.districtIndex, 16202) < 0.5f ? -1.0f : 1.0f;
-            float trunkX = trunkSide * (28.0f + zone.openness * 10.0f +
-                                        HashFloat(zone.districtIndex, 16203) * 6.0f);
-            AddConduitSpanZ(env, trunkX, -2.45f, relativeZ,
-                            relativeZ - DISTRICT_SECTORS * SECTOR_DEPTH, compileScale);
-            AddConduitFeeder(env, trunkSide * 14.1f, trunkX, -2.5f,
-                             relativeZ, 0.8f, compileScale);
-        }
+        GenerateConduitGraph(env, targetSector, sectorCenterZ, compileScale);
 
         // =========================================================================
-        // 4. BLUE-NOISE GANTRY ARCHWAYS (Local maxima, not periodic spacing)
+        // 3. BLUE-NOISE GANTRY ARCHWAYS (Local maxima, not periodic spacing)
         // =========================================================================
         if (sectorInZone == zone.length / 2 && IsGantryZone(zone.key)) {
-            float archH = 12.5f * zone.heightScale * compileScale;
+            float archH = fmaxf(13.5f * zone.heightScale, 13.5f);
             float pillarW = 1.4f;
             float archTop = -2.5f + archH;
             float leftSupportY = SampleTerrainSupport(TerrainCellForX(-13.0f), targetSector).topY;
@@ -863,7 +1185,7 @@ static void GenerateEnvironmentStructures(EnvironmentSystem *env, double virtual
                                  (Vector3){ 13.0f, rightSupportY + rightPillarH * 0.5f, sectorCenterZ },
                                  (Vector3){ pillarW, rightPillarH, pillarW }, compileScale);
 
-            // Overhead Cross Conduit Beam
+            // Overhead Cross Conduit Beam (clears CONDUIT_PLAYER_MAX_Y with safe margin)
             AddCriticalStructure(env, STRUCT_BUS_CONDUIT, (Vector3){ 0.0f, archTop, sectorCenterZ },
                                  (Vector3){ 26.0f, 1.2f, 1.2f }, compileScale);
         }
@@ -896,6 +1218,89 @@ static bool HasTerrainFoundation(const EnvironmentSystem *env, double virtualPla
     return false;
 }
 
+// Computes local conduit flow direction and continuous corner phase offset
+static void ComputeConduitFlow(const EnvironmentStructure *s, Vector3 *outDir, float *outPhase) {
+    float sx = s->size.x;
+    float sy = s->size.y;
+    float sz = s->size.z;
+
+    uint32_t seed = s->edgeSeed;
+    if (seed == 0) {
+        seed = HashUint((uint32_t)lroundf(fabsf(s->position.x) * 100.0f) ^
+                        (uint32_t)lroundf(fabsf(s->position.z) * 100.0f));
+    }
+    float basePhase = HashFloat(seed, 8191) * 6.2831853f;
+
+    Vector3 dir = { 0 };
+    float waveScale = 0.08f;
+    float pathStartDist = 0.0f;
+    float segLen = 1.0f;
+
+    if (s->edgeLength > 0.1f) {
+        Vector3 A = s->edgeStart;
+        Vector3 B = s->edgeEnd;
+
+        bool crosses = (A.x * B.x < 0.0f);
+        float spanY = crosses ? fmaxf(CONDUIT_MIN_CROSSING_Y, fmaxf(A.y, B.y) + 2.5f)
+                              : fmaxf(A.y, B.y);
+
+        float h1 = fmaxf(0.0f, spanY - A.y);
+        float lenX = fabsf(B.x - A.x);
+        float lenZ = fabsf(B.z - A.z);
+
+        if (sx >= sy && sx >= sz) {
+            // Feeder span along X: flows from A.x towards B.x
+            dir.x = (B.x >= A.x) ? 1.0f : -1.0f;
+            dir.y = 0.0f;
+            dir.z = 0.0f;
+            pathStartDist = h1;
+            segLen = sx;
+        } else if (sz >= sx && sz >= sy) {
+            // Z-span: flows from A.z towards B.z
+            dir.x = 0.0f;
+            dir.y = 0.0f;
+            dir.z = (B.z <= A.z) ? 1.0f : -1.0f;
+            pathStartDist = h1 + lenX;
+            segLen = sz;
+        } else {
+            // Riser along Y
+            float dStartSq = (s->position.x - A.x) * (s->position.x - A.x) +
+                             (s->position.z - A.z) * (s->position.z - A.z);
+            float dEndSq = (s->position.x - B.x) * (s->position.x - B.x) +
+                           (s->position.z - B.z) * (s->position.z - B.z);
+            dir.x = 0.0f;
+            dir.z = 0.0f;
+            segLen = sy;
+            if (dStartSq <= dEndSq) {
+                // Origin riser: rises from A.y up to spanY (+Y)
+                dir.y = 1.0f;
+                pathStartDist = 0.0f;
+            } else {
+                // Target riser: descends from spanY down into B.y (-Y)
+                dir.y = -1.0f;
+                pathStartDist = h1 + lenX + lenZ;
+            }
+        }
+
+        *outPhase = basePhase + (pathStartDist + 0.5f * segLen) * waveScale;
+    } else {
+        // Fallback for conduits without explicit edge endpoint linkage
+        if (sx >= sy && sx >= sz) {
+            dir.x = (s->position.x >= 0.0f) ? 1.0f : -1.0f;
+            segLen = sx;
+        } else if (sz >= sx && sz >= sy) {
+            dir.z = 1.0f;
+            segLen = sz;
+        } else {
+            dir.y = 1.0f;
+            segLen = sy;
+        }
+        *outPhase = basePhase + 0.5f * segLen * waveScale;
+    }
+
+    *outDir = dir;
+}
+
 bool ValidateEnvironmentGenerator(EnvironmentValidationReport *report) {
     if (!report) return false;
 
@@ -911,11 +1316,15 @@ bool ValidateEnvironmentGenerator(EnvironmentValidationReport *report) {
     report->unsupportedRavineStructures = 0;
     report->unsupportedFarStructures = 0;
     report->fieldCoverageViolations = 0;
+    report->crossingClearanceViolations = 0;
+    report->conduitFlowViolations = 0;
 
     int previousLandmark = -1000000;
     for (int zoneKey = -1024; zoneKey < 1024; zoneKey++) {
         // The field has no per-zone archetype anymore; the macro-composition
-        // invariant is that breathing zones never sit next to each other.
+        // invariant is that breathing zones never sit next to each other. This
+        // guards IsBreathingZone's local-minimum construction: weakening that
+        // roll so adjacent zones can both breathe surfaces here.
         if (IsBreathingZone(zoneKey) && IsBreathingZone(zoneKey - 1)) report->adjacentRepeatViolations++;
 
         if (IsLandmarkZone(zoneKey)) {
@@ -938,9 +1347,12 @@ bool ValidateEnvironmentGenerator(EnvironmentValidationReport *report) {
     // no single bin may dominate the distribution.
     enum { FIELD_BIN_COUNT = 5 };
     const float fieldBinStart = CORRIDOR_EDGE_X;
-    const float fieldBinEnd = 66.0f;
+    const float fieldBinEnd = FIELD_X_MAX * ENVIRONMENT_LATERAL_SCALE;
     int fieldBins[2][FIELD_BIN_COUNT] = { 0 };
     int fieldTotal = 0;
+    float minConduitPhase = 1e9f;
+    float maxConduitPhase = -1e9f;
+    int totalConduitsChecked = 0;
     for (int seedIndex = 0; seedIndex < (int)(sizeof(validationSeeds) / sizeof(validationSeeds[0]));
          seedIndex++) {
         g_environmentSeed = validationSeeds[seedIndex];
@@ -974,6 +1386,36 @@ bool ValidateEnvironmentGenerator(EnvironmentValidationReport *report) {
                     fieldBins[sideBin][bin]++;
                     fieldTotal++;
                 }
+                if (structure->type == STRUCT_BUS_CONDUIT) {
+                    float leftX = structure->position.x - structure->size.x * 0.5f;
+                    float rightX = structure->position.x + structure->size.x * 0.5f;
+                    if (leftX < CONDUIT_PLAYER_MAX_X && rightX > -CONDUIT_PLAYER_MAX_X) {
+                        if (bottom <= CONDUIT_PLAYER_MAX_Y) {
+                            report->crossingClearanceViolations++;
+                        }
+                    }
+
+                    Vector3 flowDir = { 0 };
+                    float flowPhase = 0.0f;
+                    ComputeConduitFlow(structure, &flowDir, &flowPhase);
+                    float dirLen = Vector3Length(flowDir);
+                    if (fabsf(dirLen - 1.0f) > 0.02f) {
+                        report->conduitFlowViolations++;
+                    }
+                    if (structure->size.x > structure->size.y && structure->size.x > structure->size.z) {
+                        if (fabsf(fabsf(flowDir.x) - 1.0f) > 0.02f) report->conduitFlowViolations++;
+                    } else if (structure->size.z > structure->size.x && structure->size.z > structure->size.y) {
+                        if (fabsf(fabsf(flowDir.z) - 1.0f) > 0.02f) report->conduitFlowViolations++;
+                    } else if (structure->size.y > structure->size.x && structure->size.y > structure->size.z) {
+                        if (fabsf(fabsf(flowDir.y) - 1.0f) > 0.02f) report->conduitFlowViolations++;
+                    }
+                    if (!isfinite(flowPhase)) {
+                        report->conduitFlowViolations++;
+                    }
+                    totalConduitsChecked++;
+                    if (flowPhase < minConduitPhase) minConduitPhase = flowPhase;
+                    if (flowPhase > maxConduitPhase) maxConduitPhase = flowPhase;
+                }
                 if (fabsf(structure->position.x) < CORRIDOR_EDGE_X && bottom >= -4.0f) continue;
                 if (!HasTerrainFoundation(&probe, virtualPlayerZ, structure)) {
                     report->unsupportedStructures++;
@@ -994,6 +1436,10 @@ bool ValidateEnvironmentGenerator(EnvironmentValidationReport *report) {
     }
     g_environmentSeed = originalSeed;
 
+    if (totalConduitsChecked > 10 && (maxConduitPhase - minConduitPhase < 0.5f)) {
+        report->conduitFlowViolations++;
+    }
+
     if (fieldTotal == 0) {
         report->fieldCoverageViolations++;
     } else {
@@ -1011,12 +1457,15 @@ bool ValidateEnvironmentGenerator(EnvironmentValidationReport *report) {
     return report->adjacentRepeatViolations == 0 &&
            report->landmarkSpacingViolations == 0 &&
            report->fieldCoverageViolations == 0 &&
+           report->crossingClearanceViolations == 0 &&
+           report->conduitFlowViolations == 0 &&
            report->droppedStructures == 0 &&
            report->unsupportedStructures == 0;
 }
 
 // Batches active structures by type and issues one instanced draw call per type
-static void DrawStructureBatch(const EnvironmentSystem *env, StructureType type, Color accent, Color body) {
+static void DrawStructureBatch(const EnvironmentSystem *env, StructureType type, Color accent, Color body,
+                               double virtualPlayerZ) {
     static Matrix transforms[MAX_STRUCTURES];
     int count = 0;
 
@@ -1025,8 +1474,41 @@ static void DrawStructureBatch(const EnvironmentSystem *env, StructureType type,
         if (!s->active || s->type != type) continue;
 
         Vector3 renderPos = (Vector3){ s->position.x, s->position.y, s->position.z };
-        transforms[count++] = MatrixMultiply(MatrixScale(s->size.x, s->size.y, s->size.z),
-                                              MatrixTranslate(renderPos.x, renderPos.y, renderPos.z));
+        Matrix mat = MatrixMultiply(MatrixScale(s->size.x, s->size.y, s->size.z),
+                                    MatrixTranslate(renderPos.x, renderPos.y, renderPos.z));
+        if (type == STRUCT_BUS_CONDUIT) {
+            Vector3 flowDir = { 0 };
+            float phaseOffset = 0.0f;
+            ComputeConduitFlow(s, &flowDir, &phaseOffset);
+            mat.m3 = flowDir.x * s->size.x;
+            mat.m7 = flowDir.y * s->size.y;
+            mat.m11 = flowDir.z * s->size.z;
+            mat.m15 = phaseOffset;
+        } else if (type == STRUCT_MEMORY_SLAB) {
+            bool isPedestal = (s->size.y < 0.65f);
+            if (!isPedestal) {
+                int32_t worldXKey = (int32_t)lroundf(s->position.x * 16.0f);
+                int64_t worldZKey = llround((virtualPlayerZ - s->position.z) * 8.0);
+                uint64_t worldZBits = (uint64_t)worldZKey;
+                uint32_t foldedWorldZ = (uint32_t)worldZBits ^ (uint32_t)(worldZBits >> 32);
+                uint32_t slabHash = PaletteHash(env->runSeed ^
+                                                ((uint32_t)worldXKey * UINT32_C(0x9e3779b9)) ^
+                                                (foldedWorldZ * UINT32_C(0x85ebca6b)));
+                // Slabs have active matrix text flow on designated sides
+                // ~50% of memory slabs carry active data rain
+                if ((slabHash % 100u) < 50u) {
+                    uint32_t faceRoll = (slabHash >> 8) % 10u;
+                    // 1.0 = corridor-facing inner side, 2.0 = oncoming front face (+Z), 3.0 = both
+                    float faceMode = (faceRoll < 6u) ? 1.0f : ((faceRoll < 9u) ? 2.0f : 3.0f);
+                    float phaseOffset = (float)(slabHash & 2047u) * 0.00306796f;
+                    mat.m3 = faceMode;
+                    mat.m7 = phaseOffset;
+                    mat.m11 = s->size.y;
+                    mat.m15 = (faceMode >= 1.5f && faceMode < 2.5f) ? s->size.x : s->size.z;
+                }
+            }
+        }
+        transforms[count++] = mat;
     }
 
     if (count == 0) return;
@@ -1306,6 +1788,7 @@ static void DrawInfrastructureDetailBatch(const EnvironmentSystem *env, int deta
             size = (Vector3){ 0.22f, height, 0.22f };
             if (alongX && s->size.x > 5.0f) position.x -= s->size.x * 0.28f;
             else if (alongZ && s->size.z > 5.0f) position.z -= s->size.z * 0.28f;
+            if (fabsf(position.x) < CORRIDOR_EDGE_X) continue;
         } else if (detailMode == 2) {
             // Data-rain strip on the conduit's top face: literal binary/matrix
             // "data streams in conduits" per the demoscene feedback pass.
@@ -1328,6 +1811,7 @@ static void DrawInfrastructureDetailBatch(const EnvironmentSystem *env, int deta
             if (alongX && s->size.x > 5.0f) position.x += s->size.x * 0.56f;
             else if (alongZ && s->size.z > 5.0f) position.z += s->size.z * 0.56f;
             else continue;
+            if (fabsf(position.x) < CORRIDOR_EDGE_X) continue;
             transforms[count++] = MatrixMultiply(MatrixScale(size.x, size.y, size.z),
                                                   MatrixTranslate(position.x, position.y, position.z));
         }
@@ -1356,10 +1840,10 @@ void DrawEnvironment(const EnvironmentSystem *env, Camera3D camera, double virtu
     DrawFarStructureBatch(env, STRUCT_MEMORY_SLAB, env->secondaryColor, (Color){ 3, 9, 13, 255 });
 
     // Pass 2: Cyberspace monolithic architecture, batched by type (unified cyan-blue dominant palette)
-    DrawStructureBatch(env, STRUCT_CACHE_TOWER, env->primaryColor, (Color){ 5, 10, 25, 255 });
-    DrawStructureBatch(env, STRUCT_MEMORY_SLAB, env->secondaryColor, (Color){ 3, 12, 16, 255 });
-    DrawStructureBatch(env, STRUCT_BUS_CONDUIT, env->primaryColor, (Color){ 3, 10, 24, 255 });
-    DrawStructureBatch(env, STRUCT_LANDMARK, env->landmarkColor, (Color){ 24, 4, 18, 255 });
+    DrawStructureBatch(env, STRUCT_CACHE_TOWER, env->primaryColor, (Color){ 5, 10, 25, 255 }, virtualPlayerZ);
+    DrawStructureBatch(env, STRUCT_MEMORY_SLAB, env->secondaryColor, (Color){ 3, 12, 16, 255 }, virtualPlayerZ);
+    DrawStructureBatch(env, STRUCT_BUS_CONDUIT, env->primaryColor, (Color){ 3, 10, 24, 255 }, virtualPlayerZ);
+    DrawStructureBatch(env, STRUCT_LANDMARK, env->landmarkColor, (Color){ 24, 4, 18, 255 }, virtualPlayerZ);
 
     // Architectural fidelity comes from physical massing and shadow: podiums,
     // pilasters, a single service floor, roof plant and sparse antennas. The

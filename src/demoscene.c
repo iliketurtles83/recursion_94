@@ -48,14 +48,13 @@ static void DrawScanlines(int screenWidth, int screenHeight, unsigned char alpha
     }
 }
 
-void DrawDemosceneBackdrop(const DemosceneSystem *demo, float time, float intensity,
+void DrawDemosceneBackdrop(const DemosceneSystem *demo, float time __attribute__((unused)), float intensity,
                            int screenWidth, int screenHeight) {
     if (intensity < 0.0f) intensity = 0.0f;
     if (intensity > 1.0f) intensity = 1.0f;
 
     // The raymarched backdrop shader now supplies the base sky; zenith stays
     // only for the moon's eclipse shadow disc below.
-    Color zenith = MixColor((Color){ 1, 2, 10, 255 }, demo->secondary, 0.035f, 255);
 
     int horizonY = (int)((float)screenHeight * 0.47f);
     DrawRectangleGradientV(0, horizonY - 125, screenWidth, 185,
@@ -64,65 +63,6 @@ void DrawDemosceneBackdrop(const DemosceneSystem *demo, float time, float intens
                            (Color){ demo->primary.r, demo->primary.g,
                                     demo->primary.b,
                                     (unsigned char)(16.0f + intensity * 14.0f) });
-
-    // A seed-positioned eclipsed data moon is deliberately off-axis and does
-    // not pulse with the beat; it reads as scenery rather than a HUD effect.
-    uint32_t moonHash = DemoHash(demo->seed ^ 0x4d4f4f4eu);
-    int moonX = (moonHash & 1u) ? screenWidth - 178 : 178;
-    int moonY = 122 + (int)((moonHash >> 5) % 62u);
-    float moonRadius = 48.0f + (float)((moonHash >> 11) % 27u);
-    for (int halo = 5; halo >= 1; halo--) {
-        DrawCircle(moonX, moonY, moonRadius + (float)halo * 10.0f,
-                   (Color){ demo->secondary.r, demo->secondary.g,
-                            demo->secondary.b, (unsigned char)(2 + halo * 2) });
-    }
-    DrawCircle(moonX, moonY, moonRadius,
-               MixColor((Color){ 15, 22, 42, 255 }, demo->secondary, 0.16f, 210));
-    int eclipseShift = (moonHash & 2u) ? 18 : -18;
-    DrawCircle(moonX + eclipseShift, moonY - 5, moonRadius * 0.92f, zenith);
-    DrawCircleLines(moonX, moonY, moonRadius,
-                    (Color){ demo->primary.r, demo->primary.g,
-                             demo->primary.b, 92 });
-
-    // Seeded star strata: near points are crisp, distant dust is dim. Motion
-    // is almost imperceptible at cruise and opens slightly with intensity.
-    for (int i = 0; i < 104; i++) {
-        uint32_t h = DemoHash(demo->seed + (uint32_t)i * 0x9e3779b9u + 0x53544152u);
-        float drift = time * (0.8f + intensity * 2.2f) * (float)(1u + (h & 3u));
-        int x = (int)fmodf((float)(h % (uint32_t)(screenWidth + 80)) + drift,
-                           (float)(screenWidth + 80)) - 40;
-        int y = 18 + (int)((h >> 10) % (uint32_t)(horizonY - 34));
-        int radius = ((h >> 22) & 15u) == 0u ? 2 : 1;
-        unsigned char alpha = (unsigned char)(45u + ((h >> 16) & 95u));
-        Color star = (h & 0x100u)
-            ? (Color){ demo->primary.r, demo->primary.g, demo->primary.b, alpha }
-            : (Color){ 185, 210, 235, alpha };
-        DrawCircle(x, y, (float)radius, star);
-    }
-
-    // Layered aurora ribbons use long, slow waves unrelated to the kick. They
-    // break up the sky while staying quiet enough for enemies to read clearly.
-    for (int ribbon = 0; ribbon < 4; ribbon++) {
-        float phase = DemoHash01(demo->seed ^ (uint32_t)(0xa711u + ribbon * 97)) * 6.2831853f;
-        float baseY = 150.0f + (float)ribbon * 29.0f;
-        Color ribbonColor = MixColor(demo->primary, demo->secondary,
-                                     (float)ribbon / 3.0f,
-                                     (unsigned char)(10.0f + intensity * 13.0f));
-        int previousX = -48;
-        int previousY = (int)baseY;
-        for (int x = 0; x <= screenWidth + 48; x += 48) {
-            float fx = (float)x / (float)screenWidth;
-            int y = (int)(baseY + sinf(fx * (4.2f + (float)ribbon * 0.37f) +
-                                       phase + time * (0.055f + (float)ribbon * 0.012f)) *
-                                      (17.0f + (float)ribbon * 5.0f));
-            DrawLineEx((Vector2){ (float)previousX, (float)previousY },
-                       (Vector2){ (float)x, (float)y }, 8.0f + (float)ribbon * 3.0f,
-                       ribbonColor);
-            previousX = x;
-            previousY = y;
-        }
-    }
-
 }
 
 void DrawSeedSelector(uint32_t seed, float time, float bpm, const char *keyName,

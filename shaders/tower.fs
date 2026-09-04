@@ -18,6 +18,83 @@ uniform vec3 uPrimaryColor;
 uniform vec3 uSecondaryColor;
 uniform int uStructureKind;
 
+int getGlyphBitmap(int idx) {
+    idx = idx & 15;
+    if (idx == 0) return 31599; // 0
+    if (idx == 1) return 11415; // 1
+    if (idx == 2) return 29671; // 2
+    if (idx == 3) return 29647; // 3
+    if (idx == 4) return 23497; // 4
+    if (idx == 5) return 31183; // 5
+    if (idx == 6) return 31215; // 6
+    if (idx == 7) return 29330; // 7
+    if (idx == 8) return 31727; // 8
+    if (idx == 9) return 31695; // 9
+    if (idx == 10) return 11245; // A
+    if (idx == 11) return 27566; // B
+    if (idx == 12) return 31015; // C
+    if (idx == 13) return 27502; // D
+    if (idx == 14) return 31207; // E
+    return 31204; // 15: F
+}
+
+float evaluateGlyph(int charIdx, vec2 cellUV) {
+    if (cellUV.x < 0.12 || cellUV.x > 0.88 || cellUV.y < 0.08 || cellUV.y > 0.92) return 0.0;
+    int px = clamp(int((cellUV.x - 0.12) / 0.76 * 3.0), 0, 2);
+    int py = clamp(int((cellUV.y - 0.08) / 0.84 * 5.0), 0, 4);
+    int bitPos = 14 - (py * 3 + px);
+    int bitmap = getGlyphBitmap(charIdx);
+    return float((bitmap >> bitPos) & 1);
+}
+
+vec3 renderMatrixRain(vec2 uv, float widthMeters, float heightMeters, float time, float seedPhase, float phaseOffset, vec3 textColor) {
+    float borderDist = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
+    float frameGlow = 1.0 - smoothstep(0.012, 0.040, borderDist);
+    float contentMask = smoothstep(0.020, 0.048, borderDist);
+    if (contentMask <= 0.0) {
+        return textColor * frameGlow * 0.35;
+    }
+
+    float cols = clamp(floor(max(widthMeters, 1.2) * 2.8), 6.0, 22.0);
+    float colId = floor(uv.x * cols);
+    float colU = fract(uv.x * cols);
+
+    if (colU < 0.14 || colU > 0.86) {
+        return textColor * frameGlow * 0.35;
+    }
+    float charU = (colU - 0.14) / 0.72;
+
+    float rows = clamp(floor(max(heightMeters, 1.0) * 2.2), 6.0, 20.0);
+    float colHash = fract(sin(colId * 91.71 + seedPhase * 13.0 + phaseOffset * 7.0) * 43758.5453);
+    float colSpeed = 1.0 + colHash * 1.8;
+    float scrollY = (1.0 - uv.y) * rows + time * colSpeed + phaseOffset * 8.0 + colHash * 11.0;
+    float rowId = floor(scrollY);
+    float rowV = fract(scrollY);
+
+    if (rowV < 0.10 || rowV > 0.90) {
+        return textColor * frameGlow * 0.35;
+    }
+    float charV = (rowV - 0.10) / 0.80;
+
+    float cellSeed = fract(sin(colId * 12.9898 + rowId * 78.233 + seedPhase * 5.0) * 43758.5453);
+    float mutate = floor(time * 5.0 + cellSeed * 9.0);
+    int charIdx = int(abs(sin(cellSeed * 43.0 + mutate * 0.23) * 16.0)) % 16;
+
+    float glyph = evaluateGlyph(charIdx, vec2(charU, charV));
+
+    float streamLen = 9.0 + colHash * 8.0;
+    float dropPos = fract(scrollY / streamLen);
+    float head = smoothstep(0.85, 1.0, dropPos);
+    float tail = pow(dropPos, 2.6);
+    float streamIntensity = tail * 0.90 + head * 2.0;
+
+    vec3 glyphColor = mix(textColor, vec3(1.0, 1.0, 1.0), head * 0.92);
+    vec3 charLit = glyphColor * (glyph * (streamIntensity + 0.20));
+    vec3 trailGlow = textColor * (tail * 0.08);
+
+    return (charLit + trailGlow) * contentMask + textColor * (frameGlow * 0.35);
+}
+
 void main()
 {
     // Surface normal and directional light calculation
@@ -39,31 +116,66 @@ void main()
     vec3 finalRGB;
 
     if (uStructureKind == 5) {
-        // Corridor-facing data placards rendered as falling binary/matrix-style
-        // data rain: independently scrolling columns with a bright leading glyph,
-        // built entirely from hashes so no font or texture asset is needed.
+        // Corridor-facing data placards rendered with 3x5 font Matrix data-rain
         vec2 signUV = abs(N.x) > 0.55 ? fragLocalPos.zy + 0.5
                                       : fragLocalPos.xy + 0.5;
-        float frameDistance = min(min(signUV.x, 1.0 - signUV.x),
-                                  min(signUV.y, 1.0 - signUV.y));
-        float frame = 1.0 - smoothstep(0.035, 0.075, frameDistance);
-        float columns = 9.0;
-        float colId = floor(signUV.x * columns);
-        float colSpeed = 0.6 + fract(sin(colId * 91.71 + seedPhase * 13.0) * 43758.5453) * 1.6;
-        float scrollY = signUV.y * 6.0 + uTime * colSpeed + seedPhase * 5.0;
-        vec2 cell = vec2(colId, floor(scrollY));
-        float cellCode = sin(dot(cell, vec2(12.9898, 78.233)));
-        float glyph = step(0.5, fract(cellCode * 43758.5453));
-        vec2 within = vec2(fract(signUV.x * columns), fract(scrollY));
-        glyph *= smoothstep(0.12, 0.24, min(within.x, 1.0 - within.x)) *
-                 smoothstep(0.12, 0.24, min(within.y, 1.0 - within.y));
-        float leading = smoothstep(0.86, 1.0, within.y) * glyph;
-        float scan = pow(max(sin(signUV.y * 44.0 - uTime * 3.2 + seedPhase), 0.0), 12.0);
-        float header = smoothstep(0.76, 0.78, signUV.y) *
-                       (1.0 - smoothstep(0.89, 0.91, signUV.y));
+        vec3 rain = renderMatrixRain(signUV, 2.6, 2.0, uTime, seedPhase, 0.0, neonColor);
         vec3 signBase = mix(vec3(0.003, 0.008, 0.020), neonColor, 0.055);
-        finalRGB = signBase + neonColor * (frame * 0.42 + glyph * 0.16 + leading * 0.55 +
-                                           scan * 0.10 + header * 0.18);
+        finalRGB = signBase + rain;
+    } else if (uStructureKind == 2) {
+        // =====================================================================
+        // MEMORY SLAB (Selective data-rain on corridor-facing or front faces)
+        // =====================================================================
+        vec3 absPos = abs(fragLocalPos);
+        float max1 = max(max(absPos.x, absPos.y), absPos.z);
+        float min1 = min(min(absPos.x, absPos.y), absPos.z);
+        float max2 = absPos.x + absPos.y + absPos.z - max1 - min1;
+
+        float edgeOuter = smoothstep(0.32, 0.485, max2) * 0.30;
+        float edgeCore  = smoothstep(0.44, 0.490, max2) * 0.48;
+        float boxEdge   = clamp(edgeOuter + edgeCore, 0.0, 1.0);
+
+        vec3 baseBody = mix(vec3(0.002, 0.005, 0.010), neonColor, 0.05);
+
+        vec3 halfDir = normalize(lightDir + viewDir);
+        float spec = pow(max(dot(N, halfDir), 0.0), 32.0) * 0.8;
+
+        float edgePulse = sin(fragPosition.y * 2.0 - uTime * 5.0 + seedPhase) * 0.5 + 0.5;
+        vec3 neonLines = neonColor * (boxEdge * 1.5 + pow(boxEdge, 2.0) * 2.0) * (0.8 + edgePulse * 0.4);
+
+        // Determine which face this fragment lies on
+        bool isCorridorFace = (fragPosition.x < 0.0 ? N.x > 0.45 : N.x < -0.45);
+        bool isFrontFace = (N.z > 0.45);
+
+        int faceMode = int(fragColor.x + 0.2); // 0 = none, 1 = corridor, 2 = front, 3 = both
+        bool activeFace = (faceMode == 1 && isCorridorFace) ||
+                          (faceMode == 2 && isFrontFace) ||
+                          (faceMode == 3 && (isCorridorFace || isFrontFace));
+
+        if (activeFace) {
+            float height01 = clamp(fragLocalPos.y + 0.5, 0.0, 1.0);
+            float taper = 0.92 + 0.08 * cos(height01 * 3.14159265);
+            vec2 faceUV;
+            float faceWidth = fragColor.w > 0.5 ? fragColor.w : 4.0;
+            float faceHeight = fragColor.z > 0.5 ? fragColor.z : 2.5;
+
+            if (isCorridorFace) {
+                float localZ = fragLocalPos.z / max(taper, 0.1);
+                float u = (fragPosition.x < 0.0) ? (localZ + 0.5) : (0.5 - localZ);
+                faceUV = vec2(clamp(u, 0.0, 1.0), height01);
+            } else {
+                float localX = fragLocalPos.x / max(taper, 0.1);
+                float u = localX + 0.5;
+                faceUV = vec2(clamp(u, 0.0, 1.0), height01);
+            }
+
+            vec3 slabNeon = mix(neonColor, vec3(0.2, 0.98, 0.6), 0.5);
+            vec3 rain = renderMatrixRain(faceUV, faceWidth, faceHeight, uTime, seedPhase, fragColor.y, slabNeon);
+            finalRGB = baseBody + neonLines * 0.35 + rain + spec * 0.25;
+        } else {
+            finalRGB = baseBody + neonLines + mix(uPrimaryColor, vec3(0.5, 0.8, 1.0), 0.6) * spec * 0.6 +
+                       neonColor * (rim * 0.4);
+        }
     } else if (uStructureKind == 6) {
         // Classic multi-layer sine-wave plasma: several offset traveling waves
         // summed and mapped through the run palette, a direct demoscene staple.
@@ -103,96 +215,87 @@ void main()
         vec3 fractalColor = mix(vec3(0.008, 0.008, 0.018), neonColor, clamp(glow, 0.0, 1.0));
         finalRGB = fractalColor + neonColor * rim * 0.30;
     } else if (uStructureKind == 7) {
-        // Recessed architectural glazing: dark glass, physical mullions and
-        // a sparse set of dim occupied panes. It supplies scale without bloom.
-        vec2 windowUV = fragLocalPos.zy + 0.5;
-        vec2 tiled = windowUV * vec2(5.0, 3.0);
-        vec2 paneUV = fract(tiled);
-        vec2 paneId = floor(tiled);
-        float borderDistance = min(min(paneUV.x, 1.0 - paneUV.x),
-                                   min(paneUV.y, 1.0 - paneUV.y));
-        float mullion = 1.0 - smoothstep(0.035, 0.085, borderDistance);
-        float paneHash = fract(sin(dot(paneId + vec2(seedPhase * 19.0, seedPhase * 7.0),
-                                       vec2(12.9898, 78.233))) * 43758.5453);
-        float occupied = step(0.86, paneHash);
-        vec3 glass = mix(vec3(0.006, 0.014, 0.022), uBodyColor, 0.22);
-        finalRGB = glass * (0.70 + diff * 0.34) +
-                   vec3(0.016, 0.024, 0.034) * mullion +
-                   mix(uSecondaryColor, vec3(0.45, 0.52, 0.42), 0.28) * occupied *
-                   (0.020 + uIntensity * 0.010);
+        // Floating holographic data rings instead of glazing
+        vec2 uv = fragLocalPos.zy;
+        float r = length(uv);
+        float ring = smoothstep(0.4, 0.42, r) * (1.0 - smoothstep(0.42, 0.44, r));
+        float ring2 = smoothstep(0.2, 0.22, r) * (1.0 - smoothstep(0.22, 0.24, r));
+        float spin = atan(uv.y, uv.x) + uTime * 2.0;
+        float dash = step(0.5, fract(spin * 4.0 / 6.28318));
+        
+        vec3 holoColor = mix(uPrimaryColor, uSecondaryColor, 0.5);
+        finalRGB = holoColor * (ring * dash + ring2 * (1.0 - dash)) * (0.8 + uIntensity * 1.5) + neonColor * rim * 0.2;
     } else if (uStructureKind == 9) {
-        // Deep ventilation louvers use alternating metal slats and shadow.
-        vec2 ventUV = fragLocalPos.zy + 0.5;
-        float slatPhase = fract(ventUV.y * 11.0);
-        float slatFace = smoothstep(0.16, 0.28, slatPhase) *
-                         (1.0 - smoothstep(0.68, 0.82, slatPhase));
-        float sideFrame = 1.0 - smoothstep(0.035, 0.095,
-                                           min(ventUV.x, 1.0 - ventUV.x));
-        vec3 recess = mix(vec3(0.010, 0.014, 0.019), uBodyColor, 0.22);
-        vec3 slatMetal = mix(vec3(0.030, 0.038, 0.046), uBodyColor, 0.40);
-        finalRGB = mix(recess, slatMetal * (0.64 + diff * 0.30), slatFace) +
-                   vec3(0.040, 0.048, 0.056) * sideFrame;
+        // Vertical memory banks with steady luminous slot racks
+        vec2 uv = fragLocalPos.zy + 0.5;
+        float bankX = step(0.25, fract(uv.x * 5.0));
+        float bankY = step(0.20, fract(uv.y * 8.0));
+        float slot = bankX * bankY * step(0.08, uv.y) * step(uv.y, 0.92);
+        vec3 base = mix(vec3(0.002, 0.004, 0.01), neonColor, 0.05);
+        finalRGB = base + mix(uPrimaryColor, neonColor, 0.5) * slot * 0.35;
     } else if (uStructureKind == 10) {
-        // Loading/entry aperture with a split door and heavy perimeter frame.
-        vec2 doorUV = fragLocalPos.zy + 0.5;
-        float edgeDistance = min(min(doorUV.x, 1.0 - doorUV.x),
-                                 min(doorUV.y, 1.0 - doorUV.y));
-        float frame = 1.0 - smoothstep(0.045, 0.105, edgeDistance);
-        float split = 1.0 - smoothstep(0.012, 0.032, abs(doorUV.x - 0.5));
-        float lintel = smoothstep(0.70, 0.73, doorUV.y) *
-                       (1.0 - smoothstep(0.79, 0.82, doorUV.y));
-        vec3 door = mix(vec3(0.010, 0.014, 0.020), uBodyColor, 0.26);
-        finalRGB = door * (0.62 + diff * 0.26) +
-                   vec3(0.046, 0.054, 0.063) * (frame * 0.78 + split * 0.30) +
-                   uSecondaryColor * lintel * 0.018;
+        // Glowing data port instead of loading door
+        vec2 uv = fragLocalPos.zy + 0.5;
+        float port = smoothstep(0.2, 0.22, uv.x) * (1.0 - smoothstep(0.78, 0.8, uv.x));
+        port *= smoothstep(0.1, 0.12, uv.y) * (1.0 - smoothstep(0.6, 0.62, uv.y));
+        
+        float scanline = step(0.9, fract(uv.y * 10.0 - uTime * 2.0));
+        vec3 portGlow = uPrimaryColor * port * (0.5 + scanline * 0.5) * (1.0 + uIntensity);
+        
+        vec3 base = mix(vec3(0.002, 0.004, 0.01), neonColor, 0.05);
+        finalRGB = base + portGlow + neonColor * rim * 0.2;
     } else if (uAccentColor.a > 1.5) {
         // =====================================================================
         // CONDUIT DATA STREAM PATH (Smooth, non-flickering luminescent neon)
         // =====================================================================
         // Steady luminous core and glowing tube base
-        vec3 tubeBase = neonColor * (0.21 + 0.105 * diff);
-        vec3 coreGlow = mix(neonColor, vec3(0.65, 0.84, 0.92), 0.34) * 0.050;
+        vec3 tubeBase = neonColor * (0.50 + 0.25 * diff);
+        vec3 coreGlow = mix(neonColor, vec3(0.85, 0.95, 1.0), 0.50) * 0.35;
 
-        // Long-wavelength, calm traveling data pulse (smooth sine harmonics)
-        float streamCoord = (fragPosition.z + fragPosition.x * 0.4 + fragPosition.y * 0.3) * 0.04 -
-                            (virtualPlayerZ * 0.012) - uTime * uIntensity * 0.14;
+        // Direction vector (scaled by segment length) and phase offset passed per-instance via fragColor
+        vec3 flowScaled = fragColor.xyz;
+        float phaseOffset = fragColor.w;
+
+        // Position along the conduit flow axis in local meters
+        float localMeters = dot(fragLocalPos, flowScaled);
+
+        // Long-wavelength, calm traveling data pulse directed along local conduit orientation
+        float streamCoord = localMeters * 0.08 - uTime * (0.65 + uIntensity * 0.35) + phaseOffset;
         float pulseWave1 = sin(streamCoord * 6.28318) * 0.5 + 0.5;
         float pulseWave2 = sin(streamCoord * 12.56636 + 1.2) * 0.5 + 0.5;
-        float smoothPulse = pow(pulseWave1, 3.0) * 0.65 + pow(pulseWave2, 4.0) * 0.35;
+        float smoothPulse = pow(pulseWave1, 2.5) * 0.65 + pow(pulseWave2, 3.5) * 0.35;
 
         // Pulse energy shift: neon shifts toward bright cyan/white core at peak
-        vec3 pulseEnergy = mix(neonColor, vec3(0.32, 0.76, 0.86), 0.46) * smoothPulse * 0.20;
+        vec3 pulseEnergy = mix(neonColor, vec3(0.90, 0.98, 1.0), 0.75) * smoothPulse * 0.70;
 
-        // Reuse streamCoord as the scroll axis for hash-based glyphs (same
-        // technique as the kind==5 data placard), so conduits read as literal
-        // data streams riding on top of the smooth pulse.
-        float glyphCol = floor((fragLocalPos.x + 0.5) * 5.0);
+        // Reuse streamCoord as the scroll axis for hash-based glyphs; cross-coordinate aligns
+        // with the conduit cross-section across X, Y, or Z spans
+        float crossCoord = abs(flowScaled.x) > 0.5 ? fragLocalPos.z : fragLocalPos.x;
+        float glyphCol = floor((crossCoord + 0.5) * 5.0);
         float glyphRow = floor(streamCoord * 18.0);
         float glyphCode = sin(dot(vec2(glyphCol, glyphRow), vec2(12.9898, 78.233)));
-        float glyph = step(0.5, fract(glyphCode * 43758.5453));
-        vec2 glyphWithin = vec2(fract((fragLocalPos.x + 0.5) * 5.0), fract(streamCoord * 18.0));
-        glyph *= smoothstep(0.10, 0.22, min(glyphWithin.x, 1.0 - glyphWithin.x)) *
-                 smoothstep(0.10, 0.22, min(glyphWithin.y, 1.0 - glyphWithin.y));
-        vec3 glyphColor = mix(neonColor, vec3(0.55, 0.92, 0.98), 0.5) * glyph * smoothPulse * 0.16;
+        int charIdx = int(abs(glyphCode * 16.0)) % 16;
+        vec2 glyphWithin = vec2(fract((crossCoord + 0.5) * 5.0), fract(streamCoord * 18.0));
+        float glyph = evaluateGlyph(charIdx, glyphWithin);
+        vec3 glyphColor = mix(neonColor, vec3(0.75, 0.95, 1.0), 0.6) * glyph * smoothPulse * 0.35;
 
         float boostCarrier = pow(max(sin(streamCoord * 31.4159 + seedPhase), 0.0), 9.0);
-        finalRGB = tubeBase + coreGlow + pulseEnergy + glyphColor + neonColor * (rim * 0.24) +
-                   uSecondaryColor * boostCarrier * uIntensity * 0.18;
+        finalRGB = tubeBase + coreGlow + pulseEnergy + glyphColor + neonColor * (rim * 0.40) +
+                   uSecondaryColor * boostCarrier * uIntensity * 0.25;
     } else {
         // =====================================================================
-        // HARDWARE MONOLITH & SLAB PATH (Obsidian body + anti-aliased neon edge)
+        // DIGITAL GLASS MONOLITH (Translucent dark glass + intense neon grid)
         // =====================================================================
         vec3 absPos = abs(fragLocalPos);
         float max1 = max(max(absPos.x, absPos.y), absPos.z);
         float min1 = min(min(absPos.x, absPos.y), absPos.z);
         float max2 = absPos.x + absPos.y + absPos.z - max1 - min1;
 
-        // Multi-tier smooth edge lines (anti-aliased, zero jitter)
+        // Wireframe edges
         float edgeOuter = smoothstep(0.32, 0.485, max2) * 0.30;
         float edgeCore  = smoothstep(0.44, 0.490, max2) * 0.48;
         float boxEdge   = clamp(edgeOuter + edgeCore, 0.0, 1.0);
 
-        // Cylinder Rim Profile (for capacitors/nodes)
         float cylRadius = length(fragLocalPos.xz);
         float cylOuter = smoothstep(0.32, 0.485, cylRadius) * smoothstep(0.35, 0.49, absPos.y) * 0.30;
         float cylCore  = smoothstep(0.44, 0.490, cylRadius) * smoothstep(0.44, 0.49, absPos.y) * 0.48;
@@ -201,52 +304,21 @@ void main()
         float isCylinder = step(0.46, cylRadius) * (1.0 - step(0.47, max2));
         float edgeFactor = mix(boxEdge, cylEdge, isCylinder);
 
-        // Dark obsidian chassis alloy with metallic specular sheen
-        vec3 bodyTint = mix(vec3(0.018, 0.030, 0.058), neonColor, 0.105);
-        vec3 baseBody = bodyTint * (0.62 + 0.48 * diff) +
-                        uBodyColor * (ambient + 0.38 * diff);
+        // Dark reflective glass body
+        vec3 baseBody = mix(vec3(0.002, 0.005, 0.010), neonColor, 0.05);
 
-        // Specular highlight on chassis top/edges
+        // Intense specular highlight for glass
         vec3 halfDir = normalize(lightDir + viewDir);
-        float spec = pow(max(dot(N, halfDir), 0.0), 20.0) * 0.32;
+        float spec = pow(max(dot(N, halfDir), 0.0), 32.0) * 0.8;
 
-        // Structural secondary pieces are read by their geometry and shading,
-        // so their edge treatment is deliberately much quieter than the main
-        // tower chassis.
         float structuralDetail = uStructureKind == 8 ? 1.0 : 0.0;
-        vec3 neonLines = neonColor * (edgeFactor * 0.54 + pow(edgeFactor, 2.0) * 0.18) *
-                         mix(1.0, 0.18, structuralDetail);
+        
+        // Intense pulsing neon edges
+        float edgePulse = sin(fragPosition.y * 2.0 - uTime * 5.0 + seedPhase) * 0.5 + 0.5;
+        vec3 neonLines = neonColor * (edgeFactor * 1.5 + pow(edgeFactor, 2.0) * 2.0) * (0.8 + edgePulse * 0.4) * mix(1.0, 0.3, structuralDetail);
 
-        // World-scale panel seams and tiny window lanes give large surfaces a
-        // material scale. Each structure family receives a different cadence.
-        float kind = float(uStructureKind);
-        float panelPhase = fragPosition.y * (0.20 + kind * 0.017) +
-                           fragPosition.z * 0.017 + seedPhase;
-        float panelSeam = 1.0 - smoothstep(0.018, 0.065,
-                                           abs(fract(panelPhase) - 0.5));
-        float verticalSeam = 1.0 - smoothstep(0.022, 0.075,
-                                              abs(fract(fragLocalPos.x *
-                                                       (3.0 + mod(kind, 3.0))) - 0.5));
-        float windowLane = pow(max(sin(fragPosition.y * 1.32 +
-                                       fragPosition.z * 0.11 + seedPhase), 0.0), 22.0) *
-                           step(0.15, abs(N.x) + abs(N.z));
-
-
-        float circuitA = sin((fragPosition.y * 1.9 + fragPosition.z * 0.21) + uTime * 3.0 + seedPhase);
-        float circuitB = sin((fragPosition.x * 1.7 - fragPosition.z * 0.16) - uTime * 4.1);
-        float circuitry = pow(max(circuitA * circuitB, 0.0), 12.0) * uIntensity *
-                          (1.0 - structuralDetail);
-        float scanBand = pow(max(sin(fragPosition.y * 3.4 - uTime * 7.0), 0.0), 18.0) *
-                         uIntensity * (1.0 - structuralDetail);
-
-        baseBody *= 1.0 - panelSeam * 0.20 - verticalSeam * 0.08;
-        finalRGB = baseBody + neonLines + mix(uPrimaryColor, vec3(0.3, 0.7, 1.0), 0.45) * spec *
-                   mix(0.42, 0.10, structuralDetail) +
-                   neonColor * (rim * mix(0.25, 0.07, structuralDetail)) +
-                   mix(uPrimaryColor, uSecondaryColor, circuitB * 0.5 + 0.5) * circuitry * 0.34 +
-                   uPrimaryColor * scanBand * edgeFactor * 0.30 +
-                   mix(neonColor, uSecondaryColor, 0.35) * windowLane *
-                   (0.012 + uIntensity * 0.010) * (1.0 - structuralDetail);
+        finalRGB = baseBody + neonLines + mix(uPrimaryColor, vec3(0.5, 0.8, 1.0), 0.6) * spec * mix(0.8, 0.2, structuralDetail) +
+                   neonColor * (rim * mix(0.6, 0.2, structuralDetail));
     }
 
     // Atmospheric deep-indigo horizon fog
