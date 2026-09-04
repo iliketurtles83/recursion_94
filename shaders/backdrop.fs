@@ -11,6 +11,9 @@ uniform float uIntensity;
 uniform int uRunSeed;
 uniform vec3 uPrimaryColor;
 uniform vec3 uSecondaryColor;
+uniform vec3 uSkyZenith;
+uniform vec3 uSkyHorizon;
+uniform vec3 uBodyColor;
 
 uint hashUint(uint value) {
     value ^= value >> 16;
@@ -98,35 +101,16 @@ vec2 citySilhouette(vec2 screenPoint, uint seed) {
 }
 
 vec3 cyclePalette(float phase, float height) {
-    vec3 nightLow = vec3(0.008, 0.012, 0.040);
-    vec3 nightHigh = vec3(0.001, 0.003, 0.014);
-    vec3 dawnLow = vec3(0.95, 0.12, 0.32);
-    vec3 dawnHigh = vec3(0.08, 0.22, 0.48);
-    vec3 dayLow = vec3(0.20, 0.58, 0.78);
-    vec3 dayHigh = vec3(0.035, 0.22, 0.52);
-    vec3 duskLow = vec3(1.00, 0.20, 0.08);
-    vec3 duskHigh = vec3(0.20, 0.06, 0.38);
+    // Cyberspace atmospheric dome: deep void at zenith, subtle glowing horizon
+    vec3 zenith = uSkyZenith;
+    vec3 horizon = uSkyHorizon;
 
-    vec3 low;
-    vec3 high;
-    if (phase < 0.25) {
-        float blend = smoothstep(0.0, 0.25, phase);
-        low = mix(nightLow, dawnLow, blend);
-        high = mix(nightHigh, dawnHigh, blend);
-    } else if (phase < 0.50) {
-        float blend = smoothstep(0.25, 0.50, phase);
-        low = mix(dawnLow, dayLow, blend);
-        high = mix(dawnHigh, dayHigh, blend);
-    } else if (phase < 0.75) {
-        float blend = smoothstep(0.50, 0.75, phase);
-        low = mix(dayLow, duskLow, blend);
-        high = mix(dayHigh, duskHigh, blend);
-    } else {
-        float blend = smoothstep(0.75, 1.0, phase);
-        low = mix(duskLow, nightLow, blend);
-        high = mix(duskHigh, nightHigh, blend);
-    }
-    return mix(low, high, smoothstep(0.0, 1.0, height));
+    // Subtle atmospheric wave over time (breathing twilight horizon)
+    float wave = sin(phase * 6.2831853) * 0.5 + 0.5;
+    vec3 low = mix(horizon, horizon * 1.25 + uPrimaryColor * 0.05, wave);
+    vec3 high = mix(zenith, zenith * 1.1 + uSecondaryColor * 0.02, wave);
+
+    return mix(low, high, smoothstep(0.02, 0.92, height));
 }
 
 void main() {
@@ -168,20 +152,20 @@ void main() {
     vec3 base = cyclePalette(cycle, fragTexCoord.y);
     float digitalBands = step(0.72, fract(sin(floor(fragTexCoord.y * 72.0) +
                               seedPhase * 31.0) * 43758.5453));
-    vec3 sunsetSignal = mix(vec3(1.0, 0.08, 0.32), vec3(0.05, 0.75, 1.0),
+    vec3 sunsetSignal = mix(uSecondaryColor, uPrimaryColor,
                             step(0.5, fract(fragTexCoord.y * 31.0 + seedPhase)));
-    base += sunsetSignal * digitalBands * twilight * horizonMask * 0.045;
+    base += sunsetSignal * digitalBands * twilight * horizonMask * 0.035;
 
     vec3 sky = base + (fractalColor + farColor) * horizonMask *
                       (0.45 + twilight * 0.55);
     vec2 city = citySilhouette(vec2(fragTexCoord.x * 2.0 - 1.0,
                                     1.0 - fragTexCoord.y), seed);
     float silhouette = 1.0 - smoothstep(-0.002, 0.003, city.x);
-    vec3 silhouetteColor = mix(vec3(0.002, 0.004, 0.012),
+    vec3 silhouetteColor = mix(uBodyColor * 0.5,
                                uSecondaryColor * 0.035, uIntensity);
     sky = mix(sky, silhouetteColor, silhouette);
     sky += mix(uPrimaryColor, uSecondaryColor, 0.45) * city.y * silhouette *
-           (0.018 + uIntensity * 0.085);
+           (0.025 + uIntensity * 0.085);
 
     finalColor = vec4(sky, 1.0) * fragColor;
 }

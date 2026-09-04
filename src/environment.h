@@ -60,6 +60,10 @@ typedef struct {
     Color primaryColor;
     Color secondaryColor;
     Color landmarkColor;
+    Color threatColor;
+    Color shadowBodyColor;
+    Color skyZenithColor;
+    Color skyHorizonColor;
 
     Mesh unitCubeMesh;
     Mesh unitPrismMesh;
@@ -72,6 +76,8 @@ typedef struct {
     int towerSecondaryLoc;
     int towerAccentLoc;
     int towerBodyLoc;
+    int towerSkyLoc;
+    int towerHotLoc;
     int towerKindLoc;
 
     Material terrainMaterial;
@@ -80,6 +86,8 @@ typedef struct {
     int terrainSeedLoc;
     int terrainPrimaryLoc;
     int terrainSecondaryLoc;
+    int terrainBodyLoc;
+    int terrainSkyLoc;
     TerrainInstance terrain[MAX_TERRAIN_INSTANCES];
     int terrainCount;
 

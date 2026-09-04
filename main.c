@@ -1,4 +1,5 @@
 #include "raylib.h"
+#include "palette.h"
 #include "environment.h"
 #include "audio_synth.h"
 #include "gameplay.h"
@@ -27,12 +28,16 @@ typedef struct {
     int craftEnemyTypeLoc;
     int craftPrimaryLoc;
     int craftSecondaryLoc;
+    int craftThreatLoc;
     Shader backdropShader;
     int backdropTimeLoc;
     int backdropIntensityLoc;
     int backdropSeedLoc;
     int backdropPrimaryLoc;
     int backdropSecondaryLoc;
+    int backdropZenithLoc;
+    int backdropHorizonLoc;
+    int backdropBodyLoc;
     int backdropEncounterLoc;
     bool ready;
 } PostProcessSystem;
@@ -48,27 +53,42 @@ static uint32_t DeriveLoopSeed(uint32_t initialSeed, int completedLoops) {
 }
 
 static void SetPostProcessTheme(PostProcessSystem *post, uint32_t seed,
-                                Color primary, Color secondary) {
+                                const DemosceneSystem *demo) {
     int shaderSeed = (int)seed;
-    Vector3 primaryValue = { primary.r / 255.0f, primary.g / 255.0f, primary.b / 255.0f };
-    Vector3 secondaryValue = { secondary.r / 255.0f, secondary.g / 255.0f,
-                               secondary.b / 255.0f };
+    Vector3 primaryValue = { demo->primary.r / 255.0f, demo->primary.g / 255.0f, demo->primary.b / 255.0f };
+    Vector3 secondaryValue = { demo->secondary.r / 255.0f, demo->secondary.g / 255.0f,
+                               demo->secondary.b / 255.0f };
+    Vector3 threatValue = { demo->threat.r / 255.0f, demo->threat.g / 255.0f, demo->threat.b / 255.0f };
+    Vector3 bodyValue = { demo->shadowBody.r / 255.0f, demo->shadowBody.g / 255.0f, demo->shadowBody.b / 255.0f };
+    Vector3 zenithValue = { demo->skyZenith.r / 255.0f, demo->skyZenith.g / 255.0f, demo->skyZenith.b / 255.0f };
+    Vector3 horizonValue = { demo->skyHorizon.r / 255.0f, demo->skyHorizon.g / 255.0f, demo->skyHorizon.b / 255.0f };
+
     SetShaderValue(post->shader, post->seedLoc, &shaderSeed, SHADER_UNIFORM_INT);
     SetShaderValue(post->shader, post->primaryLoc, &primaryValue, SHADER_UNIFORM_VEC3);
     SetShaderValue(post->shader, post->secondaryLoc, &secondaryValue, SHADER_UNIFORM_VEC3);
+
     SetShaderValue(post->craftShader, post->craftPrimaryLoc, &primaryValue, SHADER_UNIFORM_VEC3);
-    SetShaderValue(post->craftShader, post->craftSecondaryLoc, &secondaryValue,
-                   SHADER_UNIFORM_VEC3);
-    SetShaderValue(post->backdropShader, post->backdropSeedLoc, &shaderSeed,
-                   SHADER_UNIFORM_INT);
-    SetShaderValue(post->backdropShader, post->backdropPrimaryLoc, &primaryValue,
-                   SHADER_UNIFORM_VEC3);
-    SetShaderValue(post->backdropShader, post->backdropSecondaryLoc, &secondaryValue,
-                   SHADER_UNIFORM_VEC3);
+    SetShaderValue(post->craftShader, post->craftSecondaryLoc, &secondaryValue, SHADER_UNIFORM_VEC3);
+    if (post->craftThreatLoc >= 0) {
+        SetShaderValue(post->craftShader, post->craftThreatLoc, &threatValue, SHADER_UNIFORM_VEC3);
+    }
+
+    SetShaderValue(post->backdropShader, post->backdropSeedLoc, &shaderSeed, SHADER_UNIFORM_INT);
+    SetShaderValue(post->backdropShader, post->backdropPrimaryLoc, &primaryValue, SHADER_UNIFORM_VEC3);
+    SetShaderValue(post->backdropShader, post->backdropSecondaryLoc, &secondaryValue, SHADER_UNIFORM_VEC3);
+    if (post->backdropZenithLoc >= 0) {
+        SetShaderValue(post->backdropShader, post->backdropZenithLoc, &zenithValue, SHADER_UNIFORM_VEC3);
+    }
+    if (post->backdropHorizonLoc >= 0) {
+        SetShaderValue(post->backdropShader, post->backdropHorizonLoc, &horizonValue, SHADER_UNIFORM_VEC3);
+    }
+    if (post->backdropBodyLoc >= 0) {
+        SetShaderValue(post->backdropShader, post->backdropBodyLoc, &bodyValue, SHADER_UNIFORM_VEC3);
+    }
 }
 
 static void InitPostProcess(PostProcessSystem *post, int width, int height,
-                            uint32_t seed, Color primary, Color secondary) {
+                            uint32_t seed, const DemosceneSystem *demo) {
     post->target = LoadRenderTexture(width, height);
     SetTextureFilter(post->target.texture, TEXTURE_FILTER_BILINEAR);
     post->shader = LoadShaderFromMemory(NULL, shader_post_fs);
@@ -90,6 +110,7 @@ static void InitPostProcess(PostProcessSystem *post, int width, int height,
     post->craftEnemyTypeLoc = GetShaderLocation(post->craftShader, "uEnemyType");
     post->craftPrimaryLoc = GetShaderLocation(post->craftShader, "uPrimaryColor");
     post->craftSecondaryLoc = GetShaderLocation(post->craftShader, "uSecondaryColor");
+    post->craftThreatLoc = GetShaderLocation(post->craftShader, "uThreatColor");
 
     post->backdropShader = LoadShaderFromMemory(NULL, shader_backdrop_fs);
     post->backdropTimeLoc = GetShaderLocation(post->backdropShader, "uTime");
@@ -98,9 +119,12 @@ static void InitPostProcess(PostProcessSystem *post, int width, int height,
     post->backdropSeedLoc = GetShaderLocation(post->backdropShader, "uRunSeed");
     post->backdropPrimaryLoc = GetShaderLocation(post->backdropShader, "uPrimaryColor");
     post->backdropSecondaryLoc = GetShaderLocation(post->backdropShader, "uSecondaryColor");
+    post->backdropZenithLoc = GetShaderLocation(post->backdropShader, "uSkyZenith");
+    post->backdropHorizonLoc = GetShaderLocation(post->backdropShader, "uSkyHorizon");
+    post->backdropBodyLoc = GetShaderLocation(post->backdropShader, "uBodyColor");
     post->backdropEncounterLoc = GetShaderLocation(post->backdropShader, "uEncounterIndex");
     SetShaderValue(post->backdropShader, backdropResolutionLoc, &resolution, SHADER_UNIFORM_VEC2);
-    SetPostProcessTheme(post, seed, primary, secondary);
+    SetPostProcessTheme(post, seed, demo);
 
     post->ready = post->target.texture.id != 0 && post->shader.id != 0 &&
                   post->craftShader.id != 0 && post->backdropShader.id != 0;
@@ -222,8 +246,7 @@ int main(int argc, char **argv) {
             InitAudioSynth(&synth, activeSeed);
             InitGameplay(&game, activeSeed);
             InitDemoscene(&demo, activeSeed);
-            InitPostProcess(&post, renderWidth, renderHeight, activeSeed,
-                            demo.primary, demo.secondary);
+            InitPostProcess(&post, renderWidth, renderHeight, activeSeed, &demo);
             runStarted = true;
         }
     }
@@ -253,8 +276,7 @@ int main(int argc, char **argv) {
             renderHeight = currentHeight;
             if (runStarted) {
                 UnloadPostProcess(&post);
-                InitPostProcess(&post, renderWidth, renderHeight, activeSeed,
-                                demo.primary, demo.secondary);
+                InitPostProcess(&post, renderWidth, renderHeight, activeSeed, &demo);
             }
         }
 
@@ -271,8 +293,7 @@ int main(int argc, char **argv) {
                 InitAudioSynth(&synth, activeSeed);
                 InitGameplay(&game, activeSeed);
                 InitDemoscene(&demo, activeSeed);
-                InitPostProcess(&post, renderWidth, renderHeight, activeSeed,
-                                demo.primary, demo.secondary);
+                InitPostProcess(&post, renderWidth, renderHeight, activeSeed, &demo);
                 virtualPlayerZ = 0.0f;
                 musicArrangementOriginZ = 0.0f;
                 glitchAmount = 0.0f;
@@ -296,7 +317,7 @@ int main(int argc, char **argv) {
             UnloadAudioSynth(&synth);
             InitAudioSynth(&synth, activeSeed);
             InitDemoscene(&demo, activeSeed);
-            SetPostProcessTheme(&post, activeSeed, demo.primary, demo.secondary);
+            SetPostProcessTheme(&post, activeSeed, &demo);
             virtualPlayerZ = 0.0f;
             musicArrangementOriginZ = 0.0f;
             glitchAmount = 0.0f;
@@ -352,7 +373,7 @@ int main(int argc, char **argv) {
                 ReseedAudioSynth(&synth, activeSeed);
                 musicArrangementOriginZ = virtualPlayerZ - 400.0f;
                 demo = transitionToDemo;
-                SetPostProcessTheme(&post, activeSeed, demo.primary, demo.secondary);
+                SetPostProcessTheme(&post, activeSeed, &demo);
                 TriggerSynthSFX(&synth, SFX_POWER_UP);
                 seedTransitionCommitted = true;
             }

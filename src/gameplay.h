@@ -133,6 +133,8 @@ typedef struct {
     Color primaryColor;
     Color secondaryColor;
     Color hotColor;
+    Color threatColor;
+    Color shadowBodyColor;
     Enemy enemies[MAX_ENEMIES];
     EnemyProjectile projectiles[MAX_ENEMY_PROJECTILES];
     PlayerProjectile playerProjectiles[MAX_PLAYER_PROJECTILES];

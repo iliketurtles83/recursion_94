@@ -1,4 +1,5 @@
 #include "environment.h"
+#include "palette.h"
 #include "shader_sources.h"
 #include "raymath.h"
 #include <math.h>
@@ -87,17 +88,6 @@ static inline unsigned int HashUint(unsigned int x) {
 
 static inline uint32_t SeededHash(uint32_t value, uint32_t salt) {
     return HashUint(value ^ HashUint(g_environmentSeed + salt));
-}
-
-// Shared with gameplay/demoscene palette selection so one seed presents one
-// coherent audiovisual identity even though the generation hashes differ.
-static inline uint32_t PaletteHash(uint32_t value) {
-    value ^= value >> 16;
-    value *= UINT32_C(0x7feb352d);
-    value ^= value >> 15;
-    value *= UINT32_C(0x846ca68b);
-    value ^= value >> 16;
-    return value;
 }
 
 static inline float HashFloat(int sector, int seed) {
@@ -605,20 +595,16 @@ static Mesh GenMeshCenteredPrism(int sides) {
 }
 
 static void SetEnvironmentSeed(EnvironmentSystem *env, uint32_t runSeed) {
-    static const Color palettes[][3] = {
-        { { 0, 235, 255, 255 }, { 255, 35, 170, 255 }, { 255, 230, 70, 255 } },
-        { { 80, 255, 150, 255 }, { 130, 75, 255, 255 }, { 255, 105, 55, 255 } },
-        { { 100, 155, 255, 255 }, { 255, 70, 210, 255 }, { 120, 255, 245, 255 } },
-        { { 255, 125, 45, 255 }, { 35, 225, 255, 255 }, { 255, 245, 120, 255 } },
-        { { 185, 75, 255, 255 }, { 20, 255, 195, 255 }, { 255, 80, 120, 255 } },
-        { { 70, 215, 255, 255 }, { 255, 80, 95, 255 }, { 190, 255, 70, 255 } }
-    };
     env->runSeed = runSeed;
     g_environmentSeed = runSeed;
-    int palette = (int)(PaletteHash(runSeed ^ UINT32_C(0x94d31a7b)) % 6u);
-    env->primaryColor = palettes[palette][0];
-    env->secondaryColor = palettes[palette][1];
-    env->landmarkColor = palettes[palette][2];
+    const PaletteProfile *pal = GetPaletteForSeed(runSeed);
+    env->primaryColor = pal->primary;
+    env->secondaryColor = pal->secondary;
+    env->landmarkColor = pal->hot;
+    env->threatColor = pal->threat;
+    env->shadowBodyColor = pal->shadowBody;
+    env->skyZenithColor = pal->skyZenith;
+    env->skyHorizonColor = pal->skyHorizon;
 }
 
 void InitEnvironment(EnvironmentSystem *env, uint32_t runSeed) {
@@ -626,6 +612,9 @@ void InitEnvironment(EnvironmentSystem *env, uint32_t runSeed) {
     int shaderSeed = (int)runSeed;
     Vector3 primary = { env->primaryColor.r / 255.0f, env->primaryColor.g / 255.0f, env->primaryColor.b / 255.0f };
     Vector3 secondary = { env->secondaryColor.r / 255.0f, env->secondaryColor.g / 255.0f, env->secondaryColor.b / 255.0f };
+    Vector3 body = { env->shadowBodyColor.r / 255.0f, env->shadowBodyColor.g / 255.0f, env->shadowBodyColor.b / 255.0f };
+    Vector3 skyHorizon = { env->skyHorizonColor.r / 255.0f, env->skyHorizonColor.g / 255.0f, env->skyHorizonColor.b / 255.0f };
+    Vector3 hot = { env->landmarkColor.r / 255.0f, env->landmarkColor.g / 255.0f, env->landmarkColor.b / 255.0f };
 
     // Chamfered unit block in [-0.5, 0.5]; per-instance transforms still use
     // the exact dimensions emitted by the deterministic generator.
@@ -641,10 +630,15 @@ void InitEnvironment(EnvironmentSystem *env, uint32_t runSeed) {
     env->towerSecondaryLoc = GetShaderLocation(env->towerMaterial.shader, "uSecondaryColor");
     env->towerAccentLoc = GetShaderLocation(env->towerMaterial.shader, "uAccentColor");
     env->towerBodyLoc = GetShaderLocation(env->towerMaterial.shader, "uBodyColor");
+    env->towerSkyLoc = GetShaderLocation(env->towerMaterial.shader, "uSkyHorizon");
+    env->towerHotLoc = GetShaderLocation(env->towerMaterial.shader, "uHotColor");
     env->towerKindLoc = GetShaderLocation(env->towerMaterial.shader, "uStructureKind");
     SetShaderValue(env->towerMaterial.shader, env->towerSeedLoc, &shaderSeed, SHADER_UNIFORM_INT);
     SetShaderValue(env->towerMaterial.shader, env->towerPrimaryLoc, &primary, SHADER_UNIFORM_VEC3);
     SetShaderValue(env->towerMaterial.shader, env->towerSecondaryLoc, &secondary, SHADER_UNIFORM_VEC3);
+    SetShaderValue(env->towerMaterial.shader, env->towerBodyLoc, &body, SHADER_UNIFORM_VEC3);
+    SetShaderValue(env->towerMaterial.shader, env->towerSkyLoc, &skyHorizon, SHADER_UNIFORM_VEC3);
+    SetShaderValue(env->towerMaterial.shader, env->towerHotLoc, &hot, SHADER_UNIFORM_VEC3);
 
     env->terrainMaterial = LoadMaterialDefault();
     env->terrainMaterial.shader = LoadShaderFromMemory(shader_terrain_vs, shader_terrain_fs);
@@ -653,9 +647,13 @@ void InitEnvironment(EnvironmentSystem *env, uint32_t runSeed) {
     env->terrainSeedLoc = GetShaderLocation(env->terrainMaterial.shader, "uRunSeed");
     env->terrainPrimaryLoc = GetShaderLocation(env->terrainMaterial.shader, "uPrimaryColor");
     env->terrainSecondaryLoc = GetShaderLocation(env->terrainMaterial.shader, "uSecondaryColor");
+    env->terrainBodyLoc = GetShaderLocation(env->terrainMaterial.shader, "uBodyColor");
+    env->terrainSkyLoc = GetShaderLocation(env->terrainMaterial.shader, "uSkyHorizon");
     SetShaderValue(env->terrainMaterial.shader, env->terrainSeedLoc, &shaderSeed, SHADER_UNIFORM_INT);
     SetShaderValue(env->terrainMaterial.shader, env->terrainPrimaryLoc, &primary, SHADER_UNIFORM_VEC3);
     SetShaderValue(env->terrainMaterial.shader, env->terrainSecondaryLoc, &secondary, SHADER_UNIFORM_VEC3);
+    SetShaderValue(env->terrainMaterial.shader, env->terrainBodyLoc, &body, SHADER_UNIFORM_VEC3);
+    SetShaderValue(env->terrainMaterial.shader, env->terrainSkyLoc, &skyHorizon, SHADER_UNIFORM_VEC3);
 
     env->structureCount = 0;
     env->terrainCount = 0;
@@ -676,12 +674,23 @@ void ReseedEnvironment(EnvironmentSystem *env, uint32_t runSeed) {
                         env->primaryColor.b / 255.0f };
     Vector3 secondary = { env->secondaryColor.r / 255.0f, env->secondaryColor.g / 255.0f,
                           env->secondaryColor.b / 255.0f };
+    Vector3 body = { env->shadowBodyColor.r / 255.0f, env->shadowBodyColor.g / 255.0f,
+                     env->shadowBodyColor.b / 255.0f };
+    Vector3 skyHorizon = { env->skyHorizonColor.r / 255.0f, env->skyHorizonColor.g / 255.0f,
+                           env->skyHorizonColor.b / 255.0f };
+    Vector3 hot = { env->landmarkColor.r / 255.0f, env->landmarkColor.g / 255.0f,
+                    env->landmarkColor.b / 255.0f };
     SetShaderValue(env->towerMaterial.shader, env->towerSeedLoc, &shaderSeed, SHADER_UNIFORM_INT);
     SetShaderValue(env->towerMaterial.shader, env->towerPrimaryLoc, &primary, SHADER_UNIFORM_VEC3);
     SetShaderValue(env->towerMaterial.shader, env->towerSecondaryLoc, &secondary, SHADER_UNIFORM_VEC3);
+    SetShaderValue(env->towerMaterial.shader, env->towerBodyLoc, &body, SHADER_UNIFORM_VEC3);
+    SetShaderValue(env->towerMaterial.shader, env->towerSkyLoc, &skyHorizon, SHADER_UNIFORM_VEC3);
+    SetShaderValue(env->towerMaterial.shader, env->towerHotLoc, &hot, SHADER_UNIFORM_VEC3);
     SetShaderValue(env->terrainMaterial.shader, env->terrainSeedLoc, &shaderSeed, SHADER_UNIFORM_INT);
     SetShaderValue(env->terrainMaterial.shader, env->terrainPrimaryLoc, &primary, SHADER_UNIFORM_VEC3);
     SetShaderValue(env->terrainMaterial.shader, env->terrainSecondaryLoc, &secondary, SHADER_UNIFORM_VEC3);
+    SetShaderValue(env->terrainMaterial.shader, env->terrainBodyLoc, &body, SHADER_UNIFORM_VEC3);
+    SetShaderValue(env->terrainMaterial.shader, env->terrainSkyLoc, &skyHorizon, SHADER_UNIFORM_VEC3);
 
     env->structureCount = 0;
     env->terrainCount = 0;
@@ -1750,10 +1759,7 @@ static void DrawArchitectureDetailBatch(const EnvironmentSystem *env, int detail
                   : plasma ? env->primaryColor
                   : dataRain ? env->secondaryColor
                   : env->primaryColor;
-    Color body = glazing ? (Color){ 5, 9, 14, 255 }
-                 : (plasma || dataRain) ? (Color){ 3, 5, 10, 255 }
-                 : (detailMode == 9 || detailMode == 10
-                    ? (Color){ 10, 13, 17, 255 } : (Color){ 18, 22, 28, 255 });
+    Color body = env->shadowBodyColor;
     Vector4 accentVec = { accent.r / 255.0f, accent.g / 255.0f,
                           accent.b / 255.0f, 1.0f };
     Vector3 bodyVec = { body.r / 255.0f, body.g / 255.0f, body.b / 255.0f };
@@ -1821,8 +1827,8 @@ static void DrawInfrastructureDetailBatch(const EnvironmentSystem *env, int deta
     bool dataRain = detailMode == 2;
     Vector4 accentVec = { env->primaryColor.r / 255.0f, env->primaryColor.g / 255.0f,
                           env->primaryColor.b / 255.0f, 1.0f };
-    Vector3 bodyVec = dataRain ? (Vector3){ 0.012f, 0.020f, 0.040f }
-                              : (Vector3){ 0.060f, 0.074f, 0.090f };
+    Vector3 bodyVec = { env->shadowBodyColor.r / 255.0f, env->shadowBodyColor.g / 255.0f,
+                        env->shadowBodyColor.b / 255.0f };
     int structureKind = dataRain ? 5 : 8;
     SetShaderValue(env->towerMaterial.shader, env->towerAccentLoc, &accentVec, SHADER_UNIFORM_VEC4);
     SetShaderValue(env->towerMaterial.shader, env->towerBodyLoc, &bodyVec, SHADER_UNIFORM_VEC3);
@@ -1836,14 +1842,14 @@ void DrawEnvironment(const EnvironmentSystem *env, Camera3D camera, double virtu
 
     DrawTerrainBatch(env);
 
-    DrawFarStructureBatch(env, STRUCT_CACHE_TOWER, env->primaryColor, (Color){ 4, 8, 18, 255 });
-    DrawFarStructureBatch(env, STRUCT_MEMORY_SLAB, env->secondaryColor, (Color){ 3, 9, 13, 255 });
+    DrawFarStructureBatch(env, STRUCT_CACHE_TOWER, env->primaryColor, env->shadowBodyColor);
+    DrawFarStructureBatch(env, STRUCT_MEMORY_SLAB, env->secondaryColor, env->shadowBodyColor);
 
-    // Pass 2: Cyberspace monolithic architecture, batched by type (unified cyan-blue dominant palette)
-    DrawStructureBatch(env, STRUCT_CACHE_TOWER, env->primaryColor, (Color){ 5, 10, 25, 255 }, virtualPlayerZ);
-    DrawStructureBatch(env, STRUCT_MEMORY_SLAB, env->secondaryColor, (Color){ 3, 12, 16, 255 }, virtualPlayerZ);
-    DrawStructureBatch(env, STRUCT_BUS_CONDUIT, env->primaryColor, (Color){ 3, 10, 24, 255 }, virtualPlayerZ);
-    DrawStructureBatch(env, STRUCT_LANDMARK, env->landmarkColor, (Color){ 24, 4, 18, 255 }, virtualPlayerZ);
+    // Pass 2: Cyberspace monolithic architecture, batched by type (dark obsidian body with neon wireframe edges)
+    DrawStructureBatch(env, STRUCT_CACHE_TOWER, env->primaryColor, env->shadowBodyColor, virtualPlayerZ);
+    DrawStructureBatch(env, STRUCT_MEMORY_SLAB, env->secondaryColor, env->shadowBodyColor, virtualPlayerZ);
+    DrawStructureBatch(env, STRUCT_BUS_CONDUIT, env->primaryColor, env->shadowBodyColor, virtualPlayerZ);
+    DrawStructureBatch(env, STRUCT_LANDMARK, env->landmarkColor, env->shadowBodyColor, virtualPlayerZ);
 
     // Architectural fidelity comes from physical massing and shadow: podiums,
     // pilasters, a single service floor, roof plant and sparse antennas. The

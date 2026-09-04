@@ -6,9 +6,14 @@
 
 typedef struct {
     uint32_t seed;
+    const char *name;
     Color primary;
     Color secondary;
     Color hot;
+    Color threat;
+    Color shadowBody;
+    Color skyZenith;
+    Color skyHorizon;
 } DemosceneSystem;
 
 void InitDemoscene(DemosceneSystem *demo, uint32_t seed);

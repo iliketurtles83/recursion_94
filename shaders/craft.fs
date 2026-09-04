@@ -10,6 +10,7 @@ uniform float uTime;
 uniform float uIntensity;
 uniform vec3 uPrimaryColor;
 uniform vec3 uSecondaryColor;
+uniform vec3 uThreatColor;
 uniform int uObjectClass;
 uniform int uEnemyType;
 
@@ -43,7 +44,7 @@ void main()
     // Raised shadow color, a warm rim, and stronger saturated emission preserve
     // their silhouettes in dense districts without adding UI outlines.
     if (uObjectClass == 1) {
-        vec3 enemyAccent = mix(uSecondaryColor, vec3(1.0, 0.72, 0.20), 0.14);
+        vec3 enemyAccent = uThreatColor;
         lit = max(lit, base * 0.56 + enemyAccent * 0.012);
         lit += enemyAccent * rim * 0.18;
         lit += mix(base, enemyAccent, 0.24) * emissive * 0.075;

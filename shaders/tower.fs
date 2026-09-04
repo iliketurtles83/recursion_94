@@ -16,6 +16,8 @@ uniform float uIntensity;
 uniform int uRunSeed;
 uniform vec3 uPrimaryColor;
 uniform vec3 uSecondaryColor;
+uniform vec3 uHotColor;
+uniform vec3 uSkyHorizon;
 uniform int uStructureKind;
 
 int getGlyphBitmap(int idx) {
@@ -47,99 +49,139 @@ float evaluateGlyph(int charIdx, vec2 cellUV) {
     return float((bitmap >> bitPos) & 1);
 }
 
-vec3 renderMatrixRain(vec2 uv, float widthMeters, float heightMeters, float time, float seedPhase, float phaseOffset, vec3 textColor) {
-    // Glowing edge frame bordering the active terminal screen
-    float borderDist = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
-    float frameLine = smoothstep(0.008, 0.022, borderDist) * (1.0 - smoothstep(0.022, 0.040, borderDist));
-    float contentMask = smoothstep(0.025, 0.050, borderDist);
+vec3 renderMatrixRain(vec2 uv, float widthMeters, float heightMeters, float time, float seedPhase, float phaseOffset, vec3 textColor, vec3 headColor) {
+    // Terminal padding: generous margins framing the digital data stream
+    float padX = 0.12;
+    float padY = 0.08;
+    vec2 innerUV = vec2((uv.x - padX) / (1.0 - 2.0 * padX),
+                        (uv.y - padY) / (1.0 - 2.0 * padY));
+    float inBounds = step(0.0, innerUV.x) * step(innerUV.x, 1.0) *
+                     step(0.0, innerUV.y) * step(innerUV.y, 1.0);
 
-    // Bold column and row dimensions: ~0.45m to 0.55m per character for clear distance visibility
-    float cols = clamp(floor(max(widthMeters, 1.5) * 1.8), 4.0, 12.0);
-    float colId = floor(uv.x * cols);
-    float colU = fract(uv.x * cols);
+    // Sleek, razor-thin glowing frame line around the terminal screen
+    float borderDist = min(min(innerUV.x, 1.0 - innerUV.x), min(innerUV.y, 1.0 - innerUV.y));
+    float fwBorder = fwidth(borderDist);
+    float frameLine = (1.0 - smoothstep(0.002, 0.002 + max(fwBorder * 1.5, 0.006), borderDist)) * inBounds;
+    float contentMask = smoothstep(0.006, 0.018, borderDist) * inBounds;
 
-    float rows = clamp(floor(max(heightMeters, 1.2) * 1.7), 3.0, 8.0);
+    // Distinct stream columns: 7 to 12 streams with clear dark spacing
+    float cols = clamp(floor(max(widthMeters, 1.5) * 2.2), 7.0, 12.0);
+    float colId = floor(innerUV.x * cols);
+    float colU_raw = fract(innerUV.x * cols);
+
+    // 22% padding on each side of column -> 44% clear dark space between streams
+    float charMarginX = 0.22;
+    float colU = (colU_raw - charMarginX) / (1.0 - 2.0 * charMarginX);
+    bool inCharX = (colU >= 0.0 && colU <= 1.0);
+
+    // Sleek rows of characters across the slab face
+    float rows = clamp(floor(max(heightMeters, 1.2) * 2.5), 8.0, 16.0);
     float colHash = fract(sin(colId * 91.71 + seedPhase * 13.0 + phaseOffset * 7.0) * 43758.5453);
-    float colSpeed = 1.2 + colHash * 1.5;
+    float colSpeed = 1.3 + colHash * 1.6;
 
     // Fast, continuous cascade of code
-    float scrollY = (1.0 - uv.y) * rows + time * colSpeed + phaseOffset * 6.0 + colHash * 9.0;
+    float scrollY = (1.0 - innerUV.y) * rows + time * colSpeed + phaseOffset * 6.0 + colHash * 9.0;
     float rowId = floor(scrollY);
-    float rowV = fract(scrollY);
+    float rowV_raw = fract(scrollY);
 
-    float cellSeed = fract(sin(colId * 12.9898 + rowId * 78.233 + seedPhase * 5.0) * 43758.5453);
-    float mutate = floor(time * 6.0 + cellSeed * 7.0);
-    int charIdx = int(abs(sin(cellSeed * 43.0 + mutate * 0.23) * 16.0)) % 16;
+    float charMarginY = 0.14;
+    float rowV = (rowV_raw - charMarginY) / (1.0 - 2.0 * charMarginY);
+    bool inCharY = (rowV >= 0.0 && rowV <= 1.0);
 
-    float glyph = evaluateGlyph(charIdx, vec2(colU, rowV));
-
-    // Stream drop mechanics: compact 5-8 char cycle with brilliant white head and long luminous tail
+    // Stream drop mechanics: discrete packet cycles
     float streamLen = 5.0 + colHash * 4.0;
     float dropPos = fract(scrollY / streamLen); // 0.0 at tail end, 1.0 at head
     float head = smoothstep(0.80, 1.0, dropPos);
     float tail = pow(dropPos, 1.5);
-    float streamIntensity = tail * 1.5 + head * 3.0;
+    float streamIntensity = tail * 2.0 + head * 4.0;
 
-    vec3 brightHead = vec3(1.0, 1.0, 1.0);
-    vec3 matrixGreen = mix(textColor, vec3(0.15, 1.0, 0.55), 0.75);
-    vec3 glyphColor = mix(matrixGreen, brightHead, head * 0.95);
+    float glyph = 0.0;
+    if (inCharX && inCharY) {
+        float cellSeed = fract(sin(colId * 12.9898 + rowId * 78.233 + seedPhase * 5.0) * 43758.5453);
+        float mutate = floor(time * 6.0 + cellSeed * 7.0);
+        int charIdx = int(abs(sin(cellSeed * 43.0 + mutate * 0.23) * 16.0)) % 16;
+        glyph = evaluateGlyph(charIdx, vec2(colU, rowV));
+    }
 
-    // Lit character + ambient phosphor trace so empty cells aren't pitch black
-    float charLum = glyph * (streamIntensity + 0.35);
+    // High-contrast glowing glyphs with contrasting incandescent head
+    vec3 glyphColor = mix(textColor, headColor, head * 0.95);
+    float charLum = glyph * (streamIntensity + 0.40);
     vec3 charLit = glyphColor * charLum;
-    vec3 trailGlow = matrixGreen * (tail * 0.22);
-    vec3 screenBackdrop = vec3(0.004, 0.020, 0.014); // Cyber-terminal dark phosphor glass
-    vec3 frameColor = matrixGreen * (frameLine * 1.6);
+    vec3 screenBackdrop = uBodyColor * 0.14; // Pitch-dark charcoal terminal glass
+    vec3 frameColor = textColor * (frameLine * 1.5);
 
-    return (screenBackdrop + charLit + trailGlow) * contentMask + frameColor;
+    return (screenBackdrop + charLit) * contentMask + frameColor;
 }
 
-vec3 renderBinaryFlow(vec2 uv, float widthMeters, float heightMeters, float time, float seedPhase, float phaseOffset, vec3 color) {
-    // Edge guide borders for the vertical data waterfall
-    float borderDist = min(uv.x, 1.0 - uv.x);
-    float railLine = smoothstep(0.010, 0.030, borderDist) * (1.0 - smoothstep(0.030, 0.060, borderDist));
-    float contentMask = smoothstep(0.025, 0.060, borderDist);
+vec3 renderBinaryFlow(vec2 uv, float widthMeters, float heightMeters, float time, float seedPhase, float phaseOffset, vec3 dataColor, vec3 headColor) {
+    // Terminal padding: generous 14% margins framing the vertical binary data streams
+    float padX = 0.14;
+    float padY = 0.05;
+    vec2 innerUV = vec2((uv.x - padX) / (1.0 - 2.0 * padX),
+                        (uv.y - padY) / (1.0 - 2.0 * padY));
+    float inBounds = step(0.0, innerUV.x) * step(innerUV.x, 1.0) *
+                     step(0.0, innerUV.y) * step(innerUV.y, 1.0);
 
-    // 2 to 3 bold, large binary columns down the tower face
-    float cols = clamp(floor(max(widthMeters, 1.2) * 0.75), 2.0, 3.0);
-    float colId = floor(uv.x * cols);
-    float colU = fract(uv.x * cols);
+    // Sleek, razor-thin glowing frame line around the vertical terminal screen
+    float borderDist = min(min(innerUV.x, 1.0 - innerUV.x), min(innerUV.y, 1.0 - innerUV.y));
+    float fwBorder = fwidth(borderDist);
+    float frameLine = (1.0 - smoothstep(0.002, 0.002 + max(fwBorder * 1.5, 0.006), borderDist)) * inBounds;
+    float contentMask = smoothstep(0.006, 0.016, borderDist) * inBounds;
 
-    // Large, prominent rows: 6 to 12 characters tall across tower height
-    float rows = clamp(floor(max(heightMeters, 2.0) * 0.60), 6.0, 12.0);
+    // 6 sleek, discrete vertical binary streams across the tower face
+    float cols = 6.0;
+    float colId = floor(innerUV.x * cols);
+    float colU_raw = fract(innerUV.x * cols);
+
+    // 24% padding on each side of column -> 48% clear dark space between streams!
+    float charMarginX = 0.24;
+    float colU = (colU_raw - charMarginX) / (1.0 - 2.0 * charMarginX);
+    bool inCharX = (colU >= 0.0 && colU <= 1.0);
+
+    // Faint optical guide track running down each stream channel
+    float trackGuide = (1.0 - smoothstep(0.0, 0.045, abs(colU_raw - 0.5))) * 0.15;
+
+    // 28 to 36 rows of characters across tower height: sleek typography, not giant digits
+    float rows = clamp(floor(max(heightMeters, 2.0) * 1.8), 26.0, 36.0);
     float colHash = fract(sin(colId * 83.17 + seedPhase * 11.0 + phaseOffset * 5.0) * 43758.5453);
-    float colSpeed = 1.3 + colHash * 1.4;
+    float colSpeed = 1.4 + colHash * 1.6;
 
     // High-speed vertical cascade
-    float scrollY = (1.0 - uv.y) * rows + time * colSpeed + phaseOffset * 7.0 + colHash * 13.0;
+    float scrollY = (1.0 - innerUV.y) * rows + time * colSpeed + phaseOffset * 7.0 + colHash * 13.0;
     float rowId = floor(scrollY);
-    float rowV = fract(scrollY);
+    float rowV_raw = fract(scrollY);
+
+    float charMarginY = 0.14;
+    float rowV = (rowV_raw - charMarginY) / (1.0 - 2.0 * charMarginY);
+    bool inCharY = (rowV >= 0.0 && rowV <= 1.0);
+
+    // Discrete packet bursts along the stream with gaps between packets
+    float packetPeriod = 16.0 + colHash * 8.0;
+    float packetDropLen = 8.0 + colHash * 4.0;
+    float packetCycle = mod(scrollY, packetPeriod);
+    float streamHeadPos = packetCycle / packetDropLen;
+    float inPacket = step(streamHeadPos, 1.0);
+    float head = smoothstep(0.76, 1.0, streamHeadPos) * inPacket;
+    float tail = pow(streamHeadPos, 1.4) * inPacket;
+    float streamIntensity = tail * 2.2 + head * 4.2;
 
     // Pure binary: strictly 0 or 1!
-    float bitSeed = fract(sin(colId * 17.13 + rowId * 91.41 + seedPhase * 3.0) * 43758.5453);
-    float bitFlip = floor(time * 6.0 + bitSeed * 9.0);
-    int isOne = int(floor(bitSeed * 2.0 + bitFlip * 0.5)) & 1;
+    float glyph = 0.0;
+    if (inCharX && inCharY && inPacket > 0.5) {
+        float bitSeed = fract(sin(colId * 17.13 + rowId * 91.41 + seedPhase * 3.0) * 43758.5453);
+        float bitFlip = floor(time * 6.0 + bitSeed * 9.0);
+        int isOne = int(floor(bitSeed * 2.0 + bitFlip * 0.5)) & 1;
+        glyph = evaluateGlyph(isOne, vec2(colU, rowV));
+    }
 
-    float glyph = evaluateGlyph(isOne, vec2(colU, rowV));
-
-    // Stream drops cascading down the tall tower
-    float streamLen = 4.0 + colHash * 3.0;
-    float dropPos = fract(scrollY / streamLen);
-    float head = smoothstep(0.72, 1.0, dropPos);
-    float tail = pow(dropPos, 1.3);
-    float streamIntensity = tail * 1.8 + head * 3.5;
-
-    vec3 cyanColor = mix(color, vec3(0.18, 0.88, 1.0), 0.70);
-    vec3 whiteHead = vec3(1.0, 1.0, 1.0);
-    vec3 glyphColor = mix(cyanColor, whiteHead, head * 0.95);
-
-    float charLum = glyph * (streamIntensity + 0.35);
+    vec3 glyphColor = mix(dataColor, headColor, head * 0.95);
+    float charLum = glyph * (streamIntensity + 0.40);
     vec3 charLit = glyphColor * charLum;
-    vec3 trailGlow = cyanColor * (tail * 0.22);
-    vec3 rail = cyanColor * (railLine * 1.8);
-    vec3 backdrop = vec3(0.003, 0.012, 0.024);
+    vec3 trackGlow = dataColor * (trackGuide * tail * 0.40);
+    vec3 frameGlow = dataColor * (frameLine * 1.5);
+    vec3 backdrop = uBodyColor * 0.14; // Pitch-dark obsidian backing
 
-    return (backdrop + charLit + trailGlow) * contentMask + rail;
+    return (backdrop + charLit + trackGlow) * contentMask + frameGlow;
 }
 
 void main()
@@ -166,29 +208,40 @@ void main()
         // Corridor-facing data placards rendered with 3x5 font Matrix data-rain
         vec2 signUV = abs(N.x) > 0.55 ? fragLocalPos.zy + 0.5
                                       : fragLocalPos.xy + 0.5;
-        vec3 rain = renderMatrixRain(signUV, 2.6, 2.0, uTime, seedPhase, 0.0, neonColor);
-        vec3 signBase = mix(vec3(0.003, 0.008, 0.020), neonColor, 0.055);
+        vec3 streamBody = uPrimaryColor;
+        vec3 streamHead = mix(uHotColor, vec3(1.0, 1.0, 1.0), 0.80);
+        vec3 rain = renderMatrixRain(signUV, 2.6, 2.0, uTime, seedPhase, 0.0, streamBody, streamHead);
+        vec3 signBase = uBodyColor * 0.40;
         finalRGB = signBase + rain;
     } else if (uStructureKind == 2) {
         // =====================================================================
         // MEMORY SLAB (Selective data-rain on corridor-facing or front faces)
         // =====================================================================
-        vec3 absPos = abs(fragLocalPos);
+        float height01 = clamp(fragLocalPos.y + 0.5, 0.0, 1.0);
+        float taper = 0.92 + 0.08 * cos(height01 * 3.14159265);
+        vec3 untaperedPos = fragLocalPos;
+        untaperedPos.xz /= max(taper, 0.1);
+        vec3 absPos = abs(untaperedPos);
+
         float max1 = max(max(absPos.x, absPos.y), absPos.z);
         float min1 = min(min(absPos.x, absPos.y), absPos.z);
         float max2 = absPos.x + absPos.y + absPos.z - max1 - min1;
 
-        float edgeOuter = smoothstep(0.32, 0.485, max2) * 0.30;
-        float edgeCore  = smoothstep(0.44, 0.490, max2) * 0.48;
-        float boxEdge   = clamp(edgeOuter + edgeCore, 0.0, 1.0);
+        // Thinner, smoother wireframe edge with sub-pixel screen-space blending
+        float distToEdge = 0.5 - max2;
+        float fwEdge = fwidth(distToEdge);
+        float edgeSpan = max(fwEdge * 1.6, 0.012);
+        float boxEdge = 1.0 - smoothstep(0.003, 0.003 + edgeSpan, distToEdge);
 
-        vec3 baseBody = mix(vec3(0.002, 0.005, 0.010), neonColor, 0.05);
+        // Dark matte obsidian/charcoal body
+        vec3 baseBody = uBodyColor * (0.60 + 0.40 * diff);
 
         vec3 halfDir = normalize(lightDir + viewDir);
         float spec = pow(max(dot(N, halfDir), 0.0), 32.0) * 0.8;
 
         float edgePulse = sin(fragPosition.y * 2.0 - uTime * 5.0 + seedPhase) * 0.5 + 0.5;
-        vec3 neonLines = neonColor * (boxEdge * 1.5 + pow(boxEdge, 2.0) * 2.0) * (0.8 + edgePulse * 0.4);
+        float smoothBox = pow(boxEdge, 1.4);
+        vec3 neonLines = neonColor * (boxEdge * 0.9 + smoothBox * 1.1) * (0.85 + edgePulse * 0.35);
 
         // Memory slabs display falling matrix code exclusively on designated faces:
         // Corridor-facing inner side (faces toward the player corridor X=0)
@@ -214,44 +267,57 @@ void main()
                           (faceMode == 3 && (isCorridorFace || isFrontFace));
 
         if (activeFace) {
-            float height01 = clamp(fragLocalPos.y + 0.5, 0.0, 1.0);
-            float taper = 0.92 + 0.08 * cos(height01 * 3.14159265);
             vec2 faceUV;
             float faceWidth = fragColor.w > 0.5 ? fragColor.w : 4.0;
             float faceHeight = fragColor.z > 0.5 ? fragColor.z : 2.5;
 
             if (isCorridorFace) {
-                float localZ = fragLocalPos.z / max(taper, 0.1);
+                float localZ = untaperedPos.z;
                 float u = (fragPosition.x < 0.0) ? (localZ + 0.5) : (0.5 - localZ);
                 faceUV = vec2(clamp(u, 0.0, 1.0), height01);
             } else {
-                float localX = fragLocalPos.x / max(taper, 0.1);
+                float localX = untaperedPos.x;
                 float u = localX + 0.5;
                 faceUV = vec2(clamp(u, 0.0, 1.0), height01);
             }
 
-            vec3 slabNeon = mix(neonColor, vec3(0.15, 1.0, 0.55), 0.75);
-            vec3 rain = renderMatrixRain(faceUV, faceWidth, faceHeight, uTime, seedPhase, fragColor.y + slabSeed, slabNeon);
-            finalRGB = baseBody + neonLines * 0.35 + rain + spec * 0.20;
+            // Contrasting data stream color: primary data with incandescent hot/white head
+            vec3 streamBody = uPrimaryColor;
+            vec3 streamHead = mix(uHotColor, vec3(1.0, 1.0, 1.0), 0.80);
+            vec3 rain = renderMatrixRain(faceUV, faceWidth, faceHeight, uTime, seedPhase, fragColor.y + slabSeed, streamBody, streamHead);
+            finalRGB = baseBody + neonLines * boxEdge + rain;
         } else {
-            finalRGB = baseBody + neonLines + mix(uPrimaryColor, vec3(0.5, 0.8, 1.0), 0.6) * spec * 0.6 +
-                       neonColor * (rim * 0.4);
+            // Flat face remains pure dark charcoal/black; only chamfered edges catch highlights
+            float edgeSpec = spec * boxEdge;
+            float edgeRim = rim * boxEdge;
+            finalRGB = baseBody + neonLines + neonColor * (edgeSpec * 0.8 + edgeRim * 0.4);
         }
     } else if (uStructureKind == 1) {
         // =====================================================================
         // CACHE TOWER (Vertical Binary Code Waterfall down corridor/front faces)
         // =====================================================================
-        float cylRadius = length(fragLocalPos.xz);
-        float edgeOuter = smoothstep(0.32, 0.485, cylRadius) * 0.30;
-        float edgeCore  = smoothstep(0.44, 0.490, cylRadius) * 0.48;
-        float prismEdge = clamp(edgeOuter + edgeCore, 0.0, 1.0);
+        // 8-sided prism vertical seam and cap detection with screen-space anti-aliasing
+        float angle = atan(fragLocalPos.z, fragLocalPos.x);
+        float facetFrac = fract((angle / 6.283185307) * 8.0 + 0.5);
+        float distToCorner = 0.5 - abs(facetFrac - 0.5);
+        float fwCorner = fwidth(distToCorner);
+        float seamSpan = max(fwCorner * 1.6, 0.016);
+        float vertEdge = 1.0 - smoothstep(0.003, 0.003 + seamSpan, distToCorner);
 
-        vec3 baseBody = mix(vec3(0.002, 0.005, 0.010), neonColor, 0.05);
+        float distToCap = 0.5 - abs(fragLocalPos.y);
+        float fwCap = fwidth(distToCap);
+        float capSpan = max(fwCap * 1.6, 0.012);
+        float capEdge = 1.0 - smoothstep(0.003, 0.003 + capSpan, distToCap);
+        float prismEdge = max(vertEdge, capEdge);
+
+        // Dark matte obsidian/charcoal body
+        vec3 baseBody = uBodyColor * (0.60 + 0.40 * diff);
         vec3 halfDir = normalize(lightDir + viewDir);
         float spec = pow(max(dot(N, halfDir), 0.0), 32.0) * 0.8;
 
         float edgePulse = sin(fragPosition.y * 2.0 - uTime * 5.0 + seedPhase) * 0.5 + 0.5;
-        vec3 neonLines = neonColor * (prismEdge * 1.5 + pow(prismEdge, 2.0) * 2.0) * (0.8 + edgePulse * 0.4);
+        float smoothPrism = pow(prismEdge, 1.4);
+        vec3 neonLines = neonColor * (prismEdge * 0.9 + smoothPrism * 1.1) * (0.85 + edgePulse * 0.35);
 
         // Corridor-facing side and oncoming front face
         bool isCorridorFace = (fragPosition.x < 0.0 ? N.x > 0.35 : N.x < -0.35);
@@ -276,12 +342,17 @@ void main()
             float u = isCorridorFace ? ((fragPosition.x < 0.0 ? fragLocalPos.z : -fragLocalPos.z) + 0.5)
                                      : (fragLocalPos.x + 0.5);
             vec2 towerUV = vec2(clamp(u, 0.0, 1.0), height01);
-            vec3 binColor = mix(uPrimaryColor, vec3(0.18, 0.88, 1.0), 0.70);
-            vec3 binaryFlow = renderBinaryFlow(towerUV, 3.2, 18.0, uTime, seedPhase, towerSeed * 6.28, binColor);
-            finalRGB = baseBody + neonLines * 0.35 + binaryFlow + spec * 0.20;
+
+            // Contrasting data stream color: secondary/gold stream with incandescent head
+            vec3 streamBody = uSecondaryColor;
+            vec3 streamHead = mix(uHotColor, vec3(1.0, 1.0, 1.0), 0.80);
+            vec3 binaryFlow = renderBinaryFlow(towerUV, 3.2, 18.0, uTime, seedPhase, towerSeed * 6.28, streamBody, streamHead);
+            finalRGB = baseBody + neonLines * prismEdge + binaryFlow;
         } else {
-            finalRGB = baseBody + neonLines + mix(uPrimaryColor, vec3(0.5, 0.8, 1.0), 0.6) * spec * 0.6 +
-                       neonColor * (rim * 0.4);
+            // Flat face remains pure dark charcoal/black; only prism edges catch highlights
+            float edgeSpec = spec * prismEdge;
+            float edgeRim = rim * prismEdge;
+            finalRGB = baseBody + neonLines + neonColor * (edgeSpec * 0.8 + edgeRim * 0.4);
         }
     } else if (uStructureKind == 6) {
         // Classic multi-layer sine-wave plasma: several offset traveling waves
@@ -293,7 +364,7 @@ void main()
         float p4 = sin(length(fragPosition.xy) * 0.4 - t * 1.8 + seedPhase * 6.0);
         float plasma = (p1 + p2 + p3 + p4) * 0.25 * 0.5 + 0.5;
         vec3 plasmaColor = mix(uPrimaryColor, uSecondaryColor, plasma);
-        finalRGB = mix(vec3(0.006, 0.012, 0.026), plasmaColor, 0.55 + 0.35 * diff) +
+        finalRGB = mix(uBodyColor * 0.4, plasmaColor, 0.55 + 0.35 * diff) +
                    plasmaColor * rim * 0.22 + neonColor * pow(plasma, 6.0) * 0.30;
     } else if (uStructureKind == 11) {
         // Cheap raymarched fractal core: fold local space a few times and
@@ -338,7 +409,7 @@ void main()
         float bankX = step(0.25, fract(uv.x * 5.0));
         float bankY = step(0.20, fract(uv.y * 8.0));
         float slot = bankX * bankY * step(0.08, uv.y) * step(uv.y, 0.92);
-        vec3 base = mix(vec3(0.002, 0.004, 0.01), neonColor, 0.05);
+        vec3 base = uBodyColor * 0.50;
         finalRGB = base + mix(uPrimaryColor, neonColor, 0.5) * slot * 0.35;
     } else if (uStructureKind == 10) {
         // Glowing data port instead of loading door
@@ -349,15 +420,14 @@ void main()
         float scanline = step(0.9, fract(uv.y * 10.0 - uTime * 2.0));
         vec3 portGlow = uPrimaryColor * port * (0.5 + scanline * 0.5) * (1.0 + uIntensity);
         
-        vec3 base = mix(vec3(0.002, 0.004, 0.01), neonColor, 0.05);
+        vec3 base = uBodyColor * 0.50;
         finalRGB = base + portGlow + neonColor * rim * 0.2;
     } else if (uAccentColor.a > 1.5) {
         // =====================================================================
         // CONDUIT DATA STREAM PATH (Smooth, non-flickering luminescent neon)
         // =====================================================================
-        // Steady luminous core and glowing tube base
-        vec3 tubeBase = neonColor * (0.50 + 0.25 * diff);
-        vec3 coreGlow = mix(neonColor, vec3(0.85, 0.95, 1.0), 0.50) * 0.35;
+        // Dark matte obsidian/carbon tube base with subtle directional lighting
+        vec3 tubeBase = uBodyColor * (0.65 + 0.35 * diff);
 
         // Direction vector (scaled by segment length) and phase offset passed per-instance via fragColor
         vec3 flowScaled = fragColor.xyz;
@@ -372,8 +442,8 @@ void main()
         float pulseWave2 = sin(streamCoord * 12.56636 + 1.2) * 0.5 + 0.5;
         float smoothPulse = pow(pulseWave1, 2.5) * 0.65 + pow(pulseWave2, 3.5) * 0.35;
 
-        // Pulse energy shift: neon shifts toward bright cyan/white core at peak
-        vec3 pulseEnergy = mix(neonColor, vec3(0.90, 0.98, 1.0), 0.75) * smoothPulse * 0.70;
+        // Pulse energy: luminous glowing packet traveling inside the dark pipe
+        vec3 pulseEnergy = mix(neonColor, vec3(0.90, 0.98, 1.0), 0.75) * smoothPulse * 0.90;
 
         // Reuse streamCoord as the scroll axis for hash-based glyphs; cross-coordinate aligns
         // with the conduit cross-section across X, Y, or Z spans
@@ -384,52 +454,67 @@ void main()
         int charIdx = int(abs(glyphCode * 16.0)) % 16;
         vec2 glyphWithin = vec2(fract((crossCoord + 0.5) * 5.0), fract(streamCoord * 18.0));
         float glyph = evaluateGlyph(charIdx, glyphWithin);
-        vec3 glyphColor = mix(neonColor, vec3(0.75, 0.95, 1.0), 0.6) * glyph * smoothPulse * 0.35;
+        vec3 glyphColor = mix(neonColor, vec3(0.75, 0.95, 1.0), 0.6) * glyph * smoothPulse * 0.60;
 
         float boostCarrier = pow(max(sin(streamCoord * 31.4159 + seedPhase), 0.0), 9.0);
-        finalRGB = tubeBase + coreGlow + pulseEnergy + glyphColor + neonColor * (rim * 0.40) +
+        float conduitEdge = smoothstep(0.440, 0.485, max(abs(fragLocalPos.x), max(abs(fragLocalPos.y), abs(fragLocalPos.z))));
+        vec3 edgeGlow = neonColor * conduitEdge * 0.40;
+
+        finalRGB = tubeBase + pulseEnergy + glyphColor + edgeGlow +
                    uSecondaryColor * boostCarrier * uIntensity * 0.25;
     } else {
         // =====================================================================
-        // DIGITAL GLASS MONOLITH (Translucent dark glass + intense neon grid)
+        // DIGITAL GLASS MONOLITH & ARCHITECTURAL DETAILS (Podiums, Pilasters)
         // =====================================================================
-        vec3 absPos = abs(fragLocalPos);
+        float height01 = clamp(fragLocalPos.y + 0.5, 0.0, 1.0);
+        float slabTaper = mix(1.035, 0.92, height01);
+        vec3 untapered = fragLocalPos;
+        untapered.xz /= max(slabTaper, 0.1);
+        vec3 absPos = abs(untapered);
         float max1 = max(max(absPos.x, absPos.y), absPos.z);
         float min1 = min(min(absPos.x, absPos.y), absPos.z);
         float max2 = absPos.x + absPos.y + absPos.z - max1 - min1;
 
-        // Wireframe edges
-        float edgeOuter = smoothstep(0.32, 0.485, max2) * 0.30;
-        float edgeCore  = smoothstep(0.44, 0.490, max2) * 0.48;
-        float boxEdge   = clamp(edgeOuter + edgeCore, 0.0, 1.0);
+        // Thinner, smoother wireframe edge with sub-pixel screen-space blending
+        float distToEdge = 0.5 - max2;
+        float fwEdge = fwidth(distToEdge);
+        float edgeSpan = max(fwEdge * 1.6, 0.012);
+        float boxEdge = 1.0 - smoothstep(0.003, 0.003 + edgeSpan, distToEdge);
 
+        // Cylinder/Prism edge detection if used in detail
         float cylRadius = length(fragLocalPos.xz);
-        float cylOuter = smoothstep(0.32, 0.485, cylRadius) * smoothstep(0.35, 0.49, absPos.y) * 0.30;
-        float cylCore  = smoothstep(0.44, 0.490, cylRadius) * smoothstep(0.44, 0.49, absPos.y) * 0.48;
-        float cylEdge  = clamp(cylOuter + cylCore, 0.0, 1.0);
+        float angle = atan(fragLocalPos.z, fragLocalPos.x);
+        float facetFrac = fract((angle / 6.283185307) * 8.0 + 0.5);
+        float distToCorner = 0.5 - abs(facetFrac - 0.5);
+        float vertEdge = 1.0 - smoothstep(0.003, 0.003 + max(fwidth(distToCorner) * 1.6, 0.016), distToCorner);
+        float capEdge = 1.0 - smoothstep(0.003, 0.003 + max(fwidth(0.5 - absPos.y) * 1.6, 0.012), 0.5 - absPos.y);
+        float cylEdge = max(vertEdge, capEdge);
 
         float isCylinder = step(0.46, cylRadius) * (1.0 - step(0.47, max2));
         float edgeFactor = mix(boxEdge, cylEdge, isCylinder);
 
-        // Dark reflective glass body
-        vec3 baseBody = mix(vec3(0.002, 0.005, 0.010), neonColor, 0.05);
+        // Dark matte obsidian/charcoal body
+        vec3 baseBody = uBodyColor * (0.60 + 0.40 * diff);
 
-        // Intense specular highlight for glass
+        // Specular highlight restricted strictly to wireframe bevels
         vec3 halfDir = normalize(lightDir + viewDir);
         float spec = pow(max(dot(N, halfDir), 0.0), 32.0) * 0.8;
 
-        float structuralDetail = uStructureKind == 8 ? 1.0 : 0.0;
+        float structuralDetail = (uStructureKind == 8) ? 1.0 : 0.0;
         
-        // Intense pulsing neon edges
+        // Wireframe lines
         float edgePulse = sin(fragPosition.y * 2.0 - uTime * 5.0 + seedPhase) * 0.5 + 0.5;
-        vec3 neonLines = neonColor * (edgeFactor * 1.5 + pow(edgeFactor, 2.0) * 2.0) * (0.8 + edgePulse * 0.4) * mix(1.0, 0.3, structuralDetail);
+        float lineStrength = mix(1.1, 0.50, structuralDetail);
+        float smoothFactor = pow(edgeFactor, 1.4);
+        vec3 neonLines = neonColor * (edgeFactor * lineStrength * 0.8 + smoothFactor * lineStrength * 1.0) * (0.85 + edgePulse * 0.35);
 
-        finalRGB = baseBody + neonLines + mix(uPrimaryColor, vec3(0.5, 0.8, 1.0), 0.6) * spec * mix(0.8, 0.2, structuralDetail) +
-                   neonColor * (rim * mix(0.6, 0.2, structuralDetail));
+        float edgeSpec = spec * edgeFactor * mix(0.8, 0.2, structuralDetail);
+        float edgeRim = rim * edgeFactor * mix(0.6, 0.2, structuralDetail);
+        finalRGB = baseBody + neonLines + neonColor * (edgeSpec + edgeRim);
     }
 
-    // Atmospheric deep-indigo horizon fog
-    vec3 fogColor = mix(vec3(0.008, 0.014, 0.038), uSecondaryColor, 0.025 + uIntensity * 0.018);
+    // Atmospheric horizon fog blending to dark palette horizon
+    vec3 fogColor = mix(uBodyColor * 0.6, uSkyHorizon, 0.25 + uIntensity * 0.20);
     float fogFactor = clamp(fragDist, 0.0, 1.0);
     finalRGB = mix(fogColor, finalRGB, fogFactor);
 

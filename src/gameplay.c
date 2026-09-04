@@ -1,4 +1,5 @@
 #include "gameplay.h"
+#include "palette.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -63,18 +64,12 @@ static bool IsEnemyTargetable(const GameplaySystem *game, const Enemy *enemy) {
 }
 
 static void SetGameplayPalette(GameplaySystem *game) {
-    static const Color palettes[][3] = {
-        { { 0, 235, 255, 255 }, { 255, 35, 170, 255 }, { 255, 230, 70, 255 } },
-        { { 80, 255, 150, 255 }, { 130, 75, 255, 255 }, { 255, 105, 55, 255 } },
-        { { 100, 155, 255, 255 }, { 255, 70, 210, 255 }, { 120, 255, 245, 255 } },
-        { { 255, 125, 45, 255 }, { 35, 225, 255, 255 }, { 255, 245, 120, 255 } },
-        { { 185, 75, 255, 255 }, { 20, 255, 195, 255 }, { 255, 80, 120, 255 } },
-        { { 70, 215, 255, 255 }, { 255, 80, 95, 255 }, { 190, 255, 70, 255 } }
-    };
-    int palette = (int)(MixBits(game->runSeed ^ 0x94d31a7bu) % 6u);
-    game->primaryColor = palettes[palette][0];
-    game->secondaryColor = palettes[palette][1];
-    game->hotColor = palettes[palette][2];
+    const PaletteProfile *pal = GetPaletteForSeed(game->runSeed);
+    game->primaryColor = pal->primary;
+    game->secondaryColor = pal->secondary;
+    game->hotColor = pal->hot;
+    game->threatColor = pal->threat;
+    game->shadowBodyColor = pal->shadowBody;
 }
 
 static float LengthSquared2D(float x, float y) {
@@ -1111,11 +1106,11 @@ static Color MixColor(Color a, Color b, float amount, unsigned char alpha) {
 static Color EnemyColor(const GameplaySystem *game, const Enemy *enemy) {
     switch (enemy->type) {
         case ENEMY_DRIFTER: return game->primaryColor;
-        case ENEMY_CHASER: return game->hotColor;
+        case ENEMY_CHASER: return game->threatColor;
         case ENEMY_SPLITTER: return game->secondaryColor;
-        case ENEMY_BOSS_NODE: return MixColor(game->primaryColor, game->secondaryColor, 0.5f, 255);
-        case ENEMY_BOSS_CORE: return MixColor(game->hotColor, game->secondaryColor, 0.45f, 255);
-        default: return game->secondaryColor;
+        case ENEMY_BOSS_NODE: return MixColor(game->threatColor, game->secondaryColor, 0.5f, 255);
+        case ENEMY_BOSS_CORE: return MixColor(game->threatColor, game->hotColor, 0.45f, 255);
+        default: return game->threatColor;
     }
 }
 
@@ -1764,15 +1759,16 @@ void DrawGameplay3D(const GameplaySystem *game, Shader craftShader, int objectCl
         Vector3 trail = { projectile->position.x - projectile->velocity.x * 0.065f,
                           projectile->position.y - projectile->velocity.y * 0.065f,
                           projectile->position.z - projectile->velocity.z * 0.065f };
+        Color threat = game->threatColor;
+        Color threatDark = ScaleColor(threat, 0.45f, 0);
         DrawCylinderEx(trail, projectile->position, 0.025f, 0.15f, 7,
-                       (Color){ 255, 45, 145, 150 });
+                       (Color){ threat.r, threat.g, threat.b, 150 });
         DrawSphereEx(projectile->position, 0.36f, 6, 10,
-                     (Color){ 110, 18, 85, 145 });
-        DrawSphereEx(projectile->position, 0.18f, 6, 10,
-                     (Color){ 255, 105, 195, 255 });
+                     (Color){ threatDark.r, threatDark.g, threatDark.b, 145 });
+        DrawSphereEx(projectile->position, 0.18f, 6, 10, threat);
         DrawSphereEx((Vector3){ projectile->position.x, projectile->position.y,
                                 projectile->position.z + 0.08f },
-                     0.075f, 5, 8, (Color){ 245, 250, 255, 255 });
+                     0.075f, 5, 8, (Color){ 255, 255, 255, 255 });
     }
     for (int i = 0; i < MAX_PLAYER_PROJECTILES; i++) {
         const PlayerProjectile *bolt = &game->playerProjectiles[i];

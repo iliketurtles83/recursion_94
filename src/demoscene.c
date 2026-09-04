@@ -1,4 +1,5 @@
 #include "demoscene.h"
+#include "palette.h"
 
 #include <math.h>
 
@@ -27,19 +28,16 @@ static Color MixColor(Color a, Color b, float amount, unsigned char alpha) {
 }
 
 void InitDemoscene(DemosceneSystem *demo, uint32_t seed) {
-    static const Color palettes[][3] = {
-        { { 0, 235, 255, 255 }, { 255, 35, 170, 255 }, { 255, 230, 70, 255 } },
-        { { 80, 255, 150, 255 }, { 130, 75, 255, 255 }, { 255, 105, 55, 255 } },
-        { { 100, 155, 255, 255 }, { 255, 70, 210, 255 }, { 120, 255, 245, 255 } },
-        { { 255, 125, 45, 255 }, { 35, 225, 255, 255 }, { 255, 245, 120, 255 } },
-        { { 185, 75, 255, 255 }, { 20, 255, 195, 255 }, { 255, 80, 120, 255 } },
-        { { 70, 215, 255, 255 }, { 255, 80, 95, 255 }, { 190, 255, 70, 255 } }
-    };
-    int palette = (int)(DemoHash(seed ^ 0x94d31a7bu) % 6u);
+    const PaletteProfile *pal = GetPaletteForSeed(seed);
     demo->seed = seed;
-    demo->primary = palettes[palette][0];
-    demo->secondary = palettes[palette][1];
-    demo->hot = palettes[palette][2];
+    demo->name = pal->name;
+    demo->primary = pal->primary;
+    demo->secondary = pal->secondary;
+    demo->hot = pal->hot;
+    demo->threat = pal->threat;
+    demo->shadowBody = pal->shadowBody;
+    demo->skyZenith = pal->skyZenith;
+    demo->skyHorizon = pal->skyHorizon;
 }
 
 static void DrawScanlines(int screenWidth, int screenHeight, unsigned char alpha) {
@@ -104,15 +102,18 @@ void DrawSeedSelector(uint32_t seed, float time, float bpm, const char *keyName,
     DrawText(subtitle, centerX - MeasureText(subtitle, 17) / 2, 174, 17,
              (Color){ 150, 190, 215, 255 });
 
-    DrawRectangle(centerX - 265, centerY - 82, 530, 164, (Color){ 2, 7, 18, 225 });
-    DrawRectangleLines(centerX - 265, centerY - 82, 530, 164, demo.secondary);
+    DrawRectangle(centerX - 275, centerY - 95, 550, 192,
+                  (Color){ demo.shadowBody.r, demo.shadowBody.g, demo.shadowBody.b, 235 });
+    DrawRectangleLines(centerX - 275, centerY - 95, 550, 192, demo.secondary);
     const char *seedHex = TextFormat("SEED  %08X", (unsigned int)seed);
     const char *seedDec = TextFormat("DECIMAL  %u", (unsigned int)seed);
-    DrawText(seedHex, centerX - MeasureText(seedHex, 38) / 2, centerY - 52, 38, demo.hot);
-    DrawText(seedDec, centerX - MeasureText(seedDec, 17) / 2, centerY + 2, 17,
+    DrawText(seedHex, centerX - MeasureText(seedHex, 38) / 2, centerY - 72, 38, demo.hot);
+    DrawText(seedDec, centerX - MeasureText(seedDec, 15) / 2, centerY - 25, 15,
              (Color){ 170, 205, 225, 255 });
+    const char *profileText = TextFormat("PALETTE // %s", demo.name);
+    DrawText(profileText, centerX - MeasureText(profileText, 16) / 2, centerY + 3, 16, demo.secondary);
     const char *music = TextFormat("TONALITY  %s     TEMPO  %.0f BPM", keyName, bpm);
-    DrawText(music, centerX - MeasureText(music, 17) / 2, centerY + 36, 17, demo.primary);
+    DrawText(music, centerX - MeasureText(music, 16) / 2, centerY + 35, 16, demo.primary);
 
     const char *adjust = "LEFT / RIGHT  +/- 1        UP / DOWN  +/- 100";
     const char *start = "PRESS ENTER TO COMPILE RUN";
