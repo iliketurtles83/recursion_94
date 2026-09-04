@@ -94,6 +94,54 @@ vec3 renderMatrixRain(vec2 uv, float widthMeters, float heightMeters, float time
     return (screenBackdrop + charLit + trailGlow) * contentMask + frameColor;
 }
 
+vec3 renderBinaryFlow(vec2 uv, float widthMeters, float heightMeters, float time, float seedPhase, float phaseOffset, vec3 color) {
+    // Edge guide borders for the vertical data waterfall
+    float borderDist = min(uv.x, 1.0 - uv.x);
+    float railLine = smoothstep(0.010, 0.030, borderDist) * (1.0 - smoothstep(0.030, 0.060, borderDist));
+    float contentMask = smoothstep(0.025, 0.060, borderDist);
+
+    // 2 to 3 bold, large binary columns down the tower face
+    float cols = clamp(floor(max(widthMeters, 1.2) * 0.75), 2.0, 3.0);
+    float colId = floor(uv.x * cols);
+    float colU = fract(uv.x * cols);
+
+    // Large, prominent rows: 6 to 12 characters tall across tower height
+    float rows = clamp(floor(max(heightMeters, 2.0) * 0.60), 6.0, 12.0);
+    float colHash = fract(sin(colId * 83.17 + seedPhase * 11.0 + phaseOffset * 5.0) * 43758.5453);
+    float colSpeed = 1.3 + colHash * 1.4;
+
+    // High-speed vertical cascade
+    float scrollY = (1.0 - uv.y) * rows + time * colSpeed + phaseOffset * 7.0 + colHash * 13.0;
+    float rowId = floor(scrollY);
+    float rowV = fract(scrollY);
+
+    // Pure binary: strictly 0 or 1!
+    float bitSeed = fract(sin(colId * 17.13 + rowId * 91.41 + seedPhase * 3.0) * 43758.5453);
+    float bitFlip = floor(time * 6.0 + bitSeed * 9.0);
+    int isOne = int(floor(bitSeed * 2.0 + bitFlip * 0.5)) & 1;
+
+    float glyph = evaluateGlyph(isOne, vec2(colU, rowV));
+
+    // Stream drops cascading down the tall tower
+    float streamLen = 4.0 + colHash * 3.0;
+    float dropPos = fract(scrollY / streamLen);
+    float head = smoothstep(0.72, 1.0, dropPos);
+    float tail = pow(dropPos, 1.3);
+    float streamIntensity = tail * 1.8 + head * 3.5;
+
+    vec3 cyanColor = mix(color, vec3(0.18, 0.88, 1.0), 0.70);
+    vec3 whiteHead = vec3(1.0, 1.0, 1.0);
+    vec3 glyphColor = mix(cyanColor, whiteHead, head * 0.95);
+
+    float charLum = glyph * (streamIntensity + 0.35);
+    vec3 charLit = glyphColor * charLum;
+    vec3 trailGlow = cyanColor * (tail * 0.22);
+    vec3 rail = cyanColor * (railLine * 1.8);
+    vec3 backdrop = vec3(0.003, 0.012, 0.024);
+
+    return (backdrop + charLit + trailGlow) * contentMask + rail;
+}
+
 void main()
 {
     // Surface normal and directional light calculation
@@ -185,6 +233,52 @@ void main()
             vec3 slabNeon = mix(neonColor, vec3(0.15, 1.0, 0.55), 0.75);
             vec3 rain = renderMatrixRain(faceUV, faceWidth, faceHeight, uTime, seedPhase, fragColor.y + slabSeed, slabNeon);
             finalRGB = baseBody + neonLines * 0.35 + rain + spec * 0.20;
+        } else {
+            finalRGB = baseBody + neonLines + mix(uPrimaryColor, vec3(0.5, 0.8, 1.0), 0.6) * spec * 0.6 +
+                       neonColor * (rim * 0.4);
+        }
+    } else if (uStructureKind == 1) {
+        // =====================================================================
+        // CACHE TOWER (Vertical Binary Code Waterfall down corridor/front faces)
+        // =====================================================================
+        float cylRadius = length(fragLocalPos.xz);
+        float edgeOuter = smoothstep(0.32, 0.485, cylRadius) * 0.30;
+        float edgeCore  = smoothstep(0.44, 0.490, cylRadius) * 0.48;
+        float prismEdge = clamp(edgeOuter + edgeCore, 0.0, 1.0);
+
+        vec3 baseBody = mix(vec3(0.002, 0.005, 0.010), neonColor, 0.05);
+        vec3 halfDir = normalize(lightDir + viewDir);
+        float spec = pow(max(dot(N, halfDir), 0.0), 32.0) * 0.8;
+
+        float edgePulse = sin(fragPosition.y * 2.0 - uTime * 5.0 + seedPhase) * 0.5 + 0.5;
+        vec3 neonLines = neonColor * (prismEdge * 1.5 + pow(prismEdge, 2.0) * 2.0) * (0.8 + edgePulse * 0.4);
+
+        // Corridor-facing side and oncoming front face
+        bool isCorridorFace = (fragPosition.x < 0.0 ? N.x > 0.35 : N.x < -0.35);
+        bool isFrontFace = (N.z > 0.35);
+
+        // Deterministic per-tower activation & face selection
+        float towerSeed = fract(sin(floor(fragPosition.x * 0.25) * 113.5 +
+                                   floor((fragPosition.z + virtualPlayerZ) * 0.0625) * 271.9 +
+                                   float(uRunSeed) * 0.031) * 43758.5453);
+        int faceMode = 0;
+        if (towerSeed < 0.70) {
+            float roll = fract(towerSeed * 23.7);
+            faceMode = (roll < 0.40) ? 1 : ((roll < 0.75) ? 2 : 3);
+        }
+
+        bool activeFace = (faceMode == 1 && isCorridorFace) ||
+                          (faceMode == 2 && isFrontFace) ||
+                          (faceMode == 3 && (isCorridorFace || isFrontFace));
+
+        if (activeFace) {
+            float height01 = clamp(fragLocalPos.y + 0.5, 0.0, 1.0);
+            float u = isCorridorFace ? ((fragPosition.x < 0.0 ? fragLocalPos.z : -fragLocalPos.z) + 0.5)
+                                     : (fragLocalPos.x + 0.5);
+            vec2 towerUV = vec2(clamp(u, 0.0, 1.0), height01);
+            vec3 binColor = mix(uPrimaryColor, vec3(0.18, 0.88, 1.0), 0.70);
+            vec3 binaryFlow = renderBinaryFlow(towerUV, 3.2, 18.0, uTime, seedPhase, towerSeed * 6.28, binColor);
+            finalRGB = baseBody + neonLines * 0.35 + binaryFlow + spec * 0.20;
         } else {
             finalRGB = baseBody + neonLines + mix(uPrimaryColor, vec3(0.5, 0.8, 1.0), 0.6) * spec * 0.6 +
                        neonColor * (rim * 0.4);
