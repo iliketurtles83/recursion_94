@@ -1495,11 +1495,11 @@ static void DrawStructureBatch(const EnvironmentSystem *env, StructureType type,
                                                 ((uint32_t)worldXKey * UINT32_C(0x9e3779b9)) ^
                                                 (foldedWorldZ * UINT32_C(0x85ebca6b)));
                 // Slabs have active matrix text flow on designated sides
-                // ~50% of memory slabs carry active data rain
-                if ((slabHash % 100u) < 50u) {
+                // ~65% of memory slabs carry active data rain
+                if ((slabHash % 100u) < 65u) {
                     uint32_t faceRoll = (slabHash >> 8) % 10u;
                     // 1.0 = corridor-facing inner side, 2.0 = oncoming front face (+Z), 3.0 = both
-                    float faceMode = (faceRoll < 6u) ? 1.0f : ((faceRoll < 9u) ? 2.0f : 3.0f);
+                    float faceMode = (faceRoll < 4u) ? 1.0f : ((faceRoll < 7u) ? 2.0f : 3.0f);
                     float phaseOffset = (float)(slabHash & 2047u) * 0.00306796f;
                     mat.m3 = faceMode;
                     mat.m7 = phaseOffset;

@@ -39,60 +39,59 @@ int getGlyphBitmap(int idx) {
 }
 
 float evaluateGlyph(int charIdx, vec2 cellUV) {
-    if (cellUV.x < 0.12 || cellUV.x > 0.88 || cellUV.y < 0.08 || cellUV.y > 0.92) return 0.0;
-    int px = clamp(int((cellUV.x - 0.12) / 0.76 * 3.0), 0, 2);
-    int py = clamp(int((cellUV.y - 0.08) / 0.84 * 5.0), 0, 4);
+    if (cellUV.x < 0.08 || cellUV.x > 0.92 || cellUV.y < 0.06 || cellUV.y > 0.94) return 0.0;
+    int px = clamp(int((cellUV.x - 0.08) / 0.84 * 3.0), 0, 2);
+    int py = clamp(int((cellUV.y - 0.06) / 0.88 * 5.0), 0, 4);
     int bitPos = 14 - (py * 3 + px);
     int bitmap = getGlyphBitmap(charIdx);
     return float((bitmap >> bitPos) & 1);
 }
 
 vec3 renderMatrixRain(vec2 uv, float widthMeters, float heightMeters, float time, float seedPhase, float phaseOffset, vec3 textColor) {
+    // Glowing edge frame bordering the active terminal screen
     float borderDist = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
-    float frameGlow = 1.0 - smoothstep(0.012, 0.040, borderDist);
-    float contentMask = smoothstep(0.020, 0.048, borderDist);
-    if (contentMask <= 0.0) {
-        return textColor * frameGlow * 0.35;
-    }
+    float frameLine = smoothstep(0.008, 0.022, borderDist) * (1.0 - smoothstep(0.022, 0.040, borderDist));
+    float contentMask = smoothstep(0.025, 0.050, borderDist);
 
-    float cols = clamp(floor(max(widthMeters, 1.2) * 2.8), 6.0, 22.0);
+    // Bold column and row dimensions: ~0.45m to 0.55m per character for clear distance visibility
+    float cols = clamp(floor(max(widthMeters, 1.5) * 1.8), 4.0, 12.0);
     float colId = floor(uv.x * cols);
     float colU = fract(uv.x * cols);
 
-    if (colU < 0.14 || colU > 0.86) {
-        return textColor * frameGlow * 0.35;
-    }
-    float charU = (colU - 0.14) / 0.72;
-
-    float rows = clamp(floor(max(heightMeters, 1.0) * 2.2), 6.0, 20.0);
+    float rows = clamp(floor(max(heightMeters, 1.2) * 1.7), 3.0, 8.0);
     float colHash = fract(sin(colId * 91.71 + seedPhase * 13.0 + phaseOffset * 7.0) * 43758.5453);
-    float colSpeed = 1.0 + colHash * 1.8;
-    float scrollY = (1.0 - uv.y) * rows + time * colSpeed + phaseOffset * 8.0 + colHash * 11.0;
+    float colSpeed = 1.2 + colHash * 1.5;
+
+    // Fast, continuous cascade of code
+    float scrollY = (1.0 - uv.y) * rows + time * colSpeed + phaseOffset * 6.0 + colHash * 9.0;
     float rowId = floor(scrollY);
     float rowV = fract(scrollY);
 
-    if (rowV < 0.10 || rowV > 0.90) {
-        return textColor * frameGlow * 0.35;
-    }
-    float charV = (rowV - 0.10) / 0.80;
-
     float cellSeed = fract(sin(colId * 12.9898 + rowId * 78.233 + seedPhase * 5.0) * 43758.5453);
-    float mutate = floor(time * 5.0 + cellSeed * 9.0);
+    float mutate = floor(time * 6.0 + cellSeed * 7.0);
     int charIdx = int(abs(sin(cellSeed * 43.0 + mutate * 0.23) * 16.0)) % 16;
 
-    float glyph = evaluateGlyph(charIdx, vec2(charU, charV));
+    float glyph = evaluateGlyph(charIdx, vec2(colU, rowV));
 
-    float streamLen = 9.0 + colHash * 8.0;
-    float dropPos = fract(scrollY / streamLen);
-    float head = smoothstep(0.85, 1.0, dropPos);
-    float tail = pow(dropPos, 2.6);
-    float streamIntensity = tail * 0.90 + head * 2.0;
+    // Stream drop mechanics: compact 5-8 char cycle with brilliant white head and long luminous tail
+    float streamLen = 5.0 + colHash * 4.0;
+    float dropPos = fract(scrollY / streamLen); // 0.0 at tail end, 1.0 at head
+    float head = smoothstep(0.80, 1.0, dropPos);
+    float tail = pow(dropPos, 1.5);
+    float streamIntensity = tail * 1.5 + head * 3.0;
 
-    vec3 glyphColor = mix(textColor, vec3(1.0, 1.0, 1.0), head * 0.92);
-    vec3 charLit = glyphColor * (glyph * (streamIntensity + 0.20));
-    vec3 trailGlow = textColor * (tail * 0.08);
+    vec3 brightHead = vec3(1.0, 1.0, 1.0);
+    vec3 matrixGreen = mix(textColor, vec3(0.15, 1.0, 0.55), 0.75);
+    vec3 glyphColor = mix(matrixGreen, brightHead, head * 0.95);
 
-    return (charLit + trailGlow) * contentMask + textColor * (frameGlow * 0.35);
+    // Lit character + ambient phosphor trace so empty cells aren't pitch black
+    float charLum = glyph * (streamIntensity + 0.35);
+    vec3 charLit = glyphColor * charLum;
+    vec3 trailGlow = matrixGreen * (tail * 0.22);
+    vec3 screenBackdrop = vec3(0.004, 0.020, 0.014); // Cyber-terminal dark phosphor glass
+    vec3 frameColor = matrixGreen * (frameLine * 1.6);
+
+    return (screenBackdrop + charLit + trailGlow) * contentMask + frameColor;
 }
 
 void main()
@@ -143,11 +142,25 @@ void main()
         float edgePulse = sin(fragPosition.y * 2.0 - uTime * 5.0 + seedPhase) * 0.5 + 0.5;
         vec3 neonLines = neonColor * (boxEdge * 1.5 + pow(boxEdge, 2.0) * 2.0) * (0.8 + edgePulse * 0.4);
 
-        // Determine which face this fragment lies on
+        // Memory slabs display falling matrix code exclusively on designated faces:
+        // Corridor-facing inner side (faces toward the player corridor X=0)
         bool isCorridorFace = (fragPosition.x < 0.0 ? N.x > 0.45 : N.x < -0.45);
+        // Oncoming front face (faces oncoming traffic toward +Z)
         bool isFrontFace = (N.z > 0.45);
 
-        int faceMode = int(fragColor.x + 0.2); // 0 = none, 1 = corridor, 2 = front, 3 = both
+        // Deterministic per-slab variation: stable across treadmill movement
+        float slabSeed = fract(sin(floor(fragPosition.x * 0.25) * 127.1 +
+                                   floor((fragPosition.z + virtualPlayerZ) * 0.0625) * 311.7 +
+                                   float(uRunSeed) * 0.017) * 43758.5453);
+        int faceMode = int(fragColor.x + 0.2);
+        if (faceMode == 0) {
+            // Robust fallback if instance channel wasn't populated: ~65% of slabs active
+            if (slabSeed < 0.65) {
+                float faceRoll = fract(slabSeed * 19.3);
+                faceMode = (faceRoll < 0.38) ? 1 : ((faceRoll < 0.72) ? 2 : 3);
+            }
+        }
+
         bool activeFace = (faceMode == 1 && isCorridorFace) ||
                           (faceMode == 2 && isFrontFace) ||
                           (faceMode == 3 && (isCorridorFace || isFrontFace));
@@ -169,9 +182,9 @@ void main()
                 faceUV = vec2(clamp(u, 0.0, 1.0), height01);
             }
 
-            vec3 slabNeon = mix(neonColor, vec3(0.2, 0.98, 0.6), 0.5);
-            vec3 rain = renderMatrixRain(faceUV, faceWidth, faceHeight, uTime, seedPhase, fragColor.y, slabNeon);
-            finalRGB = baseBody + neonLines * 0.35 + rain + spec * 0.25;
+            vec3 slabNeon = mix(neonColor, vec3(0.15, 1.0, 0.55), 0.75);
+            vec3 rain = renderMatrixRain(faceUV, faceWidth, faceHeight, uTime, seedPhase, fragColor.y + slabSeed, slabNeon);
+            finalRGB = baseBody + neonLines * 0.35 + rain + spec * 0.20;
         } else {
             finalRGB = baseBody + neonLines + mix(uPrimaryColor, vec3(0.5, 0.8, 1.0), 0.6) * spec * 0.6 +
                        neonColor * (rim * 0.4);
