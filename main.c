@@ -39,6 +39,7 @@ typedef struct {
     int backdropHorizonLoc;
     int backdropBodyLoc;
     int backdropEncounterLoc;
+    int backdropResolutionLoc;
     bool ready;
 } PostProcessSystem;
 
@@ -115,7 +116,7 @@ static void InitPostProcess(PostProcessSystem *post, int width, int height,
     post->backdropShader = LoadShaderFromMemory(NULL, shader_backdrop_fs);
     post->backdropTimeLoc = GetShaderLocation(post->backdropShader, "uTime");
     post->backdropIntensityLoc = GetShaderLocation(post->backdropShader, "uIntensity");
-    int backdropResolutionLoc = GetShaderLocation(post->backdropShader, "uResolution");
+    post->backdropResolutionLoc = GetShaderLocation(post->backdropShader, "uResolution");
     post->backdropSeedLoc = GetShaderLocation(post->backdropShader, "uRunSeed");
     post->backdropPrimaryLoc = GetShaderLocation(post->backdropShader, "uPrimaryColor");
     post->backdropSecondaryLoc = GetShaderLocation(post->backdropShader, "uSecondaryColor");
@@ -123,7 +124,7 @@ static void InitPostProcess(PostProcessSystem *post, int width, int height,
     post->backdropHorizonLoc = GetShaderLocation(post->backdropShader, "uSkyHorizon");
     post->backdropBodyLoc = GetShaderLocation(post->backdropShader, "uBodyColor");
     post->backdropEncounterLoc = GetShaderLocation(post->backdropShader, "uEncounterIndex");
-    SetShaderValue(post->backdropShader, backdropResolutionLoc, &resolution, SHADER_UNIFORM_VEC2);
+    SetShaderValue(post->backdropShader, post->backdropResolutionLoc, &resolution, SHADER_UNIFORM_VEC2);
     SetPostProcessTheme(post, seed, demo);
 
     post->ready = post->target.texture.id != 0 && post->shader.id != 0 &&
@@ -144,6 +145,8 @@ static void DrawRaymarchBackdrop(PostProcessSystem *post, float time, float inte
                    SHADER_UNIFORM_FLOAT);
     SetShaderValue(post->backdropShader, post->backdropEncounterLoc, &encounterIndex,
                    SHADER_UNIFORM_INT);
+    Vector2 res = { (float)width, (float)height };
+    SetShaderValue(post->backdropShader, post->backdropResolutionLoc, &res, SHADER_UNIFORM_VEC2);
     BeginShaderMode(post->backdropShader);
         DrawRectangle(0, 0, width, height, WHITE);
     EndShaderMode();

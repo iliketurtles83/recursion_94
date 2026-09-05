@@ -114,7 +114,10 @@ vec3 cyclePalette(float phase, float height) {
 }
 
 void main() {
-    vec2 uv = fragTexCoord * 2.0 - 1.0;
+    vec2 coord = (uResolution.x > 1.0 && uResolution.y > 1.0)
+        ? vec2(gl_FragCoord.x / uResolution.x, 1.0 - gl_FragCoord.y / uResolution.y)
+        : fragTexCoord;
+    vec2 uv = coord * 2.0 - 1.0;
     uv.x *= uResolution.x / max(uResolution.y, 1.0);
 
     uint seed = uint(uRunSeed);
@@ -144,26 +147,26 @@ void main() {
     float twilight = pow(abs(sin(cycle * 6.2831853)), 8.0);
     vec3 fractalColor = mix(uPrimaryColor, uSecondaryColor,
                             sin(glow * 2.8 + uTime * 0.4) * 0.5 + 0.5) * glow;
-    vec3 farColor = mix(uSecondaryColor, uPrimaryColor, 0.22) * farGlow * 0.16;
+    vec3 farColor = mix(uSecondaryColor, uPrimaryColor, 0.22) * farGlow * 0.20;
 
-    // Fades top/bottom so the fractal reads as a horizon glow rather than a
-    // full skybox, leaving room for the moon/aurora/silhouette sprites on top.
-    float horizonMask = exp(-pow((fragTexCoord.y - 0.50) * 2.6, 2.0));
-    vec3 base = cyclePalette(cycle, fragTexCoord.y);
-    float digitalBands = step(0.72, fract(sin(floor(fragTexCoord.y * 72.0) +
+    // Horizon glow mask centered at horizon
+    float horizonMask = exp(-pow((coord.y - 0.48) * 2.4, 2.0));
+    float skyHeight = clamp(1.0 - coord.y * 1.4, 0.0, 1.0);
+    vec3 base = cyclePalette(cycle, skyHeight);
+    float digitalBands = step(0.72, fract(sin(floor(coord.y * 72.0) +
                               seedPhase * 31.0) * 43758.5453));
     vec3 sunsetSignal = mix(uSecondaryColor, uPrimaryColor,
-                            step(0.5, fract(fragTexCoord.y * 31.0 + seedPhase)));
-    base += sunsetSignal * digitalBands * twilight * horizonMask * 0.035;
+                            step(0.5, fract(coord.y * 31.0 + seedPhase)));
+    base += sunsetSignal * digitalBands * twilight * horizonMask * 0.045;
 
-    vec3 sky = base + (fractalColor + farColor) * horizonMask *
-                      (0.45 + twilight * 0.55);
-    vec2 city = citySilhouette(vec2(fragTexCoord.x * 2.0 - 1.0,
-                                    1.0 - fragTexCoord.y), seed);
+    vec3 sky = base + (fractalColor * 1.3 + farColor) * horizonMask *
+                      (0.60 + twilight * 0.40);
+    vec2 city = citySilhouette(vec2(coord.x * 2.0 - 1.0,
+                                    1.0 - coord.y), seed);
     float silhouette = 1.0 - smoothstep(-0.002, 0.003, city.x);
     vec3 silhouetteColor = mix(uBodyColor * 0.5,
                                uSecondaryColor * 0.035, uIntensity);
-    sky = mix(sky, silhouetteColor, silhouette);
+    sky = mix(sky, silhouetteColor, silhouette * 0.70);
     sky += mix(uPrimaryColor, uSecondaryColor, 0.45) * city.y * silhouette *
            (0.025 + uIntensity * 0.085);
 
