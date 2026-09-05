@@ -287,10 +287,14 @@ void main()
             vec3 rain = renderMatrixRain(faceUV, faceWidth, faceHeight, uTime, seedPhase, fragColor.y + slabSeed, streamBody, streamHead);
             finalRGB = baseBody + neonLines * boxEdge + rain;
         } else {
-            // Flat face remains pure dark charcoal/black; only chamfered edges catch highlights
+            // Inactive face: dark obsidian with subtle silicon die micro-circuitry
+            vec2 dieUV = abs(N.x) > 0.45 ? fragLocalPos.zy : fragLocalPos.xy;
+            float gridTrace = step(0.96, fract(dieUV.x * 12.0)) + step(0.96, fract(dieUV.y * 12.0));
+            float microPulse = sin(dieUV.y * 6.0 - uTime * 1.5 + slabSeed * 6.28) * 0.5 + 0.5;
+            vec3 microCircuit = uPrimaryColor * (clamp(gridTrace, 0.0, 1.0) * microPulse * 0.08);
             float edgeSpec = spec * boxEdge;
             float edgeRim = rim * boxEdge;
-            finalRGB = baseBody + neonLines + neonColor * (edgeSpec * 0.8 + edgeRim * 0.4);
+            finalRGB = baseBody + microCircuit + neonLines + neonColor * (edgeSpec * 0.8 + edgeRim * 0.4);
         }
     } else if (uStructureKind == 1) {
         // =====================================================================
@@ -349,10 +353,12 @@ void main()
             vec3 binaryFlow = renderBinaryFlow(towerUV, 3.2, 18.0, uTime, seedPhase, towerSeed * 6.28, streamBody, streamHead);
             finalRGB = baseBody + neonLines * prismEdge + binaryFlow;
         } else {
-            // Flat face remains pure dark charcoal/black; only prism edges catch highlights
+            // Non-streaming prism facet: subtle vertical heatsink fluting
+            float flute = sin(facetFrac * 6.2831853) * 0.5 + 0.5;
+            vec3 ribBody = baseBody * (0.88 + 0.12 * flute);
             float edgeSpec = spec * prismEdge;
             float edgeRim = rim * prismEdge;
-            finalRGB = baseBody + neonLines + neonColor * (edgeSpec * 0.8 + edgeRim * 0.4);
+            finalRGB = ribBody + neonLines + neonColor * (edgeSpec * 0.8 + edgeRim * 0.4);
         }
     } else if (uStructureKind == 6) {
         // Classic multi-layer sine-wave plasma: several offset traveling waves
@@ -381,6 +387,7 @@ void main()
             for (int f = 0; f < 3; f++) {
                 q = abs(q) - (0.24 + 0.02 * sin(uTime * 0.31 + float(f)));
                 q.xy = q.x > q.y ? q.xy : q.yx;
+                q.yz = q.y > q.z ? q.yz : q.zy;
                 q *= 1.9;
                 scale *= 1.9;
             }
@@ -422,6 +429,54 @@ void main()
         
         vec3 base = uBodyColor * 0.50;
         finalRGB = base + portGlow + neonColor * rim * 0.2;
+    } else if (uStructureKind == 12) {
+        // Penthouse Control Chamber: miniature internal box-fold lattice core
+        vec3 rd = -N;
+        vec3 p = fragLocalPos;
+        float marched = 0.0;
+        float glow = 0.0;
+        for (int i = 0; i < 8; i++) {
+            vec3 q = p + rd * marched;
+            float scale = 1.0;
+            q = abs(q) - 0.45;
+            for (int f = 0; f < 3; f++) {
+                q = abs(q) - (0.18 + 0.015 * sin(uTime * 0.45 + float(f)));
+                q.xy = q.x > q.y ? q.xy : q.yx;
+                q.yz = q.y > q.z ? q.yz : q.zy;
+                q *= 1.8;
+                scale *= 1.8;
+            }
+            float d = (length(max(abs(q) - 0.35, 0.0)) - 0.04) / scale;
+            d = abs(d) + 0.016;
+            glow += 0.022 / (0.03 + d * d * 52.0);
+            marched += max(d, 0.025);
+            if (marched > 1.0) break;
+        }
+        vec3 coreColor = mix(uSecondaryColor, uPrimaryColor, clamp(glow * 0.8, 0.0, 1.0));
+        vec3 roomBase = uBodyColor * 0.45;
+        finalRGB = roomBase + coreColor * clamp(glow, 0.0, 1.2) + neonColor * rim * 0.25;
+    } else if (uStructureKind == 15) {
+        // Antenna Needle / Crown Transmitter: beacon pulse strobe + traveling carrier wave
+        float height01 = clamp(fragLocalPos.y + 0.5, 0.0, 1.0);
+        float carrier = fract(height01 * 4.0 - uTime * 3.2);
+        float carrierPulse = smoothstep(0.0, 0.15, carrier) * (1.0 - smoothstep(0.15, 0.55, carrier));
+        float tipBeacon = smoothstep(0.82, 0.98, height01);
+        float strobe = pow(max(sin(uTime * 5.0 + seedPhase * 6.28), 0.0), 12.0);
+        vec3 beaconCol = mix(uSecondaryColor, uHotColor, 0.7);
+        vec3 carrierCol = uPrimaryColor;
+        vec3 mastBase = uBodyColor * (0.50 + 0.50 * diff);
+        finalRGB = mastBase + carrierCol * carrierPulse * (0.8 + uIntensity * 0.6) +
+                   beaconCol * tipBeacon * strobe * 2.5;
+    } else if (uStructureKind == 16) {
+        // Service Floor Technical Band: horizontal louvered slats + traveling bus energy pulse
+        vec2 uv = abs(N.x) > 0.5 ? fragLocalPos.zy + 0.5 : fragLocalPos.xy + 0.5;
+        float slat = step(0.35, fract(uv.y * 12.0));
+        float busPulse = sin(uv.x * 16.0 - uTime * 4.0 + seedPhase) * 0.5 + 0.5;
+        busPulse = pow(busPulse, 4.0);
+        vec3 busColor = mix(uPrimaryColor, uSecondaryColor, 0.4);
+        vec3 serviceBase = uBodyColor * 0.38;
+        finalRGB = serviceBase + busColor * (slat * 0.25 + busPulse * 0.75) * (0.8 + uIntensity * 0.5) +
+                   neonColor * rim * 0.20;
     } else if (uAccentColor.a > 1.5) {
         // =====================================================================
         // CONDUIT DATA STREAM PATH (Smooth, non-flickering luminescent neon)

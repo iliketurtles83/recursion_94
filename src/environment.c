@@ -1764,7 +1764,9 @@ static void DrawArchitectureDetailBatch(const EnvironmentSystem *env, int detail
                           accent.b / 255.0f, 1.0f };
     Vector3 bodyVec = { body.r / 255.0f, body.g / 255.0f, body.b / 255.0f };
     int structureKind = glazing ? 7 : plasma ? 6 : dataRain ? 5
-                       : (detailMode == 9 ? 9 : (detailMode == 10 ? 10 : 8));
+                       : (detailMode == 9 ? 9 : (detailMode == 10 ? 10
+                       : (detailMode == 7 ? 12 : (detailMode == 3 ? 15
+                       : (detailMode == 4 ? 16 : 8)))));
     SetShaderValue(env->towerMaterial.shader, env->towerAccentLoc, &accentVec, SHADER_UNIFORM_VEC4);
     SetShaderValue(env->towerMaterial.shader, env->towerBodyLoc, &bodyVec, SHADER_UNIFORM_VEC3);
     SetShaderValue(env->towerMaterial.shader, env->towerKindLoc, &structureKind, SHADER_UNIFORM_INT);

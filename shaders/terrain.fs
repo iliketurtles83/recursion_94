@@ -53,11 +53,20 @@ void main()
     float cliffSpan = max(fwidth(distToCliffTop) * 1.5, 0.012);
     float cliffTopRim = (1.0 - smoothstep(0.002, 0.002 + cliffSpan, distToCliffTop)) * cliff;
 
+    // Digital canyon strata and vertical grid continuation along cliff drops
+    float cliffTrace = (abs(normal.x) > 0.5 ? gridZ : gridX) * cliff;
+    float strataCoord = abs(fract(fragPosition.y * 0.5) - 0.5) * 2.0;
+    float strataSpan = max(fwidth(strataCoord) * 1.5, 0.016);
+    float cliffStrata = (1.0 - smoothstep(0.0, strataSpan, strataCoord)) * cliff;
+    float cliffWire = clamp(cliffTrace * 0.50 + cliffStrata * 0.50, 0.0, 1.0);
+
     // Wireframe glow: smooth, sub-pixel blended vector lines
-    float wireMask = clamp(grid * 0.70 + tileBorder * 0.80 + cliffTopRim * 0.50, 0.0, 1.0);
+    float wireMask = clamp(grid * 0.70 + tileBorder * 0.80 + cliffTopRim * 0.50 + cliffWire * 0.45, 0.0, 1.0);
     float smoothWire = pow(wireMask, 1.4);
-    
-    vec3 gridColor = mix(uSecondaryColor, uPrimaryColor, pulse);
+
+    float cliffPulse = sin(fragPosition.y * 0.8 - uTime * 2.5) * 0.5 + 0.5;
+    vec3 cliffColor = mix(uPrimaryColor, uSecondaryColor, cliffPulse);
+    vec3 gridColor = mix(mix(uSecondaryColor, uPrimaryColor, pulse), cliffColor, cliff * 0.55);
     vec3 glow = gridColor * (wireMask * 0.45 + smoothWire * 0.55) * (0.60 + uIntensity * 0.50);
 
     vec3 color = baseColor + glow;
