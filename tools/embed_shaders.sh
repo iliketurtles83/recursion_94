@@ -6,7 +6,7 @@ OUTPUT="${1:?usage: embed_shaders.sh OUTPUT}"
 emit_shader() {
     local symbol="$1"
     local source="$2"
-    printf 'const char %s[] = {' "$symbol"
+    printf 'const unsigned char %s[] = {' "$symbol"
     od -An -v -t u1 "$source" | awk '{ for (i = 1; i <= NF; i++) printf "%s,", $i }'
     printf '0};\n'
 }

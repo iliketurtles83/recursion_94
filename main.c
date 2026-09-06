@@ -92,7 +92,7 @@ static void InitPostProcess(PostProcessSystem *post, int width, int height,
                             uint32_t seed, const DemosceneSystem *demo) {
     post->target = LoadRenderTexture(width, height);
     SetTextureFilter(post->target.texture, TEXTURE_FILTER_BILINEAR);
-    post->shader = LoadShaderFromMemory(NULL, shader_post_fs);
+    post->shader = LoadShaderFromMemory(NULL, (const char *)shader_post_fs);
     post->timeLoc = GetShaderLocation(post->shader, "uTime");
     post->intensityLoc = GetShaderLocation(post->shader, "uIntensity");
     post->beatLoc = GetShaderLocation(post->shader, "uBeatPulse");
@@ -104,7 +104,7 @@ static void InitPostProcess(PostProcessSystem *post, int width, int height,
     Vector2 resolution = { (float)width, (float)height };
     SetShaderValue(post->shader, resolutionLoc, &resolution, SHADER_UNIFORM_VEC2);
 
-    post->craftShader = LoadShaderFromMemory(shader_craft_vs, shader_craft_fs);
+    post->craftShader = LoadShaderFromMemory((const char *)shader_craft_vs, (const char *)shader_craft_fs);
     post->craftTimeLoc = GetShaderLocation(post->craftShader, "uTime");
     post->craftIntensityLoc = GetShaderLocation(post->craftShader, "uIntensity");
     post->craftObjectClassLoc = GetShaderLocation(post->craftShader, "uObjectClass");
@@ -113,7 +113,7 @@ static void InitPostProcess(PostProcessSystem *post, int width, int height,
     post->craftSecondaryLoc = GetShaderLocation(post->craftShader, "uSecondaryColor");
     post->craftThreatLoc = GetShaderLocation(post->craftShader, "uThreatColor");
 
-    post->backdropShader = LoadShaderFromMemory(NULL, shader_backdrop_fs);
+    post->backdropShader = LoadShaderFromMemory(NULL, (const char *)shader_backdrop_fs);
     post->backdropTimeLoc = GetShaderLocation(post->backdropShader, "uTime");
     post->backdropIntensityLoc = GetShaderLocation(post->backdropShader, "uIntensity");
     post->backdropResolutionLoc = GetShaderLocation(post->backdropShader, "uResolution");

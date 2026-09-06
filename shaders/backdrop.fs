@@ -61,6 +61,64 @@ float marchCage(vec3 rayDirection, vec3 origin, float foldOffset,
     return clamp(glow, 0.0, 1.6);
 }
 
+// ── Polar coordinate tunnel ────────────────────────────────────────
+// The iconic 1990s demoscene infinite tunnel. Transforms screen-space
+// Cartesian UVs into polar coordinates (angle + inverse radius) so
+// that advancing 'time' along the radial axis creates continuous
+// forward motion through an infinite cylindrical tunnel.
+vec3 renderPolarTunnel(vec2 uv, float time, float intensity) {
+    // Organic center drift — the tunnel curves slightly as you fly
+    vec2 center = vec2(sin(time * 0.18) * 0.08,
+                       cos(time * 0.13) * 0.06);
+    vec2 d = uv - center;
+
+    // Polar coordinates: angle in [-1,1], radius = 1/distance from center
+    float angle = atan(d.y, d.x) / 3.14159265;
+    float dist = 0.5 / (length(d) + 0.001);
+
+    // Tunnel UV: angle creates the circular wrapping, dist+time creates
+    // the forward-scrolling perspective. Add sinusoidal warp for organic
+    // tunnel curvature.
+    float tunnelAngle = angle * 3.0 + sin(dist * 0.5 + time * 0.3) * 0.15;
+    float tunnelDist = dist + time * 1.2;
+
+    // Grid pattern on the tunnel walls — classic demoscene checkerboard
+    vec2 grid = step(0.5, fract(vec2(tunnelAngle, tunnelDist) * 4.0));
+    float checker = mod(grid.x + grid.y, 2.0);
+
+    // Depth fade: closer to center = deeper = darker
+    float depthFade = clamp(length(d) * 2.0, 0.0, 1.0);
+    vec3 baseColor = mix(vec3(0.05, 0.0, 0.15), vec3(0.0, 0.8, 0.9), checker);
+
+    return baseColor * depthFade;
+}
+
+// ── Multi-frequency sine plasma ────────────────────────────────────
+// The earliest algorithmic mainstay of the demoscene. Sum of multiple
+// sinusoidal functions across space and time creates shifting atmospheric
+// visual bands. When mapped through the run palette, produces the
+// characteristic liquid color waves of 1980s/90s intros.
+vec3 renderPlasma(vec2 uv, float time, float intensity) {
+    float t = time * 0.4;
+
+    // Five sine waves at different frequencies and orientations
+    float p1 = sin(uv.x * 3.0 + t);
+    float p2 = sin(uv.y * 2.5 - t * 1.2);
+    float p3 = sin((uv.x + uv.y) * 2.0 + t * 0.7);
+    float p4 = sin(length(uv) * 2.0 - t * 1.5);
+    float p5 = sin((uv.x - uv.y) * 1.5 + t * 0.9);
+
+    float plasma = (p1 + p2 + p3 + p4 + p5) * 0.20;
+
+    // Map through the run palette
+    float phase = plasma * 0.5 + 0.5;
+    vec3 plasmaColor = mix(uPrimaryColor, uSecondaryColor, phase);
+
+    // Scale with intensity — plasma is subtle at low intensity, dominant at high
+    float plasmaStrength = 0.08 + intensity * 0.15;
+    return plasmaColor * plasmaStrength;
+}
+
 vec2 citySilhouette(vec2 screenPoint, uint seed) {
     const float ground = 0.43;
     float cityDistance = sdBox(screenPoint - vec2(0.0, ground * 0.5 - 0.18),
@@ -169,6 +227,25 @@ void main() {
     sky = mix(sky, silhouetteColor, silhouette * 0.70);
     sky += mix(uPrimaryColor, uSecondaryColor, 0.45) * city.y * silhouette *
            (0.025 + uIntensity * 0.085);
+
+    // ── Polar tunnel overlay (upper sky region) ────────────────────
+    // Visible above the horizon line, blending into the sky. Creates
+    // the infinite "sucked in" tunnel feeling that defines 1990s demos.
+    vec2 tunnelUV = (coord * 2.0 - 1.0);
+    tunnelUV.x *= uResolution.x / max(uResolution.y, 1.0);
+    vec3 tunnel = renderPolarTunnel(tunnelUV, uTime, uIntensity);
+    // Only show in upper portion, fade out near horizon
+    float tunnelMask = smoothstep(0.55, 0.95, coord.y) * (0.15 + uIntensity * 0.25);
+    sky = mix(sky, sky + tunnel * 0.6, tunnelMask);
+
+    // ── Multi-frequency plasma overlay ─────────────────────────────
+    // Subtle atmospheric color waves across the entire backdrop.
+    // Most visible in the sky region, adds liquid color movement.
+    vec2 plasmaUV = (coord * 2.0 - 1.0);
+    plasmaUV.x *= uResolution.x / max(uResolution.y, 1.0);
+    vec3 plasma = renderPlasma(plasmaUV, uTime, uIntensity);
+    float plasmaMask = smoothstep(0.45, 0.95, coord.y) * (0.3 + uIntensity * 0.4);
+    sky = mix(sky, plasma, plasmaMask);
 
     finalColor = vec4(sky, 1.0) * fragColor;
 }

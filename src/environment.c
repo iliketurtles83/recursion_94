@@ -621,7 +621,7 @@ void InitEnvironment(EnvironmentSystem *env, uint32_t runSeed) {
     env->unitCubeMesh = GenMeshChamferedCube();
     env->unitPrismMesh = GenMeshCenteredPrism(8);
     env->towerMaterial = LoadMaterialDefault();
-    env->towerMaterial.shader = LoadShaderFromMemory(shader_tower_vs, shader_tower_fs);
+    env->towerMaterial.shader = LoadShaderFromMemory((const char *)shader_tower_vs, (const char *)shader_tower_fs);
     env->towerScrollLoc = GetShaderLocation(env->towerMaterial.shader, "virtualPlayerZ");
     env->towerTimeLoc = GetShaderLocation(env->towerMaterial.shader, "uTime");
     env->towerIntensityLoc = GetShaderLocation(env->towerMaterial.shader, "uIntensity");
@@ -641,7 +641,7 @@ void InitEnvironment(EnvironmentSystem *env, uint32_t runSeed) {
     SetShaderValue(env->towerMaterial.shader, env->towerHotLoc, &hot, SHADER_UNIFORM_VEC3);
 
     env->terrainMaterial = LoadMaterialDefault();
-    env->terrainMaterial.shader = LoadShaderFromMemory(shader_terrain_vs, shader_terrain_fs);
+    env->terrainMaterial.shader = LoadShaderFromMemory((const char *)shader_terrain_vs, (const char *)shader_terrain_fs);
     env->terrainTimeLoc = GetShaderLocation(env->terrainMaterial.shader, "uTime");
     env->terrainIntensityLoc = GetShaderLocation(env->terrainMaterial.shader, "uIntensity");
     env->terrainSeedLoc = GetShaderLocation(env->terrainMaterial.shader, "uRunSeed");
