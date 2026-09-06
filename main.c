@@ -435,7 +435,6 @@ int main(int argc, char **argv) {
         }
 
         // Update Subsystems
-        UpdateEnvironment(&env, virtualPlayerZ, game.runTime, musicIntensity);
         float musicArrangementDistance = (float)fmax(
             0.0, virtualPlayerZ - musicArrangementOriginZ);
         UpdateAudioSynth(&synth, musicIntensity, glitchAmount, bossMusicIntensity,
@@ -444,6 +443,8 @@ int main(int argc, char **argv) {
 
         SynthTelemetry audioTelemetry = GetSynthTelemetry(&synth);
         float beatPulse = audioTelemetry.beatPulse;
+        UpdateEnvironment(&env, virtualPlayerZ, game.runTime, musicIntensity, beatPulse);
+
         float bossTransition = 0.0f;
         if (game.boss.active && game.boss.phase == BOSS_APPROACH) {
             bossTransition = fmaxf(0.001f, fminf(game.boss.phaseTime / 2.6f, 1.0f));

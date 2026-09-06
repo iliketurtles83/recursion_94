@@ -79,6 +79,7 @@ typedef struct {
     int towerSkyLoc;
     int towerHotLoc;
     int towerKindLoc;
+    int towerBeatPulseLoc;
 
     Material terrainMaterial;
     int terrainTimeLoc;
@@ -104,7 +105,7 @@ typedef struct {
 // Lifecycle & Update API
 void InitEnvironment(EnvironmentSystem *env, uint32_t runSeed);
 void ReseedEnvironment(EnvironmentSystem *env, uint32_t runSeed);
-void UpdateEnvironment(EnvironmentSystem *env, double virtualPlayerZ, float time, float intensity);
+void UpdateEnvironment(EnvironmentSystem *env, double virtualPlayerZ, float time, float intensity, float beatPulse);
 void DrawEnvironment(const EnvironmentSystem *env, Camera3D camera, double virtualPlayerZ);
 void UnloadEnvironment(EnvironmentSystem *env);
 bool ValidateEnvironmentGenerator(EnvironmentValidationReport *report);

@@ -633,6 +633,7 @@ void InitEnvironment(EnvironmentSystem *env, uint32_t runSeed) {
     env->towerSkyLoc = GetShaderLocation(env->towerMaterial.shader, "uSkyHorizon");
     env->towerHotLoc = GetShaderLocation(env->towerMaterial.shader, "uHotColor");
     env->towerKindLoc = GetShaderLocation(env->towerMaterial.shader, "uStructureKind");
+    env->towerBeatPulseLoc = GetShaderLocation(env->towerMaterial.shader, "uBeatPulse");
     SetShaderValue(env->towerMaterial.shader, env->towerSeedLoc, &shaderSeed, SHADER_UNIFORM_INT);
     SetShaderValue(env->towerMaterial.shader, env->towerPrimaryLoc, &primary, SHADER_UNIFORM_VEC3);
     SetShaderValue(env->towerMaterial.shader, env->towerSecondaryLoc, &secondary, SHADER_UNIFORM_VEC3);
@@ -1201,11 +1202,12 @@ static void GenerateEnvironmentStructures(EnvironmentSystem *env, double virtual
     }
 }
 
-void UpdateEnvironment(EnvironmentSystem *env, double virtualPlayerZ, float time, float intensity) {
+void UpdateEnvironment(EnvironmentSystem *env, double virtualPlayerZ, float time, float intensity, float beatPulse) {
     float shaderScroll = (float)virtualPlayerZ;
     SetShaderValue(env->towerMaterial.shader, env->towerScrollLoc, &shaderScroll, SHADER_UNIFORM_FLOAT);
     SetShaderValue(env->towerMaterial.shader, env->towerTimeLoc, &time, SHADER_UNIFORM_FLOAT);
     SetShaderValue(env->towerMaterial.shader, env->towerIntensityLoc, &intensity, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(env->towerMaterial.shader, env->towerBeatPulseLoc, &beatPulse, SHADER_UNIFORM_FLOAT);
     SetShaderValue(env->terrainMaterial.shader, env->terrainTimeLoc, &time, SHADER_UNIFORM_FLOAT);
     SetShaderValue(env->terrainMaterial.shader, env->terrainIntensityLoc, &intensity, SHADER_UNIFORM_FLOAT);
     GenerateEnvironmentStructures(env, virtualPlayerZ);

@@ -14,6 +14,7 @@ uniform mat4 matProjection;
 uniform mat4 matView;
 uniform float uTime;
 uniform float uIntensity;
+uniform float uBeatPulse;
 uniform int uRunSeed;
 uniform int uStructureKind;
 
@@ -56,6 +57,14 @@ void main()
 
     // Apply instance transform matrix to vertex position (affine: 3x3 scale/rot + translation)
     vec4 worldPos = vec4(mat3(instanceTransform) * localPos + instanceTransform[3].xyz, 1.0);
+
+    // Audio-reactive structure breathing: subtle Y-axis scale on kick drum.
+    // Structures pulse outward from their base, stronger near the player.
+    float dist = max(-worldPos.z, 0.0);
+    float proximityFade = 1.0 - smoothstep(0.0, 120.0, dist);
+    float breathe = uBeatPulse * 0.04 * proximityFade;
+    worldPos.y *= 1.0 + breathe;
+    worldPos.xz *= 1.0 + breathe * 0.3;
 
     // Architecture is deliberately rigid. Temporal vertex displacement made
     // separately instanced roof pieces shear against their parent buildings
