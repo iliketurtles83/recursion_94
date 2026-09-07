@@ -1,5 +1,7 @@
 # Architectural Integration of Demoscene Procedural Rendering Techniques into RECURSION_94
 
+Ideas that could be implemented in `recursion_94`.
+
 ## Repository State and Baseline Architecture
 
 The software architecture of `recursion_94` is situated at the intersection of procedural mathematical generation, real-time spatial transformations, and the visual culture of the 1994 computer demoscene. Direct inspection of the repository indicates that `recursion_94` is currently not exposed on the public index or remains within a private development branch. Consequently, an architectural baseline must be formulated from first principles, matching the technical paradigms of contemporary high-performance procedural graphics engines that target demoscene aesthetics.
