@@ -49,9 +49,14 @@ static const unsigned char ZONE_PATTERNS[][4] = {
 #define ENVIRONMENT_LATERAL_SCALE 1.5f
 #define CORRIDOR_EDGE_X (15.0f * ENVIRONMENT_LATERAL_SCALE)
 #define CONDUIT_PLAYER_MAX_Y 7.0f
+#define CONDUIT_PLAYER_MIN_Y 0.8f
 #define CONDUIT_PLAYER_MAX_X (10.0f * ENVIRONMENT_LATERAL_SCALE)
 #define CONDUIT_CLEARANCE_MARGIN_Y 3.5f
 #define CONDUIT_MIN_CROSSING_Y (CONDUIT_PLAYER_MAX_Y + CONDUIT_CLEARANCE_MARGIN_Y)
+// Center ravine debris must stay below the low-flight bound so the craft never
+// clips through it; margin keeps a visible gap under the player's minimum Y.
+#define RAVINE_CLEARANCE_MARGIN_Y 0.6f
+#define RAVINE_MAX_TOP_Y (CONDUIT_PLAYER_MIN_Y - RAVINE_CLEARANCE_MARGIN_Y)
 #define MAX_SITES_PER_SECTOR 9
 #define MAX_CONDUIT_SPAN_DISTANCE 64.0f
 #define TERRAIN_CELL_WIDTH 8.0f
@@ -1128,13 +1133,16 @@ static void GenerateRavineObject(EnvironmentSystem *env, int targetSector,
     }
     if (supportCell == 100) return;
 
+    float baseY = support.topY - 0.3f;
     float height = (2.0f + HashFloat(targetSector, 7703) * 5.0f) * compileScale;
+    float maxHeight = RAVINE_MAX_TOP_Y - baseY;
+    if (height > maxHeight) height = maxHeight;
     float width = (2.4f + HashFloat(targetSector, 7704) * 3.2f) * compileScale;
     StructureType type = HashFloat(targetSector, 7705) < 0.64f ? STRUCT_MEMORY_SLAB
                                                                : STRUCT_CACHE_TOWER;
     AddDetailStructure(env, type,
                        (Vector3){ (float)supportCell * TERRAIN_CELL_WIDTH,
-                                  support.topY - 0.3f + height * 0.5f,
+                                  baseY + height * 0.5f,
                                   sectorCenterZ },
                        (Vector3){ width, height, width * 0.84f }, compileScale, 0.04f);
 }
@@ -1328,6 +1336,7 @@ bool ValidateEnvironmentGenerator(EnvironmentValidationReport *report) {
     report->unsupportedFarStructures = 0;
     report->fieldCoverageViolations = 0;
     report->crossingClearanceViolations = 0;
+    report->middleClearanceViolations = 0;
     report->conduitFlowViolations = 0;
 
     int previousLandmark = -1000000;
@@ -1387,6 +1396,14 @@ bool ValidateEnvironmentGenerator(EnvironmentValidationReport *report) {
             for (int i = 0; i < probe.structureCount; i++) {
                 const EnvironmentStructure *structure = &probe.structures[i];
                 float bottom = structure->position.y - structure->size.y * 0.5f;
+                float top = structure->position.y + structure->size.y * 0.5f;
+                // Any structure whose footprint overlaps the player box and whose
+                // body crosses the low-flight band would be flown through when low.
+                if (structure->position.x - structure->size.x * 0.5f < CONDUIT_PLAYER_MAX_X &&
+                    structure->position.x + structure->size.x * 0.5f > -CONDUIT_PLAYER_MAX_X &&
+                    top > CONDUIT_PLAYER_MIN_Y && bottom < CONDUIT_PLAYER_MAX_Y) {
+                    report->middleClearanceViolations++;
+                }
                 if (fabsf(structure->position.x) >= CORRIDOR_EDGE_X) {
                     int sideBin = structure->position.x < 0.0f ? 0 : 1;
                     float binF = (fabsf(structure->position.x) - fieldBinStart) /
@@ -1469,6 +1486,7 @@ bool ValidateEnvironmentGenerator(EnvironmentValidationReport *report) {
            report->landmarkSpacingViolations == 0 &&
            report->fieldCoverageViolations == 0 &&
            report->crossingClearanceViolations == 0 &&
+           report->middleClearanceViolations == 0 &&
            report->conduitFlowViolations == 0 &&
            report->droppedStructures == 0 &&
            report->unsupportedStructures == 0;

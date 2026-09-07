@@ -52,6 +52,7 @@ typedef struct {
     int unsupportedFarStructures;
     int fieldCoverageViolations;
     int crossingClearanceViolations;
+    int middleClearanceViolations;
     int conduitFlowViolations;
 } EnvironmentValidationReport;
 

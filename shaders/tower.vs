@@ -72,7 +72,7 @@ void main()
     // atmosphere and the stationary-treadmill scroll instead.
 
     // Apply identical horizon curvature so instanced structures and floor bend together
-    float dist = max(-worldPos.z, 0.0);
+    dist = max(-worldPos.z, 0.0);
     worldPos.y -= CURVATURE_COEFF * dist * dist;
 
     // CPU-streamed world coordinates. Sparse silhouettes begin before the
