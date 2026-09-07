@@ -44,7 +44,7 @@ From the project root:
 ./bin/recursion94
 ```
 
-The build embeds the GLSL sources into the executable, creates `bin/recursion94`, and copies it to `recursion_94`. The resulting executable has no runtime asset-directory dependency.
+The build embeds the GLSL sources into the executable and creates `bin/recursion94`. The resulting executable has no runtime asset-directory dependency.
 
 Useful launch options:
 
@@ -121,7 +121,7 @@ From the project root:
 bash ./build_windows.sh
 ```
 
-The build creates `bin/recursion94.exe` and copies it to `recursion_94.exe`. Shader sources are embedded, so the executable can be distributed on its own.
+The build creates `bin/recursion94.exe`. Shader sources are embedded, so the executable can be distributed on its own.
 
 Custom toolchain locations can be supplied through environment variables:
 

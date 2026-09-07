@@ -4,7 +4,7 @@ RECURSION_94 is a C11 + Raylib 6 procedural rail shooter. All graphics, levels, 
 
 ## Build and run
 
-- Linux: `./build.sh` → `bin/recursion94` (plus root copy `recursion_94`). Requires `gcc`, `upx` (mandatory, not optional), and Raylib 6 at the hardcoded path `/usr/local/lib/libraylib.a`.
+- Linux: `./build.sh` → `bin/recursion94`. Requires `gcc`, `upx` (mandatory, not optional), and Raylib 6 at the hardcoded path `/usr/local/lib/libraylib.a`.
 - Windows cross-build: `bash ./build_windows.sh` (MinGW `x86_64-w64-mingw32-gcc` + `$HOME/raylib-win/src/libraylib.a`; override with `RAYLIB_WIN_SOURCE`, `UPX_BIN`).
 - Run: `./bin/recursion94` — no runtime asset dependency. `--seed N` skips the seed selector; `--boss N` starts just past the boss spawn.
 - No Makefile, no test framework, no linter. Flags include `-Wall -Wextra -Wpedantic` — don't introduce warnings.
@@ -15,7 +15,7 @@ RECURSION_94 is a C11 + Raylib 6 procedural rail shooter. All graphics, levels, 
 - `VALIDATE_GAMEPLAY=1 ./build.sh` — headless chain-link/special-attack check; exits after running.
 - `VALIDATE_AUDIO=1 ./build.sh` — builds and runs `bin/audio_validation` (deterministic PCM hash); does not build the game.
 - `PROFILE_AUDIO=1 ./build.sh && ./bin/recursion94 --seed 94` — audio callback profiler; `F3` in game.
-- Order matters: the first two modes replace `bin/recursion94` with a validation-only binary. Re-run plain `./build.sh` before any gameplay run; the root `recursion_94` copy stays stale until then.
+- Order matters: the first two modes replace `bin/recursion94` with a validation-only binary. Re-run plain `./build.sh` before any gameplay run.
 - Headless environments: `GLFW: X11: Failed to open display` is expected, not a regression — use the validation modes above instead.
 
 ## Codegen

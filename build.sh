@@ -53,6 +53,4 @@ if [ "$ACTUAL_SIZE" -gt "$MAX_SIZE" ]; then
     exit 1
 fi
 
-cp bin/recursion94 recursion_94
-
 echo "Final size (bin/recursion94): $ACTUAL_SIZE / $MAX_SIZE bytes"

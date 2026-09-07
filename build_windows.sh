@@ -52,8 +52,6 @@ if [ "$ACTUAL_SIZE" -gt "$MAX_SIZE" ]; then
     exit 1
 fi
 
-cp bin/recursion94.exe recursion_94.exe
-
 echo "Native Windows build complete:"
 file bin/recursion94.exe
 echo "Final size (bin/recursion94.exe): $ACTUAL_SIZE / $MAX_SIZE bytes"

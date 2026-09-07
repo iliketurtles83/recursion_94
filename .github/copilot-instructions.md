@@ -59,7 +59,6 @@ Always run commands from the repository root.
 2. Expected result:
    - Builds `bin/recursion94`
    - Compresses with UPX when present
-   - Copies the artifact to `recursion_94`
    - Prints the final binary size
 3. Observed timing on the validated host: about 14.5s.
 
@@ -84,8 +83,6 @@ Always restore the playable build before gameplay:
 1. `VALIDATE_GENERATOR=1 ./build.sh`
 2. `./build.sh`
 3. Then run the game.
-
-The validation build exits before the final `cp`, so the root `recursion_94` binary may remain stale until a normal build is run again.
 
 ### Run (Linux)
 
@@ -140,7 +137,6 @@ Root files:
 - `README.md`
 - `main.c`
 - `audio_validation.c`
-- `recursion_94` (generated Linux binary copy)
 - `recursion_94.md` (project notes)
 
 Top-level directories:
