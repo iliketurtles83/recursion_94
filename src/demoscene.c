@@ -125,12 +125,11 @@ void DrawSeedSelector(uint32_t seed, float time, float bpm, const char *keyName,
 
 void DrawDemosceneOverlay(const DemosceneSystem *demo, float time, float intensity,
                           float beatPulse, int screenWidth, int screenHeight) {
-    (void)beatPulse;
     if (intensity < 0.0f) intensity = 0.0f;
     if (intensity > 1.0f) intensity = 1.0f;
 
     int centerX = screenWidth / 2;
-    int centerY = screenHeight / 2;
+    int centerY = (int)((float)screenHeight * 0.46f);
     float streakAmount = fmaxf(0.0f, (intensity - 0.42f) / 0.58f);
     for (int i = 0; i < 34; i++) {
         uint32_t h = DemoHash(demo->seed + (uint32_t)i * 0x85ebca6bu);
@@ -142,26 +141,11 @@ void DrawDemosceneOverlay(const DemosceneSystem *demo, float time, float intensi
         int y0 = centerY + (int)(sinf(angle) * inner * 0.58f);
         int x1 = centerX + (int)(cosf(angle) * (inner + length));
         int y1 = centerY + (int)(sinf(angle) * (inner + length) * 0.58f);
-        unsigned char alpha = (unsigned char)(streakAmount * 115.0f);
+        unsigned char alpha = (unsigned char)(streakAmount * (45.0f + beatPulse * 12.0f));
         DrawLine(x0, y0, x1, y1, MixColor(demo->primary, demo->secondary, DemoHash01(h), alpha));
     }
 
-    int previousTop = 0;
-    int previousBottom = screenHeight;
-    for (int x = 0; x <= screenWidth; x += 20) {
-        float phase = (float)x * 0.025f + time * 2.2f + DemoHash01(demo->seed) * 6.28f;
-        int top = 7 + (int)(sinf(phase) * (3.0f + intensity * 7.0f));
-        int bottom = screenHeight - 8 + (int)(sinf(phase + 1.7f) * (3.0f + intensity * 7.0f));
-        if (x > 0) {
-            DrawLine(x - 20, previousTop, x, top, (Color){ demo->primary.r, demo->primary.g, demo->primary.b, 92 });
-            DrawLine(x - 20, previousBottom, x, bottom,
-                     (Color){ demo->secondary.r, demo->secondary.g, demo->secondary.b, 92 });
-        }
-        previousTop = top;
-        previousBottom = bottom;
-    }
-
-    DrawScanlines(screenWidth, screenHeight, (unsigned char)(18.0f + intensity * 20.0f));
+    // Scene texture is applied once in post.fs, preserving material gradients.
     DrawText(TextFormat("SEED %08X", (unsigned int)demo->seed), screenWidth - 142, screenHeight - 24,
              12, (Color){ demo->primary.r, demo->primary.g, demo->primary.b, 145 });
 }

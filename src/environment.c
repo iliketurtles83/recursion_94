@@ -2,9 +2,14 @@
 #include "palette.h"
 #include "shader_sources.h"
 #include "raymath.h"
+#include "rlgl.h"
+#include "detail_atlas.h"
+#include "facade_atlas.h"
 #include <math.h>
 #include <stddef.h>
 #include <stdint.h>
+
+#define MAX_SERVICE_INSTANCES 8192
 
 typedef enum {
     DISTRICT_MEMORY_CITY = 0,
@@ -625,10 +630,12 @@ void InitEnvironment(EnvironmentSystem *env, uint32_t runSeed) {
     // the exact dimensions emitted by the deterministic generator.
     env->unitCubeMesh = GenMeshChamferedCube();
     env->unitPrismMesh = GenMeshCenteredPrism(8);
+    env->serviceInstancesVbo = rlLoadVertexBuffer(NULL,MAX_SERVICE_INSTANCES*sizeof(float16),true);
     env->towerMaterial = LoadMaterialDefault();
     env->towerMaterial.shader = LoadShaderFromMemory((const char *)shader_tower_vs, (const char *)shader_tower_fs);
     env->towerScrollLoc = GetShaderLocation(env->towerMaterial.shader, "virtualPlayerZ");
     env->towerTimeLoc = GetShaderLocation(env->towerMaterial.shader, "uTime");
+    env->towerViewLoc = GetShaderLocation(env->towerMaterial.shader, "uViewPosition");
     env->towerIntensityLoc = GetShaderLocation(env->towerMaterial.shader, "uIntensity");
     env->towerSeedLoc = GetShaderLocation(env->towerMaterial.shader, "uRunSeed");
     env->towerPrimaryLoc = GetShaderLocation(env->towerMaterial.shader, "uPrimaryColor");
@@ -649,6 +656,8 @@ void InitEnvironment(EnvironmentSystem *env, uint32_t runSeed) {
     env->terrainMaterial = LoadMaterialDefault();
     env->terrainMaterial.shader = LoadShaderFromMemory((const char *)shader_terrain_vs, (const char *)shader_terrain_fs);
     env->terrainTimeLoc = GetShaderLocation(env->terrainMaterial.shader, "uTime");
+    env->terrainViewLoc = GetShaderLocation(env->terrainMaterial.shader, "uViewPosition");
+    env->terrainScrollLoc = GetShaderLocation(env->terrainMaterial.shader, "virtualPlayerZ");
     env->terrainIntensityLoc = GetShaderLocation(env->terrainMaterial.shader, "uIntensity");
     env->terrainSeedLoc = GetShaderLocation(env->terrainMaterial.shader, "uRunSeed");
     env->terrainPrimaryLoc = GetShaderLocation(env->terrainMaterial.shader, "uPrimaryColor");
@@ -660,6 +669,43 @@ void InitEnvironment(EnvironmentSystem *env, uint32_t runSeed) {
     SetShaderValue(env->terrainMaterial.shader, env->terrainSecondaryLoc, &secondary, SHADER_UNIFORM_VEC3);
     SetShaderValue(env->terrainMaterial.shader, env->terrainBodyLoc, &body, SHADER_UNIFORM_VEC3);
     SetShaderValue(env->terrainMaterial.shader, env->terrainSkyLoc, &skyHorizon, SHADER_UNIFORM_VEC3);
+
+    Image atlas={(void *)detail_atlas_bytes,DETAIL_ATLAS_SIDE,DETAIL_ATLAS_SIDE,1,
+                 PIXELFORMAT_UNCOMPRESSED_R8G8B8A8};
+    env->detailAtlas=LoadTextureFromImage(atlas);
+    if(env->detailAtlas.id) {
+        GenTextureMipmaps(&env->detailAtlas);
+        SetTextureFilter(env->detailAtlas,TEXTURE_FILTER_TRILINEAR);
+        SetTextureWrap(env->detailAtlas,TEXTURE_WRAP_REPEAT);
+    }
+    Material *detailMaterials[2]={&env->towerMaterial,&env->terrainMaterial};
+    for(int i=0;i<2;i++) {
+        Material *m=detailMaterials[i];
+        m->shader.locs[SHADER_LOC_MAP_METALNESS]=GetShaderLocation(m->shader,"uDetailAtlas");
+        SetMaterialTexture(m,MATERIAL_MAP_METALNESS,env->detailAtlas);
+        int enabled=env->detailAtlas.id!=0;
+        SetShaderValue(m->shader,GetShaderLocation(m->shader,"uDetailEnabled"),&enabled,SHADER_UNIFORM_INT);
+    }
+    Image facadeImage = { (void *)facade_atlas_bytes, FACADE_ATLAS_SIDE,
+                          FACADE_ATLAS_SIDE, 1, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8 };
+    env->facadeAtlas = LoadTextureFromImage(facadeImage);
+    if (env->facadeAtlas.id) {
+        GenTextureMipmaps(&env->facadeAtlas);
+        SetTextureFilter(env->facadeAtlas, TEXTURE_FILTER_TRILINEAR);
+        SetTextureWrap(env->facadeAtlas, TEXTURE_WRAP_CLAMP);
+    }
+    env->towerMaterial.shader.locs[SHADER_LOC_MAP_NORMAL] =
+        GetShaderLocation(env->towerMaterial.shader, "uFacadeAtlas");
+    SetMaterialTexture(&env->towerMaterial, MATERIAL_MAP_NORMAL, env->facadeAtlas);
+    int facadeEnabled = env->facadeAtlas.id != 0;
+    SetShaderValue(env->towerMaterial.shader,
+                   GetShaderLocation(env->towerMaterial.shader, "uFacadeEnabled"),
+                   &facadeEnabled, SHADER_UNIFORM_INT);
+    TraceLog(LOG_INFO,"DETAIL: embedded atlas %u bytes, %d mip levels, ready=%d",
+             (unsigned int)sizeof(detail_atlas_bytes),env->detailAtlas.mipmaps,env->detailAtlas.id!=0);
+    TraceLog(LOG_INFO,"FACADE: embedded atlas %u bytes, %d mip levels, ready=%d",
+             (unsigned int)sizeof(facade_atlas_bytes),env->facadeAtlas.mipmaps,
+             env->facadeAtlas.id!=0);
 
     env->structureCount = 0;
     env->terrainCount = 0;
@@ -1217,6 +1263,7 @@ void UpdateEnvironment(EnvironmentSystem *env, double virtualPlayerZ, float time
     SetShaderValue(env->towerMaterial.shader, env->towerIntensityLoc, &intensity, SHADER_UNIFORM_FLOAT);
     SetShaderValue(env->towerMaterial.shader, env->towerBeatPulseLoc, &beatPulse, SHADER_UNIFORM_FLOAT);
     SetShaderValue(env->terrainMaterial.shader, env->terrainTimeLoc, &time, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(env->terrainMaterial.shader, env->terrainScrollLoc, &shaderScroll, SHADER_UNIFORM_FLOAT);
     SetShaderValue(env->terrainMaterial.shader, env->terrainIntensityLoc, &intensity, SHADER_UNIFORM_FLOAT);
     GenerateEnvironmentStructures(env, virtualPlayerZ);
     GroundFlankStructures(env, virtualPlayerZ);
@@ -1858,8 +1905,339 @@ static void DrawInfrastructureDetailBatch(const EnvironmentSystem *env, int deta
     DrawMeshInstanced(env->unitCubeMesh, env->towerMaterial, transforms, count);
 }
 
+static void AddServicePart(float16 *batch,int *count,Vector3 p,Vector3 size,int finish) {
+    if(*count>=MAX_SERVICE_INSTANCES) return;
+    #ifdef RECURSION_RENDER_QA
+    if(fabsf(p.x)-size.x*0.5f<CONDUIT_PLAYER_MAX_X &&
+       p.y+size.y*0.5f>CONDUIT_PLAYER_MIN_Y && p.y-size.y*0.5f<CONDUIT_PLAYER_MAX_Y) {
+        TraceLog(LOG_ERROR,"DETAIL QA: hardware infringes flight clearance at %.3f %.3f %.3f",p.x,p.y,p.z);
+    }
+    #endif
+    Matrix m=MatrixMultiply(MatrixScale(size.x,size.y,size.z),MatrixTranslate(p.x,p.y,p.z));
+    m.m3=(float)finish; // Material tag, in the same unused matrix row as other batches.
+    batch[(*count)++]=MatrixToFloatV(m);
+}
+
+static void AddServiceBrace(float16 *batch,int *count,Vector3 a,Vector3 b,float thickness) {
+    if(*count>=MAX_SERVICE_INSTANCES) return;
+    Vector3 delta=Vector3Subtract(b,a);
+    float length=Vector3Length(delta);
+    if(length<0.001f) return;
+    Quaternion q=QuaternionFromVector3ToVector3((Vector3){0,1,0},Vector3Scale(delta,1.0f/length));
+    Matrix m=MatrixMultiply(MatrixScale(thickness,length,thickness),QuaternionToMatrix(q));
+    Vector3 p=Vector3Scale(Vector3Add(a,b),0.5f);
+    m=MatrixMultiply(m,MatrixTranslate(p.x,p.y,p.z));
+    m.m3=1.0f;
+    batch[(*count)++]=MatrixToFloatV(m);
+}
+
+// GLSL 330 / VAO path, specialized for the untextured service material.
+// Raylib's general DrawMeshInstanced allocates temporary CPU/GPU buffers on
+// every call. Reuse our startup-allocated VBO and static staging data instead.
+static void DrawServiceBatch(const EnvironmentSystem *env,const float16 *batch,int count) {
+    Mesh mesh=env->unitCubeMesh;
+    Shader shader=env->towerMaterial.shader;
+    int loc=shader.locs[SHADER_LOC_VERTEX_INSTANCETRANSFORM];
+    if(!env->serviceInstancesVbo||!mesh.vaoId||loc<0) return;
+    rlDrawRenderBatchActive();
+    rlUpdateVertexBuffer(env->serviceInstancesVbo,batch,count*sizeof(float16),0);
+    rlEnableShader(shader.id);
+    if(env->detailAtlas.id) {
+        int slot=1;
+        rlActiveTextureSlot(slot);
+        rlEnableTexture(env->detailAtlas.id);
+        rlSetUniform(shader.locs[SHADER_LOC_MAP_METALNESS],&slot,SHADER_UNIFORM_INT,1);
+    }
+    if(env->facadeAtlas.id) {
+        int slot=2;
+        rlActiveTextureSlot(slot);
+        rlEnableTexture(env->facadeAtlas.id);
+        rlSetUniform(shader.locs[SHADER_LOC_MAP_NORMAL],&slot,SHADER_UNIFORM_INT,1);
+    }
+    rlSetUniformMatrix(shader.locs[SHADER_LOC_MATRIX_VIEW],rlGetMatrixModelview());
+    rlSetUniformMatrix(shader.locs[SHADER_LOC_MATRIX_PROJECTION],rlGetMatrixProjection());
+    rlEnableVertexArray(mesh.vaoId);
+    rlEnableVertexBuffer(env->serviceInstancesVbo);
+    for(int i=0;i<4;i++) {
+        rlSetVertexAttribute(loc+i,4,RL_FLOAT,false,sizeof(float16),i*sizeof(Vector4));
+        rlEnableVertexAttribute(loc+i);
+        rlSetVertexAttributeDivisor(loc+i,1);
+    }
+    if(mesh.indices) rlDrawVertexArrayElementsInstanced(0,mesh.triangleCount*3,NULL,count);
+    else rlDrawVertexArrayInstanced(0,mesh.vertexCount,count);
+    for(int i=0;i<4;i++) {
+        rlSetVertexAttributeDivisor(loc+i,0);
+        rlDisableVertexAttribute(loc+i);
+    }
+    rlDisableVertexArray();
+    rlDisableVertexBuffer();
+    rlDisableVertexBufferElement();
+    rlDisableShader();
+    rlActiveTextureSlot(1);
+    rlDisableTexture();
+    rlActiveTextureSlot(2);
+    rlDisableTexture();
+    rlActiveTextureSlot(0);
+}
+
+// Near-field, non-colliding architectural kit. All recipes use stable world
+// identity and a fixed, bounded instance buffer; no gameplay pool is enlarged.
+static void AddFacadePart(float16 *batch,int *count,Vector3 face,int side,
+                          Vector3 p,Vector3 size,int finish) {
+    if(side==0) {
+        p=Vector3Add(face,p);
+    } else {
+        p=(Vector3){face.x-(float)side*p.z,face.y+p.y,face.z+p.x};
+        size=(Vector3){size.z,size.y,size.x};
+    }
+    AddServicePart(batch,count,p,size,finish);
+}
+
+static void AddFacadeWorkshop(float16 *batch,int *count,Vector3 face,int side,
+                              float width,float height,uint32_t seed) {
+    float column=width*0.32f;
+    float rise=Clamp(height*0.52f,3.5f,12.0f);
+    // Continuous vertical ducts with compression collars and mounting brackets.
+    for(int pipe=0;pipe<2;pipe++) {
+        float u=-column+(float)pipe*0.38f;
+        AddFacadePart(batch,count,face,side,(Vector3){u,rise*0.5f+0.9f,0.43f},
+                      (Vector3){0.23f,rise,0.28f},pipe?1:3);
+        for(int clamp=0;clamp<6;clamp++) {
+            float y=1.0f+(float)clamp*rise/6.0f;
+            AddFacadePart(batch,count,face,side,(Vector3){u,y,0.42f},(Vector3){0.36f,0.12f,0.42f},1);
+        }
+    }
+    // A narrow maintenance ladder and deep landing with a real guard rail.
+    float ladder=column*0.76f;
+    for(int sideRail=-1;sideRail<=1;sideRail+=2) {
+        AddFacadePart(batch,count,face,side,(Vector3){ladder+sideRail*0.27f,rise*0.5f+1.0f,0.45f},
+                      (Vector3){0.075f,rise+0.3f,0.10f},1);
+    }
+    int rungs=(int)(rise/0.38f);
+    for(int rung=0;rung<rungs;rung++) {
+        AddFacadePart(batch,count,face,side,(Vector3){ladder,1.0f+rung*0.38f,0.50f},
+                      (Vector3){0.54f,0.055f,0.12f},1);
+    }
+    float landing=rise+0.65f;
+    AddFacadePart(batch,count,face,side,(Vector3){0,landing,0.54f},
+                  (Vector3){width*0.80f,0.20f,1.22f},0);
+    for(int rib=0;rib<9;rib++) {
+        AddFacadePart(batch,count,face,side,(Vector3){(rib-4)*width*0.082f,landing+0.13f,0.55f},
+                      (Vector3){0.08f,0.04f,1.20f},1);
+    }
+    for(int post=-1;post<=1;post++) {
+        AddFacadePart(batch,count,face,side,(Vector3){post*width*0.36f,landing+0.53f,1.10f},
+                      (Vector3){0.075f,1.02f,0.08f},1);
+    }
+    AddFacadePart(batch,count,face,side,(Vector3){0,landing+1.02f,1.10f},
+                  (Vector3){width*0.78f,0.08f,0.08f},1);
+    // Recessed equipment bays above the landing: fans, louvers and access handles.
+    float bayY=landing+2.20f;
+    if(bayY+1.0f<height) for(int unit=-1;unit<=1;unit+=2) {
+        float u=(float)unit*width*0.22f;
+        AddFacadePart(batch,count,face,side,(Vector3){u,bayY,0.28f},(Vector3){1.38f,1.45f,0.54f},0);
+        for(int edge=-1;edge<=1;edge+=2) {
+            AddFacadePart(batch,count,face,side,(Vector3){u+edge*0.71f,bayY,0.47f},
+                          (Vector3){0.11f,1.60f,0.22f},2);
+        }
+        if((seed&1u)==0u) {
+            for(int blade=0;blade<12;blade++) {
+                float a=(float)blade*0.5235988f;
+                AddFacadePart(batch,count,face,side,
+                              (Vector3){u+cosf(a)*0.46f,bayY+sinf(a)*0.46f,0.58f},
+                              (Vector3){0.17f,0.17f,0.12f},1);
+            }
+            AddFacadePart(batch,count,face,side,(Vector3){u,bayY,0.60f},(Vector3){0.74f,0.08f,0.12f},1);
+            AddFacadePart(batch,count,face,side,(Vector3){u,bayY,0.60f},(Vector3){0.08f,0.74f,0.12f},1);
+            AddFacadePart(batch,count,face,side,(Vector3){u,bayY,0.70f},(Vector3){0.20f,0.20f,0.16f},3);
+        } else for(int slat=0;slat<8;slat++) {
+            AddFacadePart(batch,count,face,side,(Vector3){u,bayY-0.55f+slat*0.155f,0.58f},
+                          (Vector3){1.20f,0.055f,0.17f},1);
+        }
+    }
+    // Large, matte upper wall assemblies give the moving side skyline a
+    // readable hierarchy beyond the pixel-scale relief. Keep every layer
+    // close to the existing facade, never in the player's flight corridor.
+    if(height>14.0f&&width>4.2f) {
+        float crown=height-2.35f;
+        float span=width*0.84f;
+        AddFacadePart(batch,count,face,side,(Vector3){0,crown,0.17f},
+                      (Vector3){span,3.10f,0.19f},0);
+        AddFacadePart(batch,count,face,side,(Vector3){0,crown-1.54f,0.38f},
+                      (Vector3){span+0.32f,0.17f,0.44f},2);
+        AddFacadePart(batch,count,face,side,(Vector3){0,crown+1.55f,0.38f},
+                      (Vector3){span+0.46f,0.22f,0.48f},2);
+        for(int section=-1;section<=1;section++) {
+            float u=(float)section*span*0.32f;
+            AddFacadePart(batch,count,face,side,(Vector3){u,crown,0.33f},
+                          (Vector3){span*0.285f,2.68f,0.15f},section==0?0:2);
+            AddFacadePart(batch,count,face,side,(Vector3){u,crown+0.48f,0.44f},
+                          (Vector3){span*0.23f,0.07f,0.11f},1);
+            AddFacadePart(batch,count,face,side,(Vector3){u,crown-0.46f,0.44f},
+                          (Vector3){span*0.23f,0.07f,0.11f},1);
+            for(int fastener=-1;fastener<=1;fastener+=2)
+                AddFacadePart(batch,count,face,side,
+                              (Vector3){u+(float)fastener*span*0.125f,crown+1.12f,0.48f},
+                              (Vector3){0.10f,0.10f,0.10f},1);
+        }
+        for(int rail=-1;rail<=1;rail+=2) {
+            AddFacadePart(batch,count,face,side,(Vector3){(float)rail*span*0.51f,crown,0.38f},
+                          (Vector3){0.19f,3.55f,0.41f},1);
+            AddFacadePart(batch,count,face,side,(Vector3){(float)rail*span*0.46f,crown-1.83f,0.55f},
+                          (Vector3){0.46f,0.16f,0.50f},3);
+        }
+    }
+}
+
+static void AddDeckWorkshops(const EnvironmentSystem *env,double virtualPlayerZ,float16 *batch,int *count) {
+    for(int i=0;i<env->terrainCount&&*count<MAX_SERVICE_INSTANCES;i++) {
+        const TerrainInstance *t=&env->terrain[i];
+        float x=t->position.x,side=x<0?-1.0f:1.0f;
+        float top=t->position.y+t->size.y*0.5f;
+        float inner=fabsf(x)-t->size.x*0.5f;
+        if(inner<CONDUIT_PLAYER_MAX_X+2.0f||fabsf(x)>41||top< -0.15f||
+           t->position.z< -125||t->position.z>8) continue;
+        uint32_t seed=PaletteHash((uint32_t)llround(virtualPlayerZ-t->position.z)^env->runSeed^
+                                  (uint32_t)lroundf(x*16)*977u);
+        float railX=side*(inner+0.48f),z=t->position.z;
+        // Two supported coolant trunks, with individual flanges and couplings.
+        for(int pipe=0;pipe<2;pipe++) {
+            float px=side*(inner+1.0f+pipe*0.52f);
+            AddServicePart(batch,count,(Vector3){px,top+0.67f,z},(Vector3){0.32f,0.32f,14.2f},pipe?1:3);
+            for(int joint=-2;joint<=2;joint++) {
+                AddServicePart(batch,count,(Vector3){px,top+0.67f,z+joint*3.3f},
+                               (Vector3){0.44f,0.44f,0.14f},2);
+                AddServicePart(batch,count,(Vector3){px,top+0.25f,z+joint*3.3f},
+                               (Vector3){0.24f,0.50f,0.28f},0);
+            }
+        }
+        // Continuous handrail follows the safe outside edge, never the flight lane.
+        for(int post=-2;post<=2;post++) {
+            AddServicePart(batch,count,(Vector3){railX,top+0.83f,z+post*3.3f},
+                           (Vector3){0.10f,1.66f,0.10f},1);
+        }
+        AddServicePart(batch,count,(Vector3){railX,top+1.66f,z},(Vector3){0.10f,0.10f,14.1f},1);
+        AddServicePart(batch,count,(Vector3){railX,top+0.86f,z},(Vector3){0.075f,0.075f,14.1f},1);
+        if((seed&3u)==0) continue;
+        float cabinetX=side*(inner+3.0f),cz=z+2.6f;
+        AddServicePart(batch,count,(Vector3){cabinetX,top+0.13f,cz},(Vector3){2.3f,0.26f,3.4f},0);
+        AddServicePart(batch,count,(Vector3){cabinetX,top+1.1f,cz},(Vector3){1.9f,1.8f,2.65f},2);
+        // Heatsink slats, a hinged top, a dark recessed door, handles and fasteners.
+        for(int fin=0;fin<9;fin++) {
+            AddServicePart(batch,count,(Vector3){cabinetX-0.78f+fin*0.195f,top+2.06f,cz},
+                           (Vector3){0.06f,0.26f,2.45f},1);
+        }
+        AddServicePart(batch,count,(Vector3){cabinetX,top+1.15f,cz+1.35f},(Vector3){1.56f,1.48f,0.06f},0);
+        for(int latch=-1;latch<=1;latch+=2) {
+            AddServicePart(batch,count,(Vector3){cabinetX+latch*0.58f,top+1.10f,cz+1.45f},
+                           (Vector3){0.10f,0.35f,0.12f},1);
+            for(int screw=0;screw<4;screw++) {
+                AddServicePart(batch,count,(Vector3){cabinetX+latch*0.79f,top+0.50f+screw*0.42f,cz+1.40f},
+                               (Vector3){0.065f,0.065f,0.08f},1);
+            }
+        }
+    }
+}
+
+static void DrawServiceArchitecture(const EnvironmentSystem *env,double virtualPlayerZ) {
+    static float16 batch[MAX_SERVICE_INSTANCES];
+    int count=0;
+    AddDeckWorkshops(env,virtualPlayerZ,batch,&count);
+    for(int i=0;i<env->structureCount&&count<MAX_SERVICE_INSTANCES;i++) {
+        const EnvironmentStructure *s=&env->structures[i];
+        if(!s->active||s->type==STRUCT_BUS_CONDUIT||s->type==STRUCT_VOID) continue;
+        if(s->size.y<6.0f||s->size.x<2.7f||s->position.z< -145.0f||s->position.z>8.0f) continue;
+        if(fabsf(s->position.x)-s->size.x*0.5f<CONDUIT_PLAYER_MAX_X+1.0f) continue;
+        uint64_t wz=(uint64_t)llround((virtualPlayerZ-s->position.z)*8.0);
+        uint32_t key=(uint32_t)lroundf(s->position.x*16.0f)*UINT32_C(0x9e3779b9)^
+                     (uint32_t)wz^(uint32_t)(wz>>32);
+        uint32_t h=PaletteHash(key^env->runSeed);
+        float bottom=s->position.y-s->size.y*0.5f;
+        float front=s->position.z+s->size.z*0.5f+0.20f;
+        float x=s->position.x;
+        if(s->position.z> -110.0f&&s->size.y>9.0f&&s->size.x>4.0f) {
+            AddFacadeWorkshop(batch,&count,(Vector3){x,bottom,front},0,s->size.x,s->size.y,h);
+            int side=x<0?-1:1;
+            Vector3 face={x-(float)side*s->size.x*0.49f,bottom,s->position.z};
+            if(s->size.z>3.8f&&fabsf(x)-s->size.x*0.5f>=CONDUIT_PLAYER_MAX_X+1.5f)
+                AddFacadeWorkshop(batch,&count,face,side,s->size.z,s->size.y,h>>1);
+        }
+        if((h&3u)!=0u) {
+            // Recessed service cassettes: deep backing, frame, exposed pipes,
+            // radiator blades and a projecting weather hood.
+            float y=bottom+Clamp(s->size.y*0.32f,2.1f,5.8f);
+            float width=Clamp(s->size.x*0.26f,0.68f,1.50f);
+            float offset=s->size.x*0.24f;
+            for(int side=-1;side<=1;side+=2) {
+                float cx=x+(float)side*offset;
+                AddServicePart(batch,&count,(Vector3){cx,y,front},(Vector3){width,2.50f,0.24f},0);
+                for(int rail=-1;rail<=1;rail+=2) {
+                    AddServicePart(batch,&count,(Vector3){cx+(float)rail*width*0.52f,y,front+0.12f},
+                                   (Vector3){0.10f,2.70f,0.18f},1);
+                    AddServicePart(batch,&count,(Vector3){cx+(float)rail*width*0.72f,y-0.30f,front+0.03f},
+                                   (Vector3){0.11f,3.20f,0.14f},3);
+                }
+                for(int rib=0;rib<7;rib++) {
+                    AddServicePart(batch,&count,(Vector3){cx,y-0.96f+(float)rib*0.32f,front+0.24f},
+                                   (Vector3){width*0.90f,0.07f,0.20f},1);
+                }
+                AddServicePart(batch,&count,(Vector3){cx,y+1.36f,front+0.24f},
+                               (Vector3){width*1.28f,0.13f,0.70f},2);
+                AddServicePart(batch,&count,(Vector3){cx,y-1.38f,front+0.18f},
+                               (Vector3){width*1.24f,0.12f,0.47f},2);
+            }
+        } else {
+            // Load-bearing external frame with alternating diagonal members.
+            float frameHeight=Clamp(s->size.y*0.54f,3.8f,13.0f);
+            float half=s->size.x*0.37f;
+            float low=bottom+1.3f;
+            for(int side=-1;side<=1;side+=2) {
+                AddServicePart(batch,&count,(Vector3){x+(float)side*half,low+frameHeight*0.5f,front},
+                               (Vector3){0.18f,frameHeight,0.25f},1);
+            }
+            for(int bay=0;bay<4;bay++) {
+                float y=low+(float)bay*frameHeight/4.0f;
+                float sign=(bay&1)?-1.0f:1.0f;
+                AddServicePart(batch,&count,(Vector3){x,y,front},(Vector3){half*2.0f,0.12f,0.23f},1);
+                AddServiceBrace(batch,&count,(Vector3){x-half*sign,y,front+0.07f},
+                                (Vector3){x+half*sign,y+frameHeight/4.0f,front+0.07f},0.12f);
+            }
+        }
+        if(s->size.y>9.0f&&(h&7u)<5u) {
+            // Roof plant is offset from the existing penthouse. Distinct ribs,
+            // gasket gaps and exhaust stacks give it a readable mechanical scale.
+            float roof=s->position.y+s->size.y*0.5f+0.48f;
+            for(int unit=-1;unit<=1;unit+=2) {
+                Vector3 p={x+(float)unit*s->size.x*0.32f,roof+0.28f,s->position.z+s->size.z*0.27f};
+                AddServicePart(batch,&count,p,(Vector3){0.82f,0.55f,0.95f},0);
+                for(int fin=0;fin<6;fin++) {
+                    AddServicePart(batch,&count,(Vector3){p.x-0.32f+(float)fin*0.128f,p.y+0.05f,p.z},
+                                   (Vector3){0.042f,0.62f,1.02f},1);
+                }
+                AddServicePart(batch,&count,(Vector3){p.x,p.y+0.51f,p.z-0.10f},(Vector3){0.24f,0.48f,0.25f},3);
+            }
+        }
+    }
+    if(!count) return;
+    #ifdef RECURSION_RENDER_QA
+    static int recordedPeak=0;
+    if(count>recordedPeak) {
+        recordedPeak=count;
+        TraceLog(LOG_INFO,"DETAIL QA: service instances=%d cap=%d",count,MAX_SERVICE_INSTANCES);
+    }
+    #endif
+    Vector4 accent={0.06f,0.08f,0.10f,1.0f};
+    Vector3 body={0.028f,0.036f,0.044f};
+    int kind=17;
+    SetShaderValue(env->towerMaterial.shader,env->towerAccentLoc,&accent,SHADER_UNIFORM_VEC4);
+    SetShaderValue(env->towerMaterial.shader,env->towerBodyLoc,&body,SHADER_UNIFORM_VEC3);
+    SetShaderValue(env->towerMaterial.shader,env->towerKindLoc,&kind,SHADER_UNIFORM_INT);
+    DrawServiceBatch(env,batch,count);
+}
+
 void DrawEnvironment(const EnvironmentSystem *env, Camera3D camera, double virtualPlayerZ) {
-    (void)camera;
+    SetShaderValue(env->towerMaterial.shader, env->towerViewLoc, &camera.position, SHADER_UNIFORM_VEC3);
+    SetShaderValue(env->terrainMaterial.shader, env->terrainViewLoc, &camera.position, SHADER_UNIFORM_VEC3);
     (void)virtualPlayerZ;
 
     DrawTerrainBatch(env);
@@ -1888,6 +2266,7 @@ void DrawEnvironment(const EnvironmentSystem *env, Camera3D camera, double virtu
     DrawArchitectureDetailBatch(env, 9, virtualPlayerZ);
     DrawArchitectureDetailBatch(env, 10, virtualPlayerZ);
     DrawArchitectureDetailBatch(env, 11, virtualPlayerZ);
+    DrawServiceArchitecture(env,virtualPlayerZ);
     DrawArchitectureDetailBatch(env, 3, virtualPlayerZ);
     DrawArchitectureDetailBatch(env, 13, virtualPlayerZ);
     DrawArchitectureDetailBatch(env, 14, virtualPlayerZ);
@@ -1897,8 +2276,18 @@ void DrawEnvironment(const EnvironmentSystem *env, Camera3D camera, double virtu
 }
 
 void UnloadEnvironment(EnvironmentSystem *env) {
+    rlUnloadVertexBuffer(env->serviceInstancesVbo);
+    env->serviceInstancesVbo=0;
     UnloadMesh(env->unitCubeMesh);
     UnloadMesh(env->unitPrismMesh);
+    // UnloadMaterial would otherwise delete the shared atlas twice.
+    env->terrainMaterial.maps[MATERIAL_MAP_METALNESS].texture=(Texture2D){0};
+    env->towerMaterial.maps[MATERIAL_MAP_METALNESS].texture=(Texture2D){0};
+    env->towerMaterial.maps[MATERIAL_MAP_NORMAL].texture=(Texture2D){0};
+    UnloadTexture(env->detailAtlas);
+    UnloadTexture(env->facadeAtlas);
+    env->detailAtlas=(Texture2D){0};
+    env->facadeAtlas=(Texture2D){0};
     UnloadMaterial(env->terrainMaterial);
     UnloadMaterial(env->towerMaterial);
 }

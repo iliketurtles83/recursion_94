@@ -30,10 +30,12 @@ One seed compiles one coherent run identity — its own key, tempo, palette, ene
 1. **Seed selection:** the opening screen previews a 32-bit run seed (`Left/Right` ±1, `Up/Down` ±100), showing its minor key, BPM, palette, and demoscene identity before `Enter` compiles the run. `--seed N` / `--boss N` bypass the selector for testing.
 2. **Flight & combat:** `WASD`/arrows move the probe on X/Y across a 30-unit-wide lateral corridor (`x=-15..15`) while the camera leads the same transform. The unified weapon (`J` / left mouse) fires one straight ball along the reticle lane on releases ≤120ms, or acquires up to 4 (later 6) locked targets on longer holds for a homing volley.
 3. **Enemy pressure:** Drifters strafe and fire, Chasers telegraph a terminal dive, Splitters fire spreads and fracture into two Chasers on death. Regular enemies settle into a close `z=-22..-28` engagement band. Encounter size, spawn rate, archetype mix, and fire cadence scale with a capped `log1p(distance / 350)` difficulty curve, increasing pressure without inflating enemy health or erasing attack telegraphs.
-4. **Risk/reward loop:** boosting (`SPACE`) consumes Core Energy; taking a hit drains Energy and breaks the kill combo; kills restore Energy (charge multi-kills the most). Energy reaching zero ends the run (`R` resets).
+4. **Risk/reward loop:** boosting (`SPACE`) consumes one Core Energy per second, accelerates regular-enemy firing and arms enemy shots for mild bounded homing. Hits while actively boosting drain 20.7 Energy versus 18 normally; a timely maneuver can evade a committed missile. Taking a hit breaks the kill combo; kills restore Energy (charge multi-kills the most). Energy reaching zero from a hit ends the run (`R` resets). There is no separate hull meter.
 5. **Chain weapon evolution:** the live kill combo gates weapon tier — tap balls gain speed and damage, x8 raises charged lock capacity to six, and x12 boosts charged damage. Tap fire always remains one straight, non-homing ball. Any hit or an expired chain drops the tier back to Pulse.
-6. **Recursive Core boss:** arrives at a seed-randomized distance (~1,600–2,000+ units) for an invulnerable approach, then a multi-phase fight (see §8).
-7. **Escalating identity, not escalating tempo:** progress reveals more rhythmic/visual layers and increases arrangement density, but the seed's BPM never changes — boosting and combat intensity affect the mix, not the clock.
+6. **Five-round descent:** each round ends in a visually distinct boss: Recursive Core, Iron Bastion, Prism Wraith, Siege Mantis, then the Fractal Leviathan at the enlarged black hole (see §8). Ordinary clears continue in the same world; a Leviathan clear alone collapses and reseeds it.
+7. **Endless recursion:** after round 5, the campaign advances to the next recursion depth and begins another harder five-round cycle. Progress reveals more rhythmic/visual layers and pressure, but each seed's BPM stays fixed while that universe is active.
+
+**Pause and exit:** P or the lower-right on-screen pause button freezes gameplay and music. Esc asks for Yes/No confirmation instead of closing immediately; No resumes, while Yes exits. The same Esc confirmation works on the seed selector.
 
 ## 5. Procedural Environment
 
@@ -108,14 +110,15 @@ Rather than reacting purely to instantaneous game state, the arrangement now fol
 - **Feedback layers:** synthesized shot/impact/explosion/glitch cues paired with plasma-shell projectiles, impact flares, velocity-stretched debris, two-axis shockwaves, lock-on orbit rings, and edge-only damage vignettes (center stays readable). Camera kick and FOV widen on boost/hits for kinesthetic feedback without obscuring the play field.
 - **HUD:** compact corner-bracket panels and segmented meters for Energy/Score/Chain/Boss health; the control legend fades after the opening seconds.
 
-## 8. Leviathan (Recursive Core Boss) Implementation
+## 8. Recursive Core and Fractal Leviathan Implementation
 
-The boss encounter ("Recursive Core," internally the `BossState` in [src/gameplay.h](src/gameplay.h) / [src/gameplay.c](src/gameplay.c)) is a fully scripted state machine layered on top of the normal enemy pool — the core and its four firewall nodes are literal `Enemy` slots (`ENEMY_BOSS_CORE`, `ENEMY_BOSS_NODE`) driven by boss-specific position/AI logic each frame.
+Boss encounters are scripted state machines layered on top of the normal enemy pool. The core and its four firewall/horizon nodes are literal `Enemy` slots (`ENEMY_BOSS_CORE`, `ENEMY_BOSS_NODE`) driven by boss-specific position and attack logic each frame. All five rounds have different render-only chassis and HUD names; every fifth encounter also changes gameplay class to Fractal Leviathan.
 
 ### 8.1 Spawn & Encounter Setup
 
-- Triggered when `virtualPlayerZ >= boss->nextSpawnDistance` (first encounter ~1,600–2,000 units, later encounters scheduled 1,900–2,300 units after each loop transition).
+- Triggered when `virtualPlayerZ >= boss->nextSpawnDistance` (first encounter ~1,400–1,720 units; later rounds are scheduled roughly 1,270–1,890 units apart).
 - `SpawnBoss` clears all active enemies/projectiles/locks so the encounter reads as a deliberate arena, seeds an `encounterSeed` from the run seed and `encounterIndex`, and spawns one `ENEMY_BOSS_CORE` plus four `ENEMY_BOSS_NODE` shield satellites.
+- Encounter 5 in each cycle sets `leviathan`, enlarges the core and node hit geometry, moves the arena closer, and uses a much larger nested mechanical chassis against the nearest black-hole state.
 
 ### 8.2 Phase State Machine
 
@@ -123,12 +126,13 @@ The boss encounter ("Recursive Core," internally the `BossState` in [src/gamepla
 |---|---|---|
 | `BOSS_APPROACH` | Spawn | Invulnerable 2.6s entrance; camera pulls back/widens, boss glides to its arena position (`Approach` toward Z = −46). No firing. |
 | `BOSS_SHIELDED` | `phaseTime >= 2.6s` | Four firewall nodes orbit the core at radius ~8.35×4.65 (elliptical), rotating continuously; boss fires from whichever active node faces the player. |
-| `BOSS_EXPOSED` | All 4 `shieldNodes` destroyed | Core itself becomes the fire origin; armor petals visually spread (`plateSpread`). |
-| `BOSS_ENRAGED` | `shieldNodes == 0 && core.health <= 46% maxHealth` | Faster rotation, tighter fire cooldown, 5-shot spread, doubled reinforcement rate. |
+| `BOSS_EXPOSED` | All 4 `shieldNodes` destroyed | Core itself becomes the fire origin; the round-1 turbine petals visually spread (`plateSpread`). |
+| `BOSS_ENRAGED` | Nodes gone and core health ≤46% (≤52% for Leviathan) | Faster rotation, tighter fire cooldown, wider volleys and heavier reinforcement rate. |
+| `BOSS_SINGULARITY` | Leviathan only, core health ≤18% | Strongest gravity pull, fastest machinery, ten-shot alternating patterns and three reinforcements per wave. |
 
-- Firing pattern scales by phase: 2 shots (shielded) → 3 (exposed) → 5 (enraged), with fan spread and cooldown shrinking as `game.difficulty` rises (floored at 0.28s).
+- Recursive Core fire scales 2 → 3 → 5 shots. The Leviathan scales 4 → 6 → 8 → 10 and rotates among aimed fans, orbital crossfire and descending convergence formations; its cooldown floor is 0.24 seconds.
 - Reinforcements (1, or 2 when enraged) spawn periodically (`reinforcementTimer`, 3.4–3.8s normal / 2.7s enraged) as Drifters/Chasers, feeding kills back into the player's chain-weapon tier during the fight.
-- Defeat restores full Core Energy, awards a score bonus, and reschedules the next (harder) encounter farther down the track.
+- Any boss defeat restores Core Energy and awards a score bonus. Rounds 1–4 reschedule the next encounter in the same universe. The Leviathan alone starts the collapse, advances recursion depth, derives a new seed and restarts at round 1 without a victory ending.
 
 ### 8.3 Arrival Transition (Audiovisual)
 
@@ -138,12 +142,12 @@ The boss encounter ("Recursive Core," internally the `BossState` in [src/gamepla
 
 ### 8.4 Procedural Chassis (No Meshes/Assets)
 
-The boss body is assembled entirely from primitive draw calls (spheres, cylinders, quads) parented to a single moving anchor point, all mirrored between the gameplay draw pass and the HUD:
+The five boss bodies are assembled entirely from primitive draw calls (spheres, cylinders, quads) parented to their moving anchor points. `encounterIndex % 5` chooses the visual form and matching HUD name, so identities repeat across recursion depths:
 
-- **Core mass:** layered spheres (armor shell + inner panel) plus a central cylindrical hull segment and a tapered rear cap for an axial silhouette.
-- **Eight armor petals:** wedge-shaped quads with an inset panel layer, radial support spar, and occasional hardpoint (cylinder + sphere tip); petals physically rotate/spread outward in Exposed/Enraged rather than just changing brightness, so state reads through silhouette.
-- **Segmented maintenance halo:** a 12-segment ring built from short cylinders + joint spheres, with one rotating faint alignment trace.
-- **Concentric reactor housing:** nested cylinders narrowing toward a pulsing sphere core at the front face (pulse driven by beat/intensity).
-- **Four rear power modules:** cylindrical exhaust housings placed radially behind the petals to deepen the silhouette without adding extra light sources.
+- **Recursive Core:** the original rotating turbine with eight armored petals, exposed actuators, a segmented maintenance halo and concentric reactor housing.
+- **Iron Bastion:** a wide rectangular fortress with tall side bunkers, broad roof beam, service louvers and a recessed central target.
+- **Prism Wraith:** three long swept triangular blades around a faceted axial hull and small triangular iris.
+- **Siege Mantis:** narrow vertical body with two jointed arms and pincer blades.
+- **Fractal Leviathan:** an open black aperture surrounded by broken rings and twelve long articulated truss arms; it does not reuse the ordinary turbine core.
 - **Firewall node satellites:** each a small mechanically detailed enemy mesh orbiting the core, connected back to the core by faint tether cylinders drawn only while active.
 - All boss geometry uses the shared `craft.fs`/`craft.vs` directional-lighting shader with restrained rim lighting — no luminous outer shells — keeping the boss legible against the busy backdrop.

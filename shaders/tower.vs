@@ -22,6 +22,8 @@ uniform int uStructureKind;
 out vec3 fragPosition;
 out vec3 fragNormal;
 out vec3 fragLocalPos;
+out vec3 fragMaterialPos;
+out vec3 fragLocalNormal;
 out vec4 fragColor;
 out float fragDist;
 
@@ -50,6 +52,13 @@ void main()
         localPos.xz *= mix(1.035, 0.92, height01);
     }
     fragLocalPos = localPos;
+    // Undeformed, object-local meter coordinates keep the finish attached to
+    // the instanced structure, with the same texel scale on tall and wide parts.
+    vec3 dimensions = vec3(length(instanceTransform[0].xyz),
+                           length(instanceTransform[1].xyz),
+                           length(instanceTransform[2].xyz));
+    fragMaterialPos = (vertexPosition + 0.5) * dimensions;
+    fragLocalNormal = vertexNormal;
 
     // Transform normal to world space
     mat3 normalMatrix = transpose(inverse(mat3(instanceTransform)));
@@ -58,21 +67,13 @@ void main()
     // Apply instance transform matrix to vertex position (affine: 3x3 scale/rot + translation)
     vec4 worldPos = vec4(mat3(instanceTransform) * localPos + instanceTransform[3].xyz, 1.0);
 
-    // Audio-reactive structure breathing: subtle Y-axis scale on kick drum.
-    // Structures pulse outward from their base, stronger near the player.
-    float dist = max(-worldPos.z, 0.0);
-    float proximityFade = 1.0 - smoothstep(0.0, 120.0, dist);
-    float breathe = uBeatPulse * 0.04 * proximityFade;
-    worldPos.y *= 1.0 + breathe;
-    worldPos.xz *= 1.0 + breathe * 0.3;
-
     // Architecture is deliberately rigid. Temporal vertex displacement made
     // separately instanced roof pieces shear against their parent buildings
     // and created shimmer at long range. Motion remains in material effects,
     // atmosphere and the stationary-treadmill scroll instead.
 
     // Apply identical horizon curvature so instanced structures and floor bend together
-    dist = max(-worldPos.z, 0.0);
+    float dist = max(-worldPos.z, 0.0);
     worldPos.y -= CURVATURE_COEFF * dist * dist;
 
     // CPU-streamed world coordinates. Sparse silhouettes begin before the
@@ -81,6 +82,7 @@ void main()
     float fadeIn = smoothstep(-640.0, -448.0, worldPos.z);
     float fadeOut = 1.0 - smoothstep(12.0, 25.0, worldPos.z);
     float horizonFactor = fadeIn * fadeOut;
+    if(uStructureKind==17) horizonFactor*=smoothstep(-145.0,-112.0,worldPos.z);
 
     fragPosition = worldPos.xyz;
     // Repurpose instance transform 4th row slack as per-instance channel

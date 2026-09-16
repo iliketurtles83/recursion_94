@@ -1,7 +1,20 @@
 # REC_94 — Game Core Plan
 
 **Date:** 2026-09-07
-**Status:** Intended design, recorded to the record. Each point below was verified against the current codebase; the delta between intent and implementation is called out explicitly.
+**Status:** Implemented as an endless five-round recursion campaign on 2026-09-11.
+The older code audit below is retained as historical rationale; current release facts
+are recorded in `README.md` and `RECURSION_94_decisions_log.md`.
+
+## 0. Implementation outcome
+
+- Rounds 1–4 end in escalating Recursive Core fights and continue in the same world.
+- Round 5 reaches the enlarged fractal black hole and the Fractal Leviathan.
+- The Leviathan adds a much larger nested mechanical chassis, gravity pull, three
+  projectile formations, Enraged and final Singularity phases, and heavier reinforcements.
+- Defeating it does not end the game. The universe collapses, reseeds, advances one
+  recursion depth and starts a harder five-round cycle. This repeats indefinitely.
+- The HUD exposes depth, round and event-horizon proximity. Black-hole apparent size
+  grows each round and resets at the next depth.
 
 ---
 

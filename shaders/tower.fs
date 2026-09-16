@@ -3,6 +3,8 @@
 in vec3 fragPosition;
 in vec3 fragNormal;
 in vec3 fragLocalPos;
+in vec3 fragMaterialPos;
+in vec3 fragLocalNormal;
 in vec4 fragColor;
 in float fragDist;
 
@@ -19,6 +21,95 @@ uniform vec3 uSecondaryColor;
 uniform vec3 uHotColor;
 uniform vec3 uSkyHorizon;
 uniform int uStructureKind;
+uniform vec3 uViewPosition;
+uniform sampler2D uDetailAtlas;
+uniform int uDetailEnabled;
+uniform sampler2D uFacadeAtlas;
+uniform int uFacadeEnabled;
+
+float materialHash(ivec2 p) {
+    uint h=uint(p.x)*1597334677u^uint(p.y)*3812015801u^uint(uRunSeed);
+    h^=h>>16; h*=0x7feb352du; h^=h>>15; h*=0x846ca68bu;
+    return float((h^(h>>16))&65535u)/65535.0;
+}
+float materialBox(vec2 p,vec2 size,float aa) {
+    return 1.0-smoothstep(-aa,aa,max(abs(p.x)-size.x,abs(p.y)-size.y));
+}
+vec3 machinedSurface(vec3 n,vec3 viewDir) {
+    vec3 axis=abs(fragLocalNormal);
+    vec2 uv=axis.y>axis.x&&axis.y>axis.z?fragMaterialPos.xz:
+            (axis.x>axis.z?fragMaterialPos.zy:fragMaterialPos.xy);
+    float aa=max(max(fwidth(uv.x),fwidth(uv.y))*0.75,0.002);
+    float fine=1.0-smoothstep(0.065,0.22,aa);
+    float micro=1.0-smoothstep(0.018,0.07,aa);
+    float vertical=1.0-step(0.55,axis.y);
+    float facadeWeight=float(uFacadeEnabled)*vertical*
+        (1.0-smoothstep(0.22,1.35,aa));
+    vec2 motifUV=uv*0.32;
+    vec2 tile= uStructureKind==17 ? vec2(1.0,1.0) :
+               uStructureKind==16 ? vec2(0.0,1.0) :
+               uStructureKind==8 ? vec2(1.0,0.0) : vec2(0.0,0.0);
+    vec2 tileUV=(tile+clamp(fract(motifUV),vec2(0.004),vec2(0.996)))*0.5;
+    vec4 facade=uFacadeEnabled!=0 ? textureGrad(uFacadeAtlas,tileUV,
+        dFdx(motifUV)*0.5,dFdy(motifUV)*0.5) : vec4(0.5,0.5,0.25,0.1);
+    vec2 atlasUV=uv*0.25+vec2(float(uRunSeed&31)*0.03125,float((uRunSeed>>5)&31)*0.03125);
+    vec4 detail=uDetailEnabled!=0?texture(uDetailAtlas,atlasUV):vec4(0.5,0.5,0.5,0.0);
+    float weather=texture(uDetailAtlas,atlasUV*0.23+0.37).b*float(uDetailEnabled);
+    vec2 panelTile=vec2(1.6,2.4);
+    float row=floor(uv.y/panelTile.y);
+    vec2 panelUV=uv+vec2(mod(row,2.0)*0.8,0);
+    vec2 id=floor(panelUV/panelTile),f=fract(panelUV/panelTile)*panelTile;
+    float h=materialHash(ivec2(id));
+    vec2 edges=min(f,panelTile-f);
+    float edge=min(edges.x,edges.y);
+    float seam=(1.0-smoothstep(0.016,0.016+aa,edge))*fine;
+    float bevel=(1.0-smoothstep(0.055,0.055+aa,edge))*fine;
+    float subSeam=(1.0-smoothstep(0.009,0.009+aa,abs(f.x-0.53)))*step(0.52,h)*fine;
+    vec2 boltP=edges-vec2(0.11);
+    float bolt=(1.0-smoothstep(0.038,0.038+aa,length(boltP)))*fine;
+    float screw=(1.0-smoothstep(0.007,0.007+aa,abs(boltP.x+boltP.y)))*bolt;
+    float vent=materialBox(f-vec2(0.86,1.65),vec2(0.44,0.27),aa)*step(0.56,h)*fine;
+    float ribs=0.5+0.5*cos(f.y*62.8);
+    float hatch=materialBox(f-vec2(0.86,0.70),vec2(0.38,0.33),aa)*step(h,0.35)*fine;
+    float hatchInset=materialBox(f-vec2(0.86,0.70),vec2(0.33,0.28),aa)*hatch;
+    float handle=materialBox(f-vec2(1.10,0.72),vec2(0.024,0.11),aa)*hatch;
+    float label=materialBox(f-vec2(0.36,0.37),vec2(0.15,0.052),aa)*step(0.73,h)*fine;
+    float barcode=(0.2+0.8*step(0.5,fract(f.x*37.0)))*label;
+    // Rolled-metal grain and occasional short scratches, filtered when subpixel.
+    float grain=materialHash(ivec2(floor(uv*vec2(48,14))));
+    float scratch=(1.0-smoothstep(0.003,0.003+aa,abs(fract(uv.y*17.0)-0.5)/17.0))*
+                  step(0.92,materialHash(ivec2(floor(uv*vec2(6,17)))))*micro;
+    float grime=(bevel*0.14+vent*0.18+handle*0.4);
+    float height=-seam*0.026-bevel*0.014-subSeam*0.012-vent*(0.036+ribs*0.023)+
+                  bolt*0.015+hatch*0.009-hatchInset*0.016-handle*0.01;
+    height+=(detail.r-0.5)*0.032*fine+(facade.r-0.5)*0.095*facadeWeight;
+    vec3 dx=dFdx(fragPosition),dy=dFdy(fragPosition);
+    vec3 rx=cross(dy,n),ry=cross(n,dx);
+    float det=dot(dx,rx);
+    vec3 bumped=normalize(n*max(abs(det),1e-9)-sign(det)*(rx*dFdx(height)+ry*dFdy(height)));
+    vec3 paint=mix(vec3(0.19,0.215,0.245),uBodyColor*2.8,0.20)*(0.74+h*0.40);
+    paint*=1.0-seam*0.72-subSeam*0.45-grime;
+    paint*=1.0+(grain-0.5)*0.075*micro;
+    paint=mix(paint,vec3(0.021,0.026,0.033),vent*(0.5+ribs*0.35));
+    paint=mix(paint,vec3(0.18,0.20,0.22)*(1.0-screw*0.85),bolt);
+    paint+=vec3(0.09)*barcode+vec3(0.025)*scratch;
+    paint*=1.0-handle*0.6;
+    paint*=0.86+detail.g*0.24;
+    paint=mix(paint,paint*vec3(0.78,0.63,0.49),smoothstep(0.42,0.69,weather)*0.35);
+    paint+=vec3(0.032,0.030,0.026)*smoothstep(0.32,0.86,detail.a)*fine;
+    // The four facade tiles are stamped relief, not emission. They carry
+    // broad plate/vent silhouettes as well as individual scratches and pits.
+    paint*=1.0+facadeWeight*(facade.r-0.52)*0.52;
+    paint=mix(paint,paint*vec3(0.69,0.61,0.51),
+              facadeWeight*smoothstep(0.39,0.76,facade.b)*0.26);
+    paint+=facadeWeight*smoothstep(0.56,0.90,facade.a)*vec3(0.048,0.052,0.051);
+    vec3 light=normalize(vec3(-0.40,0.84,0.37));
+    float diffuse=max(dot(bumped,light),0.0);
+    float roughness=0.28+h*0.26+grime*0.15+detail.g*0.22+
+                    facadeWeight*(facade.g-0.5)*0.42;
+    float spec=pow(max(dot(bumped,normalize(light+viewDir)),0.0),mix(70.0,15.0,roughness));
+    return paint*(0.38+diffuse*0.73)+vec3(0.48,0.53,0.60)*spec*0.22*(1.0-seam);
+}
 
 int getGlyphBitmap(int idx) {
     idx = idx & 15;
@@ -110,7 +201,7 @@ vec3 renderMatrixRain(vec2 uv, float widthMeters, float heightMeters, float time
     vec3 screenBackdrop = uBodyColor * 0.14; // Pitch-dark charcoal terminal glass
     vec3 frameColor = textColor * (frameLine * 1.5);
 
-    return (screenBackdrop + charLit) * contentMask + frameColor;
+    return (screenBackdrop + charLit * 0.30) * contentMask + frameColor * 0.38;
 }
 
 vec3 renderBinaryFlow(vec2 uv, float widthMeters, float heightMeters, float time, float seedPhase, float phaseOffset, vec3 dataColor, vec3 headColor) {
@@ -181,7 +272,7 @@ vec3 renderBinaryFlow(vec2 uv, float widthMeters, float heightMeters, float time
     vec3 frameGlow = dataColor * (frameLine * 1.5);
     vec3 backdrop = uBodyColor * 0.14; // Pitch-dark obsidian backing
 
-    return (backdrop + charLit + trackGlow) * contentMask + frameGlow;
+    return (backdrop + charLit * 0.30 + trackGlow * 0.35) * contentMask + frameGlow * 0.38;
 }
 
 void main()
@@ -198,13 +289,20 @@ void main()
     float seedPhase = float(uint(uRunSeed) & 2047u) * 0.003067962;
 
     // View direction and smooth rim lighting
-    vec3 viewDir = normalize(-fragPosition);
+    vec3 viewDir = normalize(uViewPosition-fragPosition);
     float NdotV = max(dot(N, viewDir), 0.0);
     float rim = pow(1.0 - NdotV, 2.5);
 
     vec3 finalRGB;
 
-    if (uStructureKind == 5) {
+    if (uStructureKind == 17) {
+        vec3 finish=machinedSurface(N,viewDir);
+        int tag=int(fragColor.x+0.2);
+        if(tag==0) finish*=0.40;
+        else if(tag==1) finish*=1.14;
+        else if(tag==3) finish*=vec3(0.77,0.66,0.52);
+        finalRGB=finish;
+    } else if (uStructureKind == 5) {
         // Corridor-facing data placards rendered with 3x5 font Matrix data-rain
         vec2 signUV = abs(N.x) > 0.55 ? fragLocalPos.zy + 0.5
                                       : fragLocalPos.xy + 0.5;
@@ -241,7 +339,7 @@ void main()
 
         float edgePulse = sin(fragPosition.y * 2.0 - uTime * 5.0 + seedPhase) * 0.5 + 0.5;
         float smoothBox = pow(boxEdge, 1.4);
-        vec3 neonLines = neonColor * (boxEdge * 0.9 + smoothBox * 1.1) * (0.85 + edgePulse * 0.35);
+        vec3 neonLines = neonColor * (boxEdge * 0.18 + smoothBox * 0.30) * (0.85 + edgePulse * 0.15);
 
         // Memory slabs display falling matrix code exclusively on designated faces:
         // Corridor-facing inner side (faces toward the player corridor X=0)
@@ -251,7 +349,7 @@ void main()
 
         // Deterministic per-slab variation: stable across treadmill movement
         float slabSeed = fract(sin(floor(fragPosition.x * 0.25) * 127.1 +
-                                   floor((fragPosition.z + virtualPlayerZ) * 0.0625) * 311.7 +
+                                   floor((fragPosition.z - virtualPlayerZ) * 0.0625) * 311.7 +
                                    float(uRunSeed) * 0.017) * 43758.5453);
         int faceMode = int(fragColor.x + 0.2);
         if (faceMode == 0) {
@@ -321,7 +419,7 @@ void main()
 
         float edgePulse = sin(fragPosition.y * 2.0 - uTime * 5.0 + seedPhase) * 0.5 + 0.5;
         float smoothPrism = pow(prismEdge, 1.4);
-        vec3 neonLines = neonColor * (prismEdge * 0.9 + smoothPrism * 1.1) * (0.85 + edgePulse * 0.35);
+        vec3 neonLines = neonColor * (prismEdge * 0.18 + smoothPrism * 0.30) * (0.85 + edgePulse * 0.15);
 
         // Corridor-facing side and oncoming front face
         bool isCorridorFace = (fragPosition.x < 0.0 ? N.x > 0.35 : N.x < -0.35);
@@ -329,7 +427,7 @@ void main()
 
         // Deterministic per-tower activation & face selection
         float towerSeed = fract(sin(floor(fragPosition.x * 0.25) * 113.5 +
-                                   floor((fragPosition.z + virtualPlayerZ) * 0.0625) * 271.9 +
+                                   floor((fragPosition.z - virtualPlayerZ) * 0.0625) * 271.9 +
                                    float(uRunSeed) * 0.031) * 43758.5453);
         int faceMode = 0;
         if (towerSeed < 0.70) {
@@ -498,7 +596,7 @@ void main()
         float smoothPulse = pow(pulseWave1, 2.5) * 0.65 + pow(pulseWave2, 3.5) * 0.35;
 
         // Pulse energy: luminous glowing packet traveling inside the dark pipe
-        vec3 pulseEnergy = mix(neonColor, vec3(0.90, 0.98, 1.0), 0.75) * smoothPulse * 0.90;
+        vec3 pulseEnergy = mix(neonColor, vec3(0.90, 0.98, 1.0), 0.22) * smoothPulse * 0.34;
 
         // Reuse streamCoord as the scroll axis for hash-based glyphs; cross-coordinate aligns
         // with the conduit cross-section across X, Y, or Z spans
@@ -509,14 +607,20 @@ void main()
         int charIdx = int(abs(glyphCode * 16.0)) % 16;
         vec2 glyphWithin = vec2(fract((crossCoord + 0.5) * 5.0), fract(streamCoord * 18.0));
         float glyph = evaluateGlyph(charIdx, glyphWithin);
-        vec3 glyphColor = mix(neonColor, vec3(0.75, 0.95, 1.0), 0.6) * glyph * smoothPulse * 0.60;
+        vec3 glyphColor = mix(neonColor, vec3(0.75, 0.95, 1.0), 0.35) * glyph * smoothPulse * 0.28;
 
         float boostCarrier = pow(max(sin(streamCoord * 31.4159 + seedPhase), 0.0), 9.0);
-        float conduitEdge = smoothstep(0.440, 0.485, max(abs(fragLocalPos.x), max(abs(fragLocalPos.y), abs(fragLocalPos.z))));
-        vec3 edgeGlow = neonColor * conduitEdge * 0.40;
+        // An edge needs TWO coordinates near the boundary. The previous max
+        // test illuminated every surface, making overhead spans solid white.
+        vec3 edgePos = abs(fragLocalPos);
+        float secondLargest = edgePos.x + edgePos.y + edgePos.z -
+                              max(edgePos.x,max(edgePos.y,edgePos.z)) -
+                              min(edgePos.x,min(edgePos.y,edgePos.z));
+        float conduitEdge = smoothstep(0.435, 0.485, secondLargest);
+        vec3 edgeGlow = neonColor * conduitEdge * 0.46;
 
         finalRGB = tubeBase + pulseEnergy + glyphColor + edgeGlow +
-                   uSecondaryColor * boostCarrier * uIntensity * 0.25;
+                   uSecondaryColor * boostCarrier * uIntensity * 0.12;
     } else {
         // =====================================================================
         // DIGITAL GLASS MONOLITH & ARCHITECTURAL DETAILS (Podiums, Pilasters)
@@ -559,7 +663,7 @@ void main()
         
         // Wireframe lines
         float edgePulse = sin(fragPosition.y * 2.0 - uTime * 5.0 + seedPhase) * 0.5 + 0.5;
-        float lineStrength = mix(1.1, 0.50, structuralDetail);
+        float lineStrength = mix(0.30, 0.15, structuralDetail);
         float smoothFactor = pow(edgeFactor, 1.4);
         vec3 neonLines = neonColor * (edgeFactor * lineStrength * 0.8 + smoothFactor * lineStrength * 1.0) * (0.85 + edgePulse * 0.35);
 
@@ -568,8 +672,17 @@ void main()
         finalRGB = baseBody + neonLines + neonColor * (edgeSpec + edgeRim);
     }
 
-    // Atmospheric horizon fog blending to dark palette horizon
+    // The detail comes from lit relief/albedo/roughness, never an emissive overlay.
+    if (uStructureKind <= 4 || uStructureKind == 8 || uStructureKind == 16) {
+        vec3 surface=machinedSurface(N,viewDir);
+        float luminous=smoothstep(0.12,0.52,max(finalRGB.r,max(finalRGB.g,finalRGB.b)));
+        finalRGB=mix(surface+finalRGB*0.10,finalRGB,luminous*0.90);
+    }
+    // Distance haze separates the near architecture from successive skyline layers.
     vec3 fogColor = mix(uBodyColor * 0.6, uSkyHorizon, 0.25 + uIntensity * 0.20);
+    fogColor += uPrimaryColor * 0.033;
+    float aerial = 1.0-exp(-max(-fragPosition.z-30.0,0.0)*0.004);
+    finalRGB = mix(finalRGB,fogColor,aerial*0.72);
     float fogFactor = clamp(fragDist, 0.0, 1.0);
     finalRGB = mix(fogColor, finalRGB, fogFactor);
 

@@ -11,6 +11,7 @@
 #define MAX_COMBAT_PARTICLES 96
 #define MAX_LOCK_TARGETS 6
 #define CORE_TRANSITION_DURATION 5.2f
+#define BOSSES_PER_RECURSION 5
 #define MAX_CHAIN_LINKS 100
 #define BEAM_LINK_COST 50
 #define BOMB_LINK_COST 100
@@ -51,6 +52,7 @@ typedef struct {
     Vector3 position;
     Vector3 velocity;
     float life;
+    bool homing; // Mild boost guidance; retains lock until the shot expires.
     bool active;
 } EnemyProjectile;
 
@@ -98,6 +100,7 @@ typedef struct {
     bool weaponTierAdvanced;
     bool bossStarted;
     bool bossDefeated;
+    bool recursionCompleted;
 } GameplayEvents;
 
 typedef enum {
@@ -105,7 +108,8 @@ typedef enum {
     BOSS_APPROACH,
     BOSS_SHIELDED,
     BOSS_EXPOSED,
-    BOSS_ENRAGED
+    BOSS_ENRAGED,
+    BOSS_SINGULARITY
 } BossPhase;
 
 typedef struct {
@@ -122,7 +126,9 @@ typedef struct {
     int nodeSlots[4];
     int shieldNodes;
     int encounterIndex;
+    int attackPattern;
     BossPhase phase;
+    bool leviathan;
     bool active;
 } BossState;
 
@@ -164,6 +170,8 @@ typedef struct {
 
 void InitGameplay(GameplaySystem *game, uint32_t runSeed);
 void AdvanceGameplayLoop(GameplaySystem *game, uint32_t runSeed, double virtualPlayerZ);
+int GetGameplayRound(const GameplaySystem *game);
+int GetGameplayRecursionDepth(const GameplaySystem *game);
 bool CanGameplayBoost(const GameplaySystem *game);
 float GetGameplayTravelSpeed(const GameplaySystem *game, double virtualPlayerZ,
                              bool boosting);
@@ -171,7 +179,7 @@ GameplayEvents UpdateGameplay(GameplaySystem *game, float dt, double virtualPlay
                               bool boosting);
 void UpdateGameplayCamera(const GameplaySystem *game, Camera3D *camera, float dt, bool boosting);
 void DrawGameplay3D(const GameplaySystem *game, Shader craftShader, int objectClassLoc,
-                    int enemyTypeLoc);
+                    int enemyTypeLoc, int objectOriginLoc);
 void DrawGameplayHUD(const GameplaySystem *game, Camera3D camera, int screenWidth, int screenHeight);
 bool ValidateGameplaySpecials(void);
 

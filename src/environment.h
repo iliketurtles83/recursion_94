@@ -68,9 +68,13 @@ typedef struct {
 
     Mesh unitCubeMesh;
     Mesh unitPrismMesh;
+    unsigned int serviceInstancesVbo;
+    Texture2D detailAtlas; // Shared material map; environment owns it exactly once.
+    Texture2D facadeAtlas; // Side-architecture relief and wear; same single-owner rule.
     Material towerMaterial;
     int towerScrollLoc;
     int towerTimeLoc;
+    int towerViewLoc;
     int towerIntensityLoc;
     int towerSeedLoc;
     int towerPrimaryLoc;
@@ -84,6 +88,8 @@ typedef struct {
 
     Material terrainMaterial;
     int terrainTimeLoc;
+    int terrainViewLoc;
+    int terrainScrollLoc;
     int terrainIntensityLoc;
     int terrainSeedLoc;
     int terrainPrimaryLoc;

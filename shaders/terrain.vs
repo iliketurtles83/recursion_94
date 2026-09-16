@@ -12,6 +12,7 @@ uniform mat4 matView;
 out vec3 fragPosition;
 out vec3 fragNormal;
 out vec3 fragLocalPos;
+out vec3 fragMaterialPos;
 out float fragFade;
 
 const float CURVATURE_COEFF = 0.00035;
@@ -19,6 +20,7 @@ const float CURVATURE_COEFF = 0.00035;
 void main()
 {
     vec4 worldPos = instanceTransform * vec4(vertexPosition, 1.0);
+    fragMaterialPos = worldPos.xyz;
     mat3 normalMatrix = transpose(inverse(mat3(instanceTransform)));
 
     float dist = max(-worldPos.z, 0.0);

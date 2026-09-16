@@ -1,4 +1,5 @@
 #include "raylib.h"
+#include "rlgl.h"
 #include "palette.h"
 #include "environment.h"
 #include "audio_synth.h"
@@ -21,11 +22,18 @@ typedef struct {
     int seedLoc;
     int primaryLoc;
     int secondaryLoc;
+    int depthLoc;
+    int contactEnabledLoc;
+    int clipLoc;
+    int projectionLoc;
+    bool sampleableDepth;
     Shader craftShader;
     int craftTimeLoc;
     int craftIntensityLoc;
     int craftObjectClassLoc;
     int craftEnemyTypeLoc;
+    int craftOriginLoc;
+    int craftViewLoc;
     int craftPrimaryLoc;
     int craftSecondaryLoc;
     int craftThreatLoc;
@@ -88,9 +96,32 @@ static void SetPostProcessTheme(PostProcessSystem *post, uint32_t seed,
     }
 }
 
+static RenderTexture2D LoadSceneTarget(int width, int height, bool *sampleable) {
+    RenderTexture2D target = {0};
+    *sampleable = false;
+    target.id = rlLoadFramebuffer();
+    if (target.id) {
+        target.texture = (Texture2D){rlLoadTexture(NULL,width,height,PIXELFORMAT_UNCOMPRESSED_R8G8B8A8,1),
+                                    width,height,1,PIXELFORMAT_UNCOMPRESSED_R8G8B8A8};
+        target.depth = (Texture2D){rlLoadTextureDepth(width,height,false),width,height,1,19};
+        rlFramebufferAttach(target.id,target.texture.id,RL_ATTACHMENT_COLOR_CHANNEL0,RL_ATTACHMENT_TEXTURE2D,0);
+        rlFramebufferAttach(target.id,target.depth.id,RL_ATTACHMENT_DEPTH,RL_ATTACHMENT_TEXTURE2D,0);
+        if (rlFramebufferComplete(target.id)) {
+            *sampleable = true;
+            SetTextureFilter(target.depth,TEXTURE_FILTER_POINT);
+            SetTextureWrap(target.depth,TEXTURE_WRAP_CLAMP);
+            TraceLog(LOG_INFO,"RENDER: sampleable scene depth ready (%dx%d)",width,height);
+            return target;
+        }
+        UnloadRenderTexture(target); // Raylib owns and deletes the attached depth texture.
+    }
+    TraceLog(LOG_WARNING,"RENDER: contact shading unavailable; using standard scene target");
+    return LoadRenderTexture(width,height);
+}
+
 static void InitPostProcess(PostProcessSystem *post, int width, int height,
                             uint32_t seed, const DemosceneSystem *demo) {
-    post->target = LoadRenderTexture(width, height);
+    post->target = LoadSceneTarget(width, height, &post->sampleableDepth);
     SetTextureFilter(post->target.texture, TEXTURE_FILTER_BILINEAR);
     post->shader = LoadShaderFromMemory(NULL, (const char *)shader_post_fs);
     post->timeLoc = GetShaderLocation(post->shader, "uTime");
@@ -101,6 +132,14 @@ static void InitPostProcess(PostProcessSystem *post, int width, int height,
     post->seedLoc = GetShaderLocation(post->shader, "uRunSeed");
     post->primaryLoc = GetShaderLocation(post->shader, "uPrimaryColor");
     post->secondaryLoc = GetShaderLocation(post->shader, "uSecondaryColor");
+    post->depthLoc = GetShaderLocation(post->shader, "uSceneDepth");
+    post->contactEnabledLoc = GetShaderLocation(post->shader, "uContactEnabled");
+    post->clipLoc = GetShaderLocation(post->shader, "uClipPlanes");
+    post->projectionLoc = GetShaderLocation(post->shader, "uProjectionScale");
+    int contactEnabled = post->sampleableDepth ? 1 : 0;
+    SetShaderValue(post->shader,post->contactEnabledLoc,&contactEnabled,SHADER_UNIFORM_INT);
+    Vector2 clip = {(float)rlGetCullDistanceNear(),(float)rlGetCullDistanceFar()};
+    SetShaderValue(post->shader,post->clipLoc,&clip,SHADER_UNIFORM_VEC2);
     Vector2 resolution = { (float)width, (float)height };
     SetShaderValue(post->shader, resolutionLoc, &resolution, SHADER_UNIFORM_VEC2);
 
@@ -109,6 +148,8 @@ static void InitPostProcess(PostProcessSystem *post, int width, int height,
     post->craftIntensityLoc = GetShaderLocation(post->craftShader, "uIntensity");
     post->craftObjectClassLoc = GetShaderLocation(post->craftShader, "uObjectClass");
     post->craftEnemyTypeLoc = GetShaderLocation(post->craftShader, "uEnemyType");
+    post->craftOriginLoc = GetShaderLocation(post->craftShader, "uObjectOrigin");
+    post->craftViewLoc = GetShaderLocation(post->craftShader, "uViewPosition");
     post->craftPrimaryLoc = GetShaderLocation(post->craftShader, "uPrimaryColor");
     post->craftSecondaryLoc = GetShaderLocation(post->craftShader, "uSecondaryColor");
     post->craftThreatLoc = GetShaderLocation(post->craftShader, "uThreatColor");
@@ -131,7 +172,8 @@ static void InitPostProcess(PostProcessSystem *post, int width, int height,
                   post->craftShader.id != 0 && post->backdropShader.id != 0;
 }
 
-static void BeginCraftPass(PostProcessSystem *post, float time, float intensity) {
+static void BeginCraftPass(PostProcessSystem *post, float time, float intensity, Vector3 eye) {
+    SetShaderValue(post->craftShader, post->craftViewLoc, &eye, SHADER_UNIFORM_VEC3);
     SetShaderValue(post->craftShader, post->craftTimeLoc, &time, SHADER_UNIFORM_FLOAT);
     SetShaderValue(post->craftShader, post->craftIntensityLoc, &intensity,
                    SHADER_UNIFORM_FLOAT);
@@ -154,13 +196,17 @@ static void DrawRaymarchBackdrop(PostProcessSystem *post, float time, float inte
 
 static void DrawPostProcess(PostProcessSystem *post, float time, float intensity,
                             float beatPulse, float bossTransition,
-                            int width, int height) {
+                            int width, int height, float fovy) {
+    float tangent = tanf(fovy * 0.00872664626f);
+    Vector2 projectionScale = {tangent*(float)width/(float)height,tangent};
+    SetShaderValue(post->shader,post->projectionLoc,&projectionScale,SHADER_UNIFORM_VEC2);
     SetShaderValue(post->shader, post->timeLoc, &time, SHADER_UNIFORM_FLOAT);
     SetShaderValue(post->shader, post->intensityLoc, &intensity, SHADER_UNIFORM_FLOAT);
     SetShaderValue(post->shader, post->beatLoc, &beatPulse, SHADER_UNIFORM_FLOAT);
     SetShaderValue(post->shader, post->bossTransitionLoc, &bossTransition,
                    SHADER_UNIFORM_FLOAT);
     BeginShaderMode(post->shader);
+        if (post->sampleableDepth) SetShaderValueTexture(post->shader,post->depthLoc,post->target.depth);
         DrawTextureRec(post->target.texture,
                        (Rectangle){ 0.0f, 0.0f, (float)width, (float)-height },
                        (Vector2){ 0.0f, 0.0f }, WHITE);
@@ -174,6 +220,63 @@ static void UnloadPostProcess(PostProcessSystem *post) {
     UnloadShader(post->shader);
     UnloadRenderTexture(post->target);
     post->ready = false;
+}
+
+typedef enum { MENU_NONE, MENU_PAUSED, MENU_QUIT_CONFIRM } MenuMode;
+
+static Rectangle PauseControl(int width, int height) {
+    return (Rectangle){ (float)(width-128), (float)(height-92), 108.0f, 34.0f };
+}
+
+static Rectangle MenuControl(int width, int height, bool right) {
+    float x=(float)width*0.5f+(right?11.0f:-173.0f);
+    return (Rectangle){x,(float)height*0.5f+49.0f,162.0f,39.0f};
+}
+
+static void DrawMenuControl(Rectangle bounds, const char *label, Color accent) {
+    bool hovered=CheckCollisionPointRec(GetMousePosition(),bounds);
+    DrawRectangleRec(bounds,hovered?(Color){37,55,67,245}:(Color){19,31,42,245});
+    DrawRectangleLinesEx(bounds,1.0f,accent);
+    DrawText(label,(int)(bounds.x+(bounds.width-MeasureText(label,17))*0.5f),
+             (int)bounds.y+11,17,hovered?RAYWHITE:accent);
+}
+
+static void DrawPauseControl(int width, int height) {
+    Rectangle bounds=PauseControl(width,height);
+    DrawMenuControl(bounds,"II PAUSE",(Color){136,193,204,235});
+}
+
+static void DrawMenuOverlay(MenuMode mode,int width,int height) {
+    DrawRectangle(0,0,width,height,(Color){2,5,11,190});
+    int panelX=width/2-223, panelY=height/2-117;
+    DrawRectangle(panelX,panelY,446,228,(Color){10,18,28,248});
+    DrawRectangleLines(panelX,panelY,446,228,(Color){89,150,164,245});
+    DrawRectangle(panelX+16,panelY+16,414,2,(Color){72,121,135,220});
+    const char *heading=mode==MENU_PAUSED?"GAME PAUSED":"QUIT THE GAME?";
+    const char *subtext=mode==MENU_PAUSED
+        ? "THE RUN AND MUSIC ARE FROZEN"
+        : "UNSAVED RUN PROGRESS WILL BE LOST";
+    DrawText(heading,width/2-MeasureText(heading,27)/2,panelY+38,27,
+             (Color){205,232,235,255});
+    DrawText(subtext,width/2-MeasureText(subtext,15)/2,panelY+86,15,
+             (Color){139,180,190,235});
+    if(mode==MENU_PAUSED) {
+        DrawMenuControl(MenuControl(width,height,false),"RESUME",
+                        (Color){125,211,197,255});
+        DrawMenuControl(MenuControl(width,height,true),"QUIT...",
+                        (Color){219,155,155,255});
+        const char *hint="P / ENTER TO RESUME  //  ESC TO QUIT";
+        DrawText(hint,width/2-MeasureText(hint,12)/2,panelY+207,12,
+                 (Color){105,151,164,225});
+    } else {
+        DrawMenuControl(MenuControl(width,height,false),"YES, QUIT",
+                        (Color){223,142,142,255});
+        DrawMenuControl(MenuControl(width,height,true),"NO, RESUME",
+                        (Color){125,211,197,255});
+        const char *hint="ENTER / Y: QUIT  //  ESC / N: RESUME";
+        DrawText(hint,width/2-MeasureText(hint,12)/2,panelY+207,12,
+                 (Color){105,151,164,225});
+    }
 }
 #endif
 
@@ -216,6 +319,9 @@ int main(int argc, char **argv) {
         TraceLog(LOG_ERROR, "Unable to initialize the graphics window");
         return 1;
     }
+    // Raylib normally treats Escape as an unconditional window-close key.
+    // Route it through our confirmation state instead.
+    SetExitKey(KEY_NULL);
 
     Camera3D camera = { 0 };
     camera.position = (Vector3){ 0.0f, 5.5f, 8.0f };
@@ -265,10 +371,17 @@ int main(int argc, char **argv) {
     DemosceneSystem transitionFromDemo = { 0 };
     DemosceneSystem transitionToDemo = { 0 };
     bool debugOverlay = false;
+    MenuMode menuMode = MENU_NONE;
+    bool quitConfirmed = false;
+    float musicIntensity = 0.24f;
+    float beatPulse = 0.0f;
+    float currentSpeed = 0.0f;
+    float bossTransition = 0.0f;
+    SynthTelemetry audioTelemetry = { 0 };
 
     SetTargetFPS(60);
 
-    while (!WindowShouldClose()) {
+    while (!WindowShouldClose() && !quitConfirmed) {
         float dt = GetFrameTime();
 
         if (IsKeyPressed(KEY_F)) ToggleFullscreen();
@@ -284,14 +397,51 @@ int main(int argc, char **argv) {
             }
         }
 
-        if (!runStarted) {
-            selectorTime += dt;
-            if (IsKeyPressed(KEY_LEFT)) selectedSeed -= 1u;
-            if (IsKeyPressed(KEY_RIGHT)) selectedSeed += 1u;
-            if (IsKeyPressed(KEY_UP)) selectedSeed += 100u;
-            if (IsKeyPressed(KEY_DOWN)) selectedSeed -= 100u;
+        bool clicked=IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
+        Vector2 mouse=GetMousePosition();
+        bool resumedThisFrame=false;
+        if(menuMode==MENU_QUIT_CONFIRM) {
+            if(IsKeyPressed(KEY_Y)||IsKeyPressed(KEY_ENTER)||IsKeyPressed(KEY_KP_ENTER)||
+               (clicked&&CheckCollisionPointRec(mouse,MenuControl(renderWidth,renderHeight,false)))) {
+                quitConfirmed=true;
+                continue;
+            }
+            if(IsKeyPressed(KEY_N)||IsKeyPressed(KEY_ESCAPE)||
+               (clicked&&CheckCollisionPointRec(mouse,MenuControl(renderWidth,renderHeight,true)))) {
+                menuMode=MENU_NONE;
+                resumedThisFrame=true;
+                if(runStarted) ResumeAudioStream(synth.stream);
+            }
+        } else if(menuMode==MENU_PAUSED) {
+            if(IsKeyPressed(KEY_ESCAPE)||
+               (clicked&&CheckCollisionPointRec(mouse,MenuControl(renderWidth,renderHeight,true)))) {
+                menuMode=MENU_QUIT_CONFIRM;
+            } else if(IsKeyPressed(KEY_P)||IsKeyPressed(KEY_ENTER)||IsKeyPressed(KEY_KP_ENTER)||
+                      (clicked&&CheckCollisionPointRec(mouse,MenuControl(renderWidth,renderHeight,false)))) {
+                menuMode=MENU_NONE;
+                resumedThisFrame=true;
+                ResumeAudioStream(synth.stream);
+            }
+        } else if(IsKeyPressed(KEY_ESCAPE)) {
+            menuMode=MENU_QUIT_CONFIRM;
+            if(runStarted) PauseAudioStream(synth.stream);
+        } else if(runStarted&&(IsKeyPressed(KEY_P)||
+                  (clicked&&CheckCollisionPointRec(mouse,PauseControl(renderWidth,renderHeight))))) {
+            menuMode=MENU_PAUSED;
+            PauseAudioStream(synth.stream);
+        }
 
-            if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER)) {
+        if (!runStarted) {
+            if(menuMode==MENU_NONE && !resumedThisFrame) {
+                selectorTime += dt;
+                if (IsKeyPressed(KEY_LEFT)) selectedSeed -= 1u;
+                if (IsKeyPressed(KEY_RIGHT)) selectedSeed += 1u;
+                if (IsKeyPressed(KEY_UP)) selectedSeed += 100u;
+                if (IsKeyPressed(KEY_DOWN)) selectedSeed -= 100u;
+            }
+
+            if (menuMode==MENU_NONE && !resumedThisFrame &&
+                (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER))) {
                 activeSeed = selectedSeed;
                 InitEnvironment(&env, activeSeed);
                 InitAudioSynth(&synth, activeSeed);
@@ -310,10 +460,12 @@ int main(int argc, char **argv) {
                                  GetSynthSeedBpm(selectedSeed),
                                  GetSynthSeedKeyName(selectedSeed),
                                  renderWidth, renderHeight);
+                if(menuMode!=MENU_NONE) DrawMenuOverlay(menuMode,renderWidth,renderHeight);
             EndDrawing();
             continue;
         }
 
+        if(menuMode==MENU_NONE && !resumedThisFrame) {
         if (game.gameOver && IsKeyPressed(KEY_R)) {
             activeSeed = selectedSeed;
             InitGameplay(&game, activeSeed);
@@ -332,7 +484,7 @@ int main(int argc, char **argv) {
         if (IsKeyPressed(KEY_F3)) debugOverlay = !debugOverlay;
 
         bool boosting = IsKeyDown(KEY_SPACE) && CanGameplayBoost(&game);
-        float currentSpeed = game.gameOver || seedTransitionPending
+        currentSpeed = game.gameOver || seedTransitionPending
             ? 0.0f : GetGameplayTravelSpeed(&game, virtualPlayerZ, boosting);
         virtualPlayerZ += currentSpeed * dt;
 
@@ -360,13 +512,18 @@ int main(int argc, char **argv) {
             TriggerSynthSFX(&synth, SFX_BOSS_RISER);
         }
         if (gameplayEvents.bossDefeated) {
-            pendingSeed = DeriveLoopSeed(selectedSeed, game.boss.encounterIndex);
+            TriggerSynthSFX(&synth, SFX_CORE_COLLAPSE);
+        }
+        if (gameplayEvents.recursionCompleted) {
+            int completedRecursions = game.boss.encounterIndex / BOSSES_PER_RECURSION;
+            pendingSeed = DeriveLoopSeed(selectedSeed, completedRecursions);
             transitionFromDemo = demo;
             InitDemoscene(&transitionToDemo, pendingSeed);
             coreTransitionTimer = CORE_TRANSITION_DURATION;
             seedTransitionPending = true;
             seedTransitionCommitted = false;
-            TriggerSynthSFX(&synth, SFX_CORE_COLLAPSE);
+        } else if (gameplayEvents.bossDefeated) {
+            TriggerSynthSFX(&synth, SFX_POWER_UP);
         }
         if (seedTransitionPending) {
             coreTransitionTimer = fmaxf(0.0f, coreTransitionTimer - dt);
@@ -394,10 +551,11 @@ int main(int argc, char **argv) {
 
         // Tempo is fixed per seed once the intro ramp completes. Progress,
         // combat and boost instead reveal more rhythmic and visual layers.
-        float musicIntensity = 0.24f + game.difficulty * 0.20f;
+        musicIntensity = 0.24f + game.difficulty * 0.20f;
         musicIntensity += fminf((float)game.combo * 0.018f, 0.12f);
         if (boosting) musicIntensity += 0.48f;
-        if (game.boss.active) musicIntensity += game.boss.phase == BOSS_ENRAGED ? 0.24f : 0.14f;
+        if (game.boss.active) musicIntensity += game.boss.phase == BOSS_SINGULARITY ? 0.30f
+                                                   : game.boss.phase == BOSS_ENRAGED ? 0.24f : 0.14f;
 
         // Quiet hush in the stretch before the boss spawns - snaps off the
         // instant the fight starts, giving the drop somewhere to land.
@@ -432,6 +590,8 @@ int main(int argc, char **argv) {
                 bossMusicIntensity = 0.84f;
             } else if (game.boss.phase == BOSS_ENRAGED) {
                 bossMusicIntensity = 1.0f;
+            } else if (game.boss.phase == BOSS_SINGULARITY) {
+                bossMusicIntensity = 1.0f;
             }
         }
 
@@ -442,13 +602,14 @@ int main(int argc, char **argv) {
                         musicArrangementDistance, preBossHush);
         UpdateGameplayCamera(&game, &camera, dt, boosting);
 
-        SynthTelemetry audioTelemetry = GetSynthTelemetry(&synth);
-        float beatPulse = audioTelemetry.beatPulse;
+        audioTelemetry = GetSynthTelemetry(&synth);
+        beatPulse = audioTelemetry.beatPulse;
         UpdateEnvironment(&env, virtualPlayerZ, game.runTime, musicIntensity, beatPulse);
 
-        float bossTransition = 0.0f;
+        bossTransition = 0.0f;
         if (game.boss.active && game.boss.phase == BOSS_APPROACH) {
             bossTransition = fmaxf(0.001f, fminf(game.boss.phaseTime / 2.6f, 1.0f));
+        }
         }
         BeginDrawing();
             BeginTextureMode(post.target);
@@ -459,9 +620,9 @@ int main(int argc, char **argv) {
                                       renderWidth, renderHeight);
                 BeginMode3D(camera);
                     DrawEnvironment(&env, camera, virtualPlayerZ);
-                    BeginCraftPass(&post, game.runTime, musicIntensity);
+                    BeginCraftPass(&post, game.runTime, musicIntensity, camera.position);
                         DrawGameplay3D(&game, post.craftShader,
-                                       post.craftObjectClassLoc, post.craftEnemyTypeLoc);
+                                       post.craftObjectClassLoc, post.craftEnemyTypeLoc, post.craftOriginLoc);
                     EndShaderMode();
                 EndMode3D();
                 DrawDemosceneOverlay(&demo, game.runTime, musicIntensity,
@@ -470,8 +631,9 @@ int main(int argc, char **argv) {
 
             ClearBackground((Color){ 2, 3, 9, 255 });
             DrawPostProcess(&post, game.runTime, musicIntensity, beatPulse, bossTransition,
-                            renderWidth, renderHeight);
+                            renderWidth, renderHeight, camera.fovy);
             DrawGameplayHUD(&game, camera, renderWidth, renderHeight);
+            if(menuMode==MENU_NONE) DrawPauseControl(renderWidth,renderHeight);
             if (seedTransitionPending) {
                 float transitionProgress = 1.0f - coreTransitionTimer / CORE_TRANSITION_DURATION;
                 Vector2 coreScreen = GetWorldToScreen(game.boss.position, camera);
@@ -487,8 +649,9 @@ int main(int argc, char **argv) {
                 DrawText(TextFormat("STRUCTURES %d  DROPPED %d", env.structureCount,
                                     env.droppedStructures),
                          10, 124, 16, (Color){ 90, 170, 220, 220 });
-                DrawText(TextFormat("RECURSION %d  SEED %u  DIFFICULTY %.2f",
-                                    game.boss.encounterIndex + 1, activeSeed, game.difficulty),
+                DrawText(TextFormat("DEPTH %d  ROUND %d/%d  SEED %u  DIFFICULTY %.2f",
+                                    GetGameplayRecursionDepth(&game), GetGameplayRound(&game),
+                                    BOSSES_PER_RECURSION, activeSeed, game.difficulty),
                          10, 144, 16, (Color){ 110, 205, 190, 220 });
                 unsigned int callbackFrames = audioTelemetry.callbackFrames;
                 if (callbackFrames > 0u && audioTelemetry.maxCallbackMicros > 0u) {
@@ -505,6 +668,7 @@ int main(int argc, char **argv) {
                              10, 184, 16, (Color){ 255, 120, 90, 230 });
                 }
             }
+            if(menuMode!=MENU_NONE) DrawMenuOverlay(menuMode,renderWidth,renderHeight);
         EndDrawing();
     }
 

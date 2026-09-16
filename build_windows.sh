@@ -47,8 +47,8 @@ fi
 
 MAX_SIZE=1474560
 ACTUAL_SIZE=$(stat -c%s bin/recursion94.exe)
-if [ "$ACTUAL_SIZE" -gt "$MAX_SIZE" ]; then
-    echo "ERROR: packed binary is $ACTUAL_SIZE bytes; limit is $MAX_SIZE bytes"
+if [ "$ACTUAL_SIZE" -ge "$MAX_SIZE" ]; then
+    echo "ERROR: packed binary is $ACTUAL_SIZE bytes; must be below $MAX_SIZE bytes"
     exit 1
 fi
 
