@@ -2,10 +2,12 @@
 #include "palette.h"
 #include "rlgl.h"
 #include "raymath.h"
+#include "player_ui.h"
 
 #include <math.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <limits.h>
 
 #define TAP_THRESHOLD 0.12f
 #define GAMEPLAY_LATERAL_SCALE 1.5f
@@ -26,6 +28,8 @@
 #define BOOST_MISSILE_ACCEL 18.0f
 #define BOOST_MISSILE_MAX_LATERAL 8.0f
 #define BOOST_MISSILE_COMMIT_Z 4.0f
+#define BOSS_CLEARANCE_TIME 2.2f
+#define ARRIVAL_SHOT_FADE .65f
 
 static float ClampFloat(float value, float minimum, float maximum) {
     if (value < minimum) return minimum;
@@ -61,8 +65,40 @@ int GetGameplayRecursionDepth(const GameplaySystem *game) {
 
 static float LoopPressure(const GameplaySystem *game) {
     float depth = (float)(GetGameplayRecursionDepth(game) - 1);
-    return fminf((float)game->boss.encounterIndex * 0.055f + log1pf(depth) * 0.12f, 0.78f);
+    // Never reaches an early hard cap; all multiplicative timers stay positive.
+    return (float)(GetGameplayRound(game)-1)*.055f + 1.55f*depth/(depth+2.0f);
 }
+
+static float BossDepthScale(const GameplaySystem *game) {
+    float depth=(float)(GetGameplayRecursionDepth(game)-1);
+    return 1.0f+.24f*depth+.10f*log1pf(depth);
+}
+
+static Vector3 PrismFormationCenter(const BossState *boss) {
+    return (Vector3){sinf(boss->encounterTime*.38f)*2.0f,boss->position.y,boss->position.z};
+}
+
+static Vector3 PrismBodyPosition(const BossState *boss,int identity) {
+    Vector3 p=PrismFormationCenter(boss);
+    float t=boss->prismBlend, ease=t*t*(3-2*t);
+    p.x+=(boss->prismFrom[identity]+(boss->prismTo[identity]-boss->prismFrom[identity])*ease)*9.0f;
+    // Different crossing arcs keep all three bodies individually trackable.
+    p.y+=sinf(t*PI)*(identity-1)*2.5f;
+    p.z+=sinf(t*PI)*(identity==1?-4.0f:2.0f);
+    return p;
+}
+
+static void ShufflePrism(GameplaySystem *game) {
+    BossState *b=&game->boss;
+    unsigned int direction=1u+(MixBits(game->runSeed^++b->prismShuffles*0x9e3779b9u)&1u);
+    for(int i=0;i<3;i++) {
+        b->prismFrom[i]=b->prismTo[i];
+        b->prismTo[i]=(float)(((int)b->prismTo[i]+1+(int)direction)%3-1);
+    }
+    b->prismBlend=0;
+}
+
+#include "progression.inc"
 
 static int WeaponTierForChain(int combo) {
     if (combo >= 12) return 3;
@@ -72,7 +108,7 @@ static int WeaponTierForChain(int combo) {
 }
 
 static bool IsEnemyTargetable(const GameplaySystem *game, const Enemy *enemy) {
-    if (!enemy->active) return false;
+    if (!enemy->active || enemy->phase==ENEMY_WITHDRAW) return false;
     if (game->boss.phase == BOSS_APPROACH &&
         (enemy->type == ENEMY_BOSS_CORE || enemy->type == ENEMY_BOSS_NODE)) return false;
     if (enemy->type == ENEMY_BOSS_CORE &&
@@ -172,6 +208,15 @@ static Enemy *SpawnEnemyAt(GameplaySystem *game, EnemyType type, Vector3 positio
             enemy->size = (Vector3){ 2.5f, 2.5f, 2.5f };
             enemy->health = 2.0f;
             break;
+        case ENEMY_SNIPER:
+            enemy->size=(Vector3){1.6f,1.2f,3.1f}; enemy->health=2.0f;
+            enemy->fireTimer=2.2f; break;
+        case ENEMY_CARRIER:
+            enemy->size=(Vector3){3.3f,2.1f,4.0f}; enemy->health=5.0f;
+            enemy->fireTimer=3.0f; break;
+        case ENEMY_SUPPORT:
+            enemy->size=(Vector3){2.2f,2.2f,2.2f}; enemy->health=3.0f;
+            enemy->fireTimer=2.0f; break;
         case ENEMY_BOSS_NODE:
             enemy->size = game->boss.leviathan
                 ? (Vector3){ 2.35f, 2.35f, 2.35f }
@@ -186,13 +231,15 @@ static Enemy *SpawnEnemyAt(GameplaySystem *game, EnemyType type, Vector3 positio
                 : (Vector3){ 6.2f, 6.2f, 6.2f };
             if (game->boss.leviathan) {
                 float depth = (float)GetGameplayRecursionDepth(game);
-                enemy->health = 150.0f + sqrtf(depth) * 38.0f + log1pf(depth) * 24.0f;
+                enemy->health = (220.0f + sqrtf(depth)*18.0f)*BossDepthScale(game);
             } else {
-                enemy->health = 26.0f + (float)GetGameplayRound(game) * 11.0f +
-                                sqrtf((float)(GetGameplayRecursionDepth(game) - 1)) * 14.0f;
+                enemy->health = (26.0f+(float)GetGameplayRound(game)*11.0f)*BossDepthScale(game);
             }
             break;
     }
+    if(type==ENEMY_BOSS_NODE) enemy->health*=sqrtf(BossDepthScale(game));
+    if(type!=ENEMY_BOSS_NODE && type!=ENEMY_BOSS_CORE)
+        enemy->health*=1.0f+.14f*log2f((float)GetGameplayRecursionDepth(game));
     if (generation > 0) {
         enemy->size.x *= 0.68f;
         enemy->size.y *= 0.68f;
@@ -217,6 +264,11 @@ static void SpawnFormation(GameplaySystem *game) {
         EnemyType type = ENEMY_DRIFTER;
         if (game->difficulty > 0.08f && typeRoll > 0.50f) type = ENEMY_CHASER;
         if (game->difficulty > 0.25f && typeRoll > 0.80f) type = ENEMY_SPLITTER;
+        // Introduce roles gradually; an escort fleet adds support, not raw damage.
+        if(game->activeTime>35 && i==0 && game->spawnSerial%7==0) type=ENEMY_SNIPER;
+        if(game->boss.encounterIndex>0 && i==0 && game->spawnSerial%11==0) type=ENEMY_CARRIER;
+        if((game->boss.encounterIndex>1 || game->modifier==MUT_ESCORTS) && i==0 &&
+           game->spawnSerial%(game->modifier==MUT_ESCORTS?4:9)==0) type=ENEMY_SUPPORT;
 
         float offset = ((float)i - (float)(count - 1) * 0.5f) * ENEMY_FORMATION_SPACING;
         Vector3 position = {
@@ -239,11 +291,23 @@ static void SpawnProjectile(GameplaySystem *game, Vector3 origin, float speed, f
     if (length < 0.001f) length = 1.0f;
 
     EnemyProjectile *projectile = &game->projectiles[slot];
+    *projectile=(EnemyProjectile){0};
     projectile->active = true;
     projectile->position = origin;
     projectile->velocity = (Vector3){ dx / length * speed, dy / length * speed, dz / length * speed };
     projectile->life = 6.0f;
     projectile->homing = game->overdriveActive;
+}
+
+static void SpawnAimedProjectile(GameplaySystem *game,Vector3 origin,Vector3 aim,float speed,unsigned char kind) {
+    int slot=FindFreeProjectile(game);
+    if(slot<0) return;
+    Vector3 direction=Vector3Normalize(Vector3Subtract(aim,origin));
+    EnemyProjectile *shot=&game->projectiles[slot];
+    *shot=(EnemyProjectile){0};
+    shot->active=true; shot->position=origin; shot->life=7.0f;
+    shot->velocity=Vector3Scale(direction,speed); shot->kind=kind;
+    shot->homing=kind==0 && game->overdriveActive;
 }
 
 static int EnemySlot(const GameplaySystem *game, const Enemy *enemy) {
@@ -264,6 +328,7 @@ static void SpawnPlayerProjectile(GameplaySystem *game, Vector3 origin, Vector3 
     if (length < 0.001f) length = 1.0f;
 
     PlayerProjectile *projectile = &game->playerProjectiles[slot];
+    *projectile=(PlayerProjectile){0};
     projectile->active = true;
     projectile->position = origin;
     projectile->velocity = (Vector3){ dx / length * speed, dy / length * speed, dz / length * speed };
@@ -272,6 +337,28 @@ static void SpawnPlayerProjectile(GameplaySystem *game, Vector3 origin, Vector3 
     projectile->life = PLAYER_PROJECTILE_LIFE;
     projectile->targetEnemy = targetSlot;
     projectile->charged = charged;
+    projectile->pierces=charged?0:game->upgrades[UPG_PIERCE];
+}
+
+static void BeginBossArrival(GameplaySystem *game) {
+    game->boss.arrivalPending=true;
+    game->boss.arrivalTime=0;
+    // Ships peel away in their own pool slots. No kills/Links for a transition.
+    for(int i=0;i<MAX_ENEMIES;i++) {
+        Enemy *enemy=&game->enemies[i];
+        if(!enemy->active) continue;
+        enemy->phase=ENEMY_WITHDRAW;
+        enemy->phaseTime=0;
+        enemy->velocity=(Vector3){0};
+    }
+    for(int i=0;i<MAX_ENEMY_PROJECTILES;i++) {
+        EnemyProjectile *shot=&game->projectiles[i];
+        if(!shot->active) continue;
+        shot->dissipating=true;
+        shot->homing=false;
+        shot->life=fminf(shot->life,ARRIVAL_SHOT_FADE);
+    }
+    ClearLocks(game);
 }
 
 static void SpawnBoss(GameplaySystem *game, double virtualPlayerZ, GameplayEvents *events) {
@@ -279,14 +366,15 @@ static void SpawnBoss(GameplaySystem *game, double virtualPlayerZ, GameplayEvent
     uint32_t encounterSeed = game->runSeed ^
         (uint32_t)(boss->encounterIndex + 1) * 0x9e3779b9u;
 
-    // Clear the lane so the encounter reads as a deliberate arena rather than
-    // another formation stacked on top of regular enemies.
-    for (int i = 0; i < MAX_ENEMIES; i++) game->enemies[i].active = false;
-    for (int i = 0; i < MAX_ENEMY_PROJECTILES; i++) game->projectiles[i].active = false;
-    for (int i = 0; i < MAX_PLAYER_PROJECTILES; i++) game->playerProjectiles[i].active = false;
+    // Arrival already cleared the arena visibly. Never overwrite a live ship
+    // to make room for the core and its four shield nodes.
+    int freeSlots=0;
+    for(int i=0;i<MAX_ENEMIES;i++) freeSlots+=!game->enemies[i].active;
+    if(freeSlots<5) return;
     ClearLocks(game);
 
     boss->active = true;
+    boss->arrivalPending=false;
     boss->leviathan = GetGameplayRound(game) == BOSSES_PER_RECURSION;
     boss->phase = BOSS_APPROACH;
     boss->phaseTime = 0.0f;
@@ -294,7 +382,15 @@ static void SpawnBoss(GameplaySystem *game, double virtualPlayerZ, GameplayEvent
     boss->reinforcementTimer = 3.4f;
     boss->rotation = Hash01(encounterSeed) * 6.2831853f;
     boss->attackPattern = 0;
+    boss->encounterTime=0;
+    boss->warningArmed=false;
+    boss->safeLane=0;
+    boss->prismBlend=1;
+    boss->prismShuffles=0;
+    int realSlot=(int)(MixBits(encounterSeed^0x50726973u)%3u);
+    for(int i=0;i<3;i++) boss->prismFrom[i]=boss->prismTo[i]=(float)((realSlot+i)%3-1);
     boss->position = (Vector3){ 0.0f, 4.1f, boss->leviathan ? -148.0f : -125.0f };
+    if(GetGameplayRound(game)==3) boss->position=PrismBodyPosition(boss,0);
     boss->shieldNodes = 4;
     boss->introFlash = 1.0f;
     boss->defeatFlash = 0.0f;
@@ -303,6 +399,7 @@ static void SpawnBoss(GameplaySystem *game, double virtualPlayerZ, GameplayEvent
     boss->nextSpawnDistance = virtualPlayerZ + 1180.0f +
         (float)GetGameplayRound(game) * 90.0f + Hash01(encounterSeed ^ 0x51c3u) * 260.0f;
     game->spawnTimer = 1.2f;
+    game->roundTime=0;
 
     Enemy *core = SpawnEnemyAt(game, ENEMY_BOSS_CORE, boss->position, 0,
                                encounterSeed ^ 0xc0deu);
@@ -317,15 +414,24 @@ static void SpawnBoss(GameplaySystem *game, double virtualPlayerZ, GameplayEvent
     events->bossStarted = true;
 }
 
+#include "boss_patterns.inc"
+
 static void UpdateBoss(GameplaySystem *game, float dt, double virtualPlayerZ,
                        GameplayEvents *events) {
     BossState *boss = &game->boss;
     if (!boss->active) {
-        if (virtualPlayerZ >= boss->nextSpawnDistance) SpawnBoss(game, virtualPlayerZ, events);
+        if(!boss->arrivalPending && virtualPlayerZ>=boss->nextSpawnDistance) BeginBossArrival(game);
+        if(boss->arrivalPending) {
+            boss->arrivalTime+=dt;
+            bool clear=true;
+            for(int i=0;i<MAX_ENEMIES;i++) if(game->enemies[i].active) { clear=false; break; }
+            if(clear && boss->arrivalTime>=BOSS_CLEARANCE_TIME) SpawnBoss(game,virtualPlayerZ,events);
+        }
         return;
     }
 
     boss->phaseTime += dt;
+    boss->encounterTime+=dt;
     float rotationSpeed = boss->phase == BOSS_SINGULARITY ? 2.85f
                         : boss->phase == BOSS_ENRAGED ? 1.95f
                         : boss->leviathan ? 1.38f : 1.05f;
@@ -337,29 +443,37 @@ static void UpdateBoss(GameplaySystem *game, float dt, double virtualPlayerZ,
                             (float)boss->encounterIndex) * motionScale;
     boss->position.y = 4.1f + sinf(game->runTime * (boss->leviathan ? 0.43f : 0.57f)) *
                                   (boss->leviathan ? 1.0f : 0.65f);
+    if(boss->encounterIndex%BOSSES_PER_RECURSION==2) {
+        boss->prismBlend=fminf(1,boss->prismBlend+dt/1.25f);
+        // Body's arc is applied to the target and the render exactly once.
+        boss->position.x=PrismBodyPosition(boss,0).x;
+    }
 
     if (boss->phase == BOSS_APPROACH && boss->phaseTime >= 2.6f) {
         boss->phase = BOSS_SHIELDED;
         boss->phaseTime = 0.0f;
-        boss->fireTimer = 0.75f;
+        boss->fireTimer = 1.3f;
     }
 
     Enemy *core = boss->coreSlot >= 0 ? &game->enemies[boss->coreSlot] : NULL;
     if (core != NULL && core->active) {
         core->position = boss->position;
-        core->basePosition = boss->position;
+        if(GetGameplayRound(game)==3) core->position=PrismBodyPosition(boss,0);
+        core->basePosition = core->position;
         if (boss->leviathan && boss->shieldNodes == 0 &&
             core->health <= boss->maxHealth * 0.18f && boss->phase != BOSS_SINGULARITY) {
             boss->phase = BOSS_SINGULARITY;
             boss->phaseTime = 0.0f;
-            boss->fireTimer = 0.10f;
+            boss->fireTimer = fmaxf(boss->fireTimer,1.2f);
+            boss->warningArmed=false;
             boss->reinforcementTimer = 1.4f;
         } else if (boss->shieldNodes == 0 &&
                    core->health <= boss->maxHealth * (boss->leviathan ? 0.52f : 0.46f) &&
                    boss->phase != BOSS_ENRAGED && boss->phase != BOSS_SINGULARITY) {
             boss->phase = BOSS_ENRAGED;
             boss->phaseTime = 0.0f;
-            boss->fireTimer = 0.2f;
+            boss->fireTimer = fmaxf(boss->fireTimer,1.2f);
+            boss->warningArmed=false;
         }
     }
 
@@ -369,17 +483,23 @@ static void UpdateBoss(GameplaySystem *game, float dt, double virtualPlayerZ,
         float angle = boss->rotation + (float)node * 1.5707963f;
         float radiusX = boss->leviathan ? 12.4f : 8.35f;
         float radiusY = boss->leviathan ? 7.15f : 4.65f;
+        Vector3 center=GetGameplayRound(game)==3?PrismFormationCenter(boss):boss->position;
         game->enemies[slot].position = (Vector3){
-            boss->position.x + cosf(angle) * radiusX,
-            boss->position.y + sinf(angle) * radiusY,
-            boss->position.z + sinf(angle * 0.5f) * (boss->leviathan ? 3.4f : 2.1f)
+            center.x + cosf(angle) * radiusX,
+            center.y + sinf(angle) * radiusY,
+            center.z + sinf(angle * 0.5f) * (boss->leviathan ? 3.4f : 2.1f)
         };
+        if(boss->encounterIndex%BOSSES_PER_RECURSION==1) {
+            game->enemies[slot].position=(Vector3){boss->position.x+(node-1.5f)*4.1f,
+                (node&1)?5.7f:2.0f,boss->position.z+2.5f};
+        }
         game->enemies[slot].basePosition = game->enemies[slot].position;
     }
 
     if (boss->phase == BOSS_APPROACH) return;
 
-    boss->reinforcementTimer -= dt;
+    boss->reinforcementTimer -= dt*(1+ClampFloat((boss->encounterTime-65)/90,0,1)*.6f+
+                                    LoopPressure(game)*.55f);
     if (boss->reinforcementTimer <= 0.0f) {
         int reinforcements = boss->phase == BOSS_SINGULARITY ? 3
                            : (boss->phase == BOSS_ENRAGED || boss->leviathan ? 2 : 1);
@@ -387,6 +507,8 @@ static void UpdateBoss(GameplaySystem *game, float dt, double virtualPlayerZ,
             uint32_t addSeed = game->runSeed ^ (uint32_t)game->spawnSerial * 0x85ebca6bu ^
                                (uint32_t)boss->encounterIndex * 97u;
             EnemyType type = (addSeed & 1u) ? ENEMY_DRIFTER : ENEMY_CHASER;
+            if(GetGameplayRecursionDepth(game)>=2 && add==0 && boss->attackPattern%3==1) type=ENEMY_SNIPER;
+            if(GetGameplayRecursionDepth(game)>=3 && add==0 && boss->attackPattern%3==2) type=ENEMY_SUPPORT;
             float side = ((addSeed >> 3) & 1u) ? 1.0f : -1.0f;
             SpawnEnemyAt(game, type,
                          (Vector3){ boss->position.x + side * (5.0f + (float)add * 3.0f),
@@ -394,58 +516,20 @@ static void UpdateBoss(GameplaySystem *game, float dt, double virtualPlayerZ,
                                     boss->position.z - 24.0f - (float)add * 5.0f },
                          0, addSeed);
         }
-        boss->reinforcementTimer = boss->phase == BOSS_SINGULARITY ? 2.25f
-                                   : boss->phase == BOSS_ENRAGED ? 2.7f
-                                   : boss->leviathan ? 3.1f : 3.8f;
+        boss->reinforcementTimer = boss->phase == BOSS_SINGULARITY ? 4.2f
+                                   : boss->phase == BOSS_ENRAGED ? 5.5f
+                                   : boss->leviathan ? 4.8f : 7.0f;
     }
 
     boss->fireTimer -= dt;
+    if(boss->fireTimer<=.95f && !boss->warningArmed) {
+        boss->warningArmed=true;
+        boss->attackAim=game->player.position;
+        boss->safeLane=sinf((float)boss->attackPattern*.78f)*10.0f;
+        events->attackWarning=true;
+    }
     if (boss->fireTimer > 0.0f) return;
-
-    Vector3 origin = boss->position;
-    int shotCount = boss->phase == BOSS_SINGULARITY ? 10
-                    : boss->phase == BOSS_ENRAGED ? (boss->leviathan ? 8 : 5)
-                    : boss->phase == BOSS_EXPOSED ? (boss->leviathan ? 6 : 3)
-                    : (boss->leviathan ? 4 : 2);
-    if (boss->phase == BOSS_SHIELDED) {
-        int preferred = ((int)(boss->rotation * 2.0f) & 3);
-        for (int offset = 0; offset < 4; offset++) {
-            int slot = boss->nodeSlots[(preferred + offset) & 3];
-            if (slot >= 0 && game->enemies[slot].active) {
-                origin = game->enemies[slot].position;
-                break;
-            }
-        }
-    }
-
-    float projectileSpeed = 23.0f + game->difficulty * 9.0f + LoopPressure(game) * 8.0f +
-                            (boss->phase == BOSS_ENRAGED ? 4.0f : 0.0f) +
-                            (boss->phase == BOSS_SINGULARITY ? 7.0f : 0.0f);
-    for (int shot = 0; shot < shotCount; shot++) {
-        float centered = (float)shot - (float)(shotCount - 1) * 0.5f;
-        Vector3 shotOrigin = origin;
-        float spread = centered * (boss->leviathan ? 1.22f : 1.45f);
-        if (boss->leviathan && boss->attackPattern % 3 == 1) {
-            float angle = boss->rotation + (float)shot * 2.399963f;
-            shotOrigin.x += cosf(angle) * 10.5f;
-            shotOrigin.y += sinf(angle) * 6.2f;
-            spread = sinf(angle * 2.0f) * 2.4f;
-        } else if (boss->leviathan && boss->attackPattern % 3 == 2) {
-            shotOrigin.x += centered * 2.25f;
-            shotOrigin.y += 5.2f + sinf((float)shot * 1.7f) * 1.1f;
-            spread = -centered * 0.62f;
-        }
-        SpawnProjectile(game, shotOrigin, projectileSpeed + (float)(shot % 3) * 1.8f, spread);
-    }
-    boss->attackPattern++;
-
-    float cooldown = boss->phase == BOSS_SINGULARITY ? 0.32f
-                     : boss->phase == BOSS_ENRAGED ? (boss->leviathan ? 0.43f : 0.48f)
-                     : boss->phase == BOSS_EXPOSED ? (boss->leviathan ? 0.62f : 0.84f)
-                     : (boss->leviathan ? 0.78f : 1.10f);
-    cooldown -= game->difficulty * (boss->leviathan ? 0.12f : 0.22f);
-    cooldown -= fminf((float)(GetGameplayRecursionDepth(game) - 1) * 0.012f, 0.08f);
-    boss->fireTimer = fmaxf(cooldown, 0.24f);
+    FireBossPattern(game);
 }
 
 static void SpawnBurst(GameplaySystem *game, Vector3 position, Color color, int count) {
@@ -481,7 +565,8 @@ static void RegisterKill(GameplaySystem *game, Enemy *enemy, bool charged,
         if (game->boss.shieldNodes == 0 && game->boss.active) {
             game->boss.phase = BOSS_EXPOSED;
             game->boss.phaseTime = 0.0f;
-            game->boss.fireTimer = 0.45f;
+            game->boss.fireTimer = 1.2f;
+            game->boss.warningArmed=false;
         }
     } else if (deadType == ENEMY_BOSS_CORE) {
         bool completedRecursion = game->boss.leviathan;
@@ -492,36 +577,40 @@ static void RegisterKill(GameplaySystem *game, Enemy *enemy, bool charged,
         game->boss.defeatFlash = 1.0f;
         game->boss.encounterIndex++;
         game->player.energy = 100.0f;
-        game->score += completedRecursion ? 50000 * clearedDepth
-                                         : 8000 * clearedRound + 2500 * (clearedDepth - 1);
+        AddGameplayScore(game,completedRecursion ? INT64_C(50000)*clearedDepth
+                         : INT64_C(8000)*clearedRound+INT64_C(2500)*(clearedDepth-1));
         events->bossDefeated = true;
         events->recursionCompleted = completedRecursion;
+        game->roundTime=0;
+        OfferGameplayUpgrade(game);
         if (completedRecursion) game->loopTransitionTimer = CORE_TRANSITION_DURATION;
         for (int node = 0; node < 4; node++) {
             int slot = game->boss.nodeSlots[node];
             if (slot >= 0 && slot < MAX_ENEMIES) game->enemies[slot].active = false;
         }
         for (int i = 0; i < MAX_ENEMY_PROJECTILES; i++) game->projectiles[i].active = false;
+        for (int i = 0; i < MAX_PLAYER_PROJECTILES; i++) game->playerProjectiles[i].active = false;
         for (int i = 0; i < MAX_ENEMIES; i++) {
             if (game->enemies[i].type != ENEMY_BOSS_CORE) game->enemies[i].active = false;
         }
     }
 
     int previousTier = game->weaponTier;
-    game->combo = game->comboTimer > 0.0f ? game->combo + 1 : 1;
-    game->comboTimer = 2.6f;
+    game->combo = game->comboTimer > 0.0f ? (game->combo<INT_MAX?game->combo+1:INT_MAX) : 1;
+    game->comboTimer = 2.6f+.6f*game->upgrades[UPG_CHAIN];
+    if(game->combo>game->bestCombo) game->bestCombo=game->combo;
     game->weaponTier = WeaponTierForChain(game->combo);
     if (game->weaponTier > previousTier) {
         game->weaponFlash = 1.0f;
         events->weaponTierAdvanced = true;
     }
     int overdriveMultiplier = game->overdriveActive ? 2 : 1;
-    game->score += 100 * game->combo * (deadType == ENEMY_SPLITTER ? 2 : 1) *
-                   overdriveMultiplier;
+    AddGameplayScore(game,INT64_C(100)*game->combo*(deadType==ENEMY_SPLITTER?2:1)*overdriveMultiplier);
     if (!game->suppressLinkRewards) {
         int linkReward = deadType == ENEMY_BOSS_CORE ? 10
                        : deadType == ENEMY_BOSS_NODE ? 5
                        : deadType == ENEMY_SPLITTER ? 2 : 1;
+        linkReward+=game->upgrades[UPG_HARVEST];
         if (game->overdriveActive && deadType != ENEMY_BOSS_CORE) linkReward++;
         game->chainLinks = game->chainLinks + linkReward > MAX_CHAIN_LINKS
             ? MAX_CHAIN_LINKS : game->chainLinks + linkReward;
@@ -559,7 +648,14 @@ static void RegisterKill(GameplaySystem *game, Enemy *enemy, bool charged,
 
 static void DamageEnemy(GameplaySystem *game, Enemy *enemy, float damage, bool charged,
                         GameplayEvents *events) {
-    if (!enemy->active) return;
+    if (!enemy->active || enemy->phase==ENEMY_WITHDRAW) return;
+    if(enemy->type!=ENEMY_BOSS_CORE && enemy->type!=ENEMY_BOSS_NODE && enemy->type!=ENEMY_SUPPORT) {
+        for(int i=0;i<MAX_ENEMIES;i++) {
+            const Enemy *support=&game->enemies[i];
+            if(support->active && support->type==ENEMY_SUPPORT &&
+               Vector3DistanceSqr(support->position,enemy->position)<225) { damage*=.5f; break; }
+        }
+    }
     enemy->health -= damage;
     game->cameraKick = fmaxf(game->cameraKick, 0.12f);
     if (enemy->health <= 0.0f) RegisterKill(game, enemy, charged, events);
@@ -570,8 +666,17 @@ static void FireTap(GameplaySystem *game, GameplayEvents *events) {
     muzzle.z -= 1.2f;
     Vector3 aim = { game->player.position.x, game->player.position.y, -110.0f };
     float speed = PLAYER_BOLT_SPEED + (float)game->weaponTier * 5.0f;
-    float damage = 1.0f + (float)game->weaponTier * 0.5f;
-    SpawnPlayerProjectile(game, muzzle, aim, -1, speed, damage, false);
+    // Identical projectile damage for hulls, nodes and exposed boss cores.
+    float damage = (1.0f+(float)game->weaponTier*.5f)*(1+.25f*game->upgrades[UPG_PIERCE]);
+    if(game->upgrades[UPG_TWIN]) {
+        damage*=.55f+.15f*game->upgrades[UPG_TWIN];
+        for(int side=-1;side<=1;side+=2) {
+            Vector3 twinMuzzle=muzzle,twinAim=aim;
+            twinMuzzle.x+=side*.35f; twinAim.x+=side*1.15f;
+            SpawnPlayerProjectile(game,twinMuzzle,twinAim,-1,speed,damage,false);
+        }
+    } else SpawnPlayerProjectile(game, muzzle, aim, -1, speed, damage, false);
+    game->shotsFired++;
     events->tapShots++;
 }
 
@@ -583,19 +688,23 @@ static void FireCharge(GameplaySystem *game, GameplayEvents *events) {
         Enemy *enemy = &game->enemies[i];
         if (!enemy->active || !enemy->locked) continue;
         SpawnPlayerProjectile(game, muzzle, enemy->position, i, PLAYER_BALL_SPEED,
-                              game->weaponTier >= 3 ? 3.0f : 2.0f, true);
+                              (game->weaponTier >= 3 ? 3.0f : 2.0f)*(1+.5f*game->upgrades[UPG_FOCUS]), true);
         fired++;
     }
     events->chargeShots++;
+    game->chargeBursts++;
     ClearLocks(game);
 }
 
 static void FireLinkBeam(GameplaySystem *game, GameplayEvents *events) {
-    if (game->chainLinks < BEAM_LINK_COST) return;
-    game->chainLinks -= BEAM_LINK_COST;
+    if (game->chainLinks < GameplayBeamCost(game)) return;
+    game->chainLinks -= GameplayBeamCost(game);
+    game->beamBranchCount=0;
     game->beamTimer = 0.34f;
     game->cameraKick = fmaxf(game->cameraKick, 0.85f);
     game->suppressLinkRewards = true;
+    bool struck[MAX_ENEMIES]={false};
+    Vector3 branchOrigin=game->player.position; branchOrigin.z=-35;
     for (int i = 0; i < MAX_ENEMIES; i++) {
         Enemy *enemy = &game->enemies[i];
         if (!IsEnemyTargetable(game, enemy)) continue;
@@ -603,17 +712,33 @@ static void FireLinkBeam(GameplaySystem *game, GameplayEvents *events) {
         float dy = enemy->position.y - game->player.position.y;
         float radius = 1.1f + enemy->size.x * 0.35f;
         if (LengthSquared2D(dx, dy) > radius * radius) continue;
+        struck[i]=true; branchOrigin=enemy->position;
         float damage = enemy->type == ENEMY_BOSS_CORE ? 8.0f
                      : enemy->type == ENEMY_BOSS_NODE ? 4.0f : 1000.0f;
         DamageEnemy(game, enemy, damage, true, events);
+    }
+    for(int branch=0;branch<game->upgrades[UPG_BRANCH] && !game->upgradePending;branch++) {
+        int best=-1; float nearest=144.0f;
+        for(int i=0;i<MAX_ENEMIES;i++) {
+            Enemy *enemy=&game->enemies[i];
+            if(struck[i] || !IsEnemyTargetable(game,enemy)) continue;
+            float d=Vector3DistanceSqr(branchOrigin,enemy->position);
+            if(d<nearest) { nearest=d; best=i; }
+        }
+        if(best<0) break;
+        Enemy *enemy=&game->enemies[best]; struck[best]=true;
+        branchOrigin=enemy->position;
+        game->beamBranches[game->beamBranchCount++]=branchOrigin;
+        DamageEnemy(game,enemy,enemy->type==ENEMY_BOSS_CORE?4:enemy->type==ENEMY_BOSS_NODE?2:500,true,events);
     }
     game->suppressLinkRewards = false;
     events->beamFired = true;
 }
 
 static void FireLinkBomb(GameplaySystem *game, GameplayEvents *events) {
-    if (game->chainLinks < BOMB_LINK_COST) return;
-    game->chainLinks -= BOMB_LINK_COST;
+    if (game->chainLinks < GameplayBombCost(game)) return;
+    game->chainLinks -= GameplayBombCost(game);
+    game->player.invulnerability=fmaxf(game->player.invulnerability,.4f*game->upgrades[UPG_BOMB_GUARD]);
     game->bombTimer = 0.72f;
     game->cameraKick = fmaxf(game->cameraKick, 1.4f);
     for (int i = 0; i < MAX_ENEMY_PROJECTILES; i++) {
@@ -640,7 +765,9 @@ static void UpdateLocks(GameplaySystem *game) {
     int targetLimit = game->player.chargeTime > 0.72f
         ? maximumLocks
         : (game->weaponTier >= 2 ? 4 : 3);
+    if(game->upgrades[UPG_FOCUS]) targetLimit=2;
     float coneBase = 1.0f + ClampFloat(game->player.chargeTime, 0.0f, 1.2f) * 2.1f;
+    coneBase+=.85f*game->upgrades[UPG_WIDELOCK];
 
     for (int lock = 0; lock < targetLimit; lock++) {
         int best = -1;
@@ -672,6 +799,9 @@ static void HitPlayer(GameplaySystem *game, Vector3 hitPosition, GameplayEvents 
     float hitDamage = PLAYER_HIT_DAMAGE *
                       (game->overdriveActive ? BOOST_HIT_MULTIPLIER : 1.0f);
     game->player.energy = fmaxf(0.0f, game->player.energy - hitDamage);
+    game->hitsTaken++;
+    Vector3 hitOffset=Vector3Subtract(hitPosition,game->player.position);
+    game->hitDirection=Vector2Normalize((Vector2){hitOffset.x,-hitOffset.y});
     game->player.invulnerability = 1.05f;
     game->combo = 0;
     game->comboTimer = 0.0f;
@@ -685,19 +815,25 @@ static void HitPlayer(GameplaySystem *game, Vector3 hitPosition, GameplayEvents 
 
 static void UpdatePlayer(GameplaySystem *game, float dt, bool boosting,
                          GameplayEvents *events) {
-    float inputX = 0.0f;
-    float inputY = 0.0f;
-    if (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT)) inputX -= 1.0f;
-    if (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT)) inputX += 1.0f;
-    if (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN)) inputY -= 1.0f;
-    if (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP)) inputY += 1.0f;
-    if (inputX != 0.0f && inputY != 0.0f) {
-        inputX *= 0.7071068f;
-        inputY *= 0.7071068f;
+    Vector2 input=PlayerMoveInput();
+    float inputX=input.x,inputY=input.y;
+    game->player.dodgeCooldown=fmaxf(0,game->player.dodgeCooldown-dt);
+    game->player.dodgeTimer=fmaxf(0,game->player.dodgeTimer-dt);
+    if(PlayerActionPressed(ACT_DODGE) && game->player.dodgeCooldown<=0) {
+        Vector2 direction=Vector2LengthSqr(input)>.01f?Vector2Normalize(input):
+            (Vector2){game->player.position.x>0?-1.0f:1.0f,0};
+        game->player.dodgeDirection=direction; game->player.dodgeTimer=.23f;
+        game->player.dodgeCooldown=3.2f-.4f*game->upgrades[UPG_AGILITY];
+        game->player.invulnerability=fmaxf(game->player.invulnerability,.23f);
+        game->dodges++; events->dodged=true;
     }
 
     float pullX = 0.0f;
     float pullY = 0.0f;
+    if(game->modifier==MUT_GRAVITY) {
+        pullX=sinf(game->activeTime*.55f)*2.0f;
+        pullY=cosf(game->activeTime*.43f)*.65f;
+    }
     if (game->boss.active && game->boss.leviathan && game->boss.phase >= BOSS_SHIELDED) {
         float dx = game->boss.position.x - game->player.position.x;
         float dy = game->boss.position.y - game->player.position.y;
@@ -708,28 +844,38 @@ static void UpdatePlayer(GameplaySystem *game, float dt, bool boosting,
         pullX = dx / distance * gravity;
         pullY = dy / distance * gravity * 0.72f;
     }
-    game->player.velocity.x = Approach(game->player.velocity.x, inputX * 14.0f + pullX, 10.0f, dt);
-    game->player.velocity.y = Approach(game->player.velocity.y, inputY * 10.0f + pullY, 10.0f, dt);
+    if(game->player.dodgeTimer>0) {
+        game->player.velocity.x=game->player.dodgeDirection.x*24;
+        game->player.velocity.y=game->player.dodgeDirection.y*16;
+    } else {
+        float response=10+2*game->upgrades[UPG_AGILITY];
+        game->player.velocity.x=Approach(game->player.velocity.x,inputX*14+pullX,response,dt);
+        game->player.velocity.y=Approach(game->player.velocity.y,inputY*10+pullY,response,dt);
+    }
     game->player.position.x += game->player.velocity.x * dt;
     game->player.position.y += game->player.velocity.y * dt;
     game->player.position.x = ClampFloat(game->player.position.x, PLAYER_MIN_X, PLAYER_MAX_X);
     game->player.position.y = ClampFloat(game->player.position.y, PLAYER_MIN_Y, PLAYER_MAX_Y);
     game->player.bank = Approach(game->player.bank, -inputX * 0.7f, 8.0f, dt);
+    if(game->player.dodgeTimer>0) game->player.bank=-inputX*.7f+
+        game->player.dodgeDirection.x*sinf((.23f-game->player.dodgeTimer)/.23f*PI)*1.5f;
 
-    if (IsKeyPressed(KEY_K)) FireLinkBeam(game, events);
-    if (IsKeyPressed(KEY_L)) FireLinkBomb(game, events);
+    if (PlayerActionPressed(ACT_BEAM)) FireLinkBeam(game, events);
+    if (PlayerActionPressed(ACT_BOMB)) FireLinkBomb(game, events);
 
-    if (boosting) game->player.energy = fmaxf(0.0f, game->player.energy - BOOST_ENERGY_DRAIN * dt);
+    if (boosting) game->player.energy = fmaxf(0.0f, game->player.energy - BOOST_ENERGY_DRAIN*(1-.2f*game->upgrades[UPG_EFFICIENCY])*dt);
     else game->player.energy = fminf(100.0f, game->player.energy + 1.6f * dt);
 
-    bool fireHeld = IsKeyDown(KEY_J) || IsMouseButtonDown(MOUSE_BUTTON_LEFT);
+    bool fireHeld = PlayerActionDown(ACT_FIRE);
     if (fireHeld) {
-        game->player.chargeTime = fminf(game->player.chargeTime + dt, 1.25f);
+        game->player.fireHoldTime+=dt;
+        game->player.chargeTime = fminf(game->player.chargeTime + dt*(1+.25f*game->upgrades[UPG_QUICKCHARGE]), 1.25f);
         UpdateLocks(game);
     } else if (game->player.fireHeldLast) {
-        if (game->player.chargeTime <= TAP_THRESHOLD) FireTap(game, events);
+        if (game->player.fireHoldTime <= TAP_THRESHOLD) FireTap(game, events);
         else FireCharge(game, events);
         game->player.chargeTime = 0.0f;
+        game->player.fireHoldTime = 0.0f;
     }
     game->player.fireHeldLast = fireHeld;
 }
@@ -739,9 +885,28 @@ static void SetEnemyPhase(Enemy *enemy, EnemyPhase phase) {
     enemy->phaseTime = 0.0f;
 }
 
+#include "encounters.inc"
+
 static void UpdateEnemy(GameplaySystem *game, Enemy *enemy, float dt, bool overdrive,
                         GameplayEvents *events) {
+    if(enemy->phase==ENEMY_WITHDRAW) {
+        enemy->phaseTime+=dt;
+        float side=fabsf(enemy->position.x)>.1f?(enemy->position.x<0?-1.0f:1.0f):
+            ((MixBits((uint32_t)enemy->identity)&1u)?1.0f:-1.0f);
+        enemy->velocity.x=Approach(enemy->velocity.x,side*24,3,dt);
+        enemy->velocity.y=Approach(enemy->velocity.y,6,3,dt);
+        enemy->velocity.z=Approach(enemy->velocity.z,-32-enemy->phaseTime*65,3,dt);
+        enemy->position=Vector3Add(enemy->position,Vector3Scale(enemy->velocity,dt));
+        if(enemy->phaseTime>=BOSS_CLEARANCE_TIME) enemy->active=false;
+        return;
+    }
     if (enemy->type == ENEMY_BOSS_NODE || enemy->type == ENEMY_BOSS_CORE) return;
+    if(!game->boss.active && fmodf(game->roundTime,32)>=24 && enemy->phase!=ENEMY_ATTACK) {
+        enemy->position.z-=24*dt; enemy->age+=dt;
+        if(enemy->position.z < -125 || enemy->age>28) enemy->active=false;
+        return;
+    }
+    if(enemy->type>=ENEMY_SNIPER) { UpdateSpecialEnemy(game,enemy,dt,overdrive,events); return; }
     enemy->age += dt;
     enemy->phaseTime += dt;
     float identity = (float)enemy->identity;
@@ -751,6 +916,7 @@ static void UpdateEnemy(GameplaySystem *game, Enemy *enemy, float dt, bool overd
     if (enemy->generation > 0) holdZ = -22.0f;
 
     switch (enemy->phase) {
+        case ENEMY_WITHDRAW: break; // handled before ordinary/special-role AI
         case ENEMY_APPROACH:
             enemy->position.z += (13.0f + game->difficulty * 3.0f) * dt;
             enemy->position.x += sinf(enemy->age * 1.8f + identity) * dt * 1.1f;
@@ -779,7 +945,10 @@ static void UpdateEnemy(GameplaySystem *game, Enemy *enemy, float dt, bool overd
             // Boost accelerates each surviving enemy's attack cycle, not just
             // formation spawning. The projectile pool remains fixed-size.
             enemy->fireTimer -= dt * (overdrive ? 2.0f : 1.0f);
-            if (enemy->fireTimer <= 0.0f) SetEnemyPhase(enemy, ENEMY_TELEGRAPH);
+            if (enemy->fireTimer <= 0.0f) {
+                SetEnemyPhase(enemy, ENEMY_TELEGRAPH);
+                enemy->attackAim=game->player.position;
+            }
             break;
 
         case ENEMY_TELEGRAPH: {
@@ -807,6 +976,10 @@ static void UpdateEnemy(GameplaySystem *game, Enemy *enemy, float dt, bool overd
                     SpawnProjectile(game, enemy->position,
                                     22.0f + game->difficulty * 7.0f +
                                     (overdrive ? 4.0f : 0.0f), 0.0f);
+                    if(game->modifier==MUT_CROSSFIRE) {
+                        SpawnProjectile(game,enemy->position,24.0f,-3.2f);
+                        SpawnProjectile(game,enemy->position,24.0f,3.2f);
+                    }
                 }
                 SetEnemyPhase(enemy, ENEMY_ATTACK);
             }
@@ -822,7 +995,8 @@ static void UpdateEnemy(GameplaySystem *game, Enemy *enemy, float dt, bool overd
                 float dy = enemy->position.y - game->player.position.y;
                 if (enemy->position.z > -1.5f && enemy->position.z < 2.5f &&
                     LengthSquared2D(dx, dy) < 1.5f) {
-                    HitPlayer(game, game->player.position, events);
+                    if(game->player.invulnerability<=0) game->lastHitSource=4;
+                    HitPlayer(game, enemy->position, events);
                     enemy->active = false;
                 } else if (enemy->position.z > 8.0f) {
                     enemy->active = false;
@@ -831,6 +1005,7 @@ static void UpdateEnemy(GameplaySystem *game, Enemy *enemy, float dt, bool overd
                 enemy->fireTimer = (0.95f + Hash01(game->runSeed ^
                     (uint32_t)enemy->identity * 23u) * 1.0f) *
                     (1.0f - game->difficulty * 0.52f) *
+                    (1.0f - LoopPressure(game)*.20f) *
                     (overdrive ? 0.62f : 1.0f);
                 SetEnemyPhase(enemy, ENEMY_HOVER);
             }
@@ -844,7 +1019,7 @@ static void UpdateProjectiles(GameplaySystem *game, float dt, GameplayEvents *ev
     for (int i = 0; i < MAX_ENEMY_PROJECTILES; i++) {
         EnemyProjectile *projectile = &game->projectiles[i];
         if (!projectile->active) continue;
-        if (game->overdriveActive) projectile->homing = true;
+        if (game->overdriveActive && projectile->kind==0 && !projectile->dissipating) projectile->homing = true;
         // Lead the ship while there is room to turn, but commit to the final
         // trajectory near the player. A sharp late lateral reversal can evade
         // the shot; straight-line boosting cannot.
@@ -871,6 +1046,10 @@ static void UpdateProjectiles(GameplaySystem *game, float dt, GameplayEvents *ev
         projectile->position.y += projectile->velocity.y * dt;
         projectile->position.z += projectile->velocity.z * dt;
         projectile->life -= dt;
+        if(projectile->dissipating) {
+            if(projectile->life<=0) projectile->active=false;
+            continue; // harmless during clearance; cannot farm grazes or Links
+        }
 
         // Swept crossing keeps faster guided shots from skipping through the
         // player between frames at a low frame rate.
@@ -883,10 +1062,16 @@ static void UpdateProjectiles(GameplaySystem *game, float dt, GameplayEvents *ev
         float dy=hitY-game->player.position.y;
         bool crossing = previous.z <= game->player.position.z + 1.0f &&
                         projectile->position.z >= game->player.position.z - 1.0f;
-        float hitRadiusSquared=0.72f;
+        float hitRadiusSquared=projectile->kind==3?2.13f:0.72f;
         if (crossing && LengthSquared2D(dx, dy) < hitRadiusSquared) {
+            if(game->player.invulnerability<=0) game->lastHitSource=projectile->kind>=2?3:projectile->kind==1?2:projectile->homing?1:0;
             HitPlayer(game, projectile->position, events);
             projectile->active = false;
+        } else if(previous.z<game->player.position.z && projectile->position.z>=game->player.position.z &&
+                  !projectile->grazed && game->player.invulnerability<=0 &&
+                  LengthSquared2D(dx,dy)<3.4f) {
+            projectile->grazed=true; game->nearMisses++; game->grazeFlash=.7f;
+            game->chainLinks=(int)fminf(MAX_CHAIN_LINKS,game->chainLinks+1+2*game->upgrades[UPG_GRAZE]);
         } else if (projectile->life <= 0.0f || projectile->position.z > 9.0f) {
             projectile->active = false;
         }
@@ -900,7 +1085,8 @@ static void UpdatePlayerProjectiles(GameplaySystem *game, float dt, GameplayEven
         projectile->life -= dt;
 
         Enemy *target = projectile->targetEnemy >= 0 ? &game->enemies[projectile->targetEnemy] : NULL;
-        bool trackingLive = target != NULL && target->active;
+        bool trackingLive = target != NULL && IsEnemyTargetable(game,target);
+        if(projectile->targetEnemy>=0 && !trackingLive) projectile->targetEnemy=-1;
         if (trackingLive) {
             float dx = target->position.x - projectile->position.x;
             float dy = target->position.y - projectile->position.y;
@@ -937,7 +1123,7 @@ static void UpdatePlayerProjectiles(GameplaySystem *game, float dt, GameplayEven
             float firstHit = 2.0f;
             for (int enemyIndex = 0; enemyIndex < MAX_ENEMIES; enemyIndex++) {
                 Enemy *enemy = &game->enemies[enemyIndex];
-                if (!IsEnemyTargetable(game, enemy)) continue;
+                if (!IsEnemyTargetable(game, enemy) || (projectile->hitMask&(UINT64_C(1)<<enemyIndex))) continue;
                 float hitRadius = 0.55f + enemy->size.x * 0.28f;
                 float hitTime = SegmentSphereHit(previousPosition, projectile->position,
                                                  enemy->position, hitRadius);
@@ -953,9 +1139,13 @@ static void UpdatePlayerProjectiles(GameplaySystem *game, float dt, GameplayEven
                     (projectile->position.y - previousPosition.y) * firstHit;
                 projectile->position.z = previousPosition.z +
                     (projectile->position.z - previousPosition.z) * firstHit;
-                DamageEnemy(game, &game->enemies[hitEnemy], projectile->damage, false, events);
+                projectile->hitMask|=UINT64_C(1)<<hitEnemy;
+                DamageEnemy(game, &game->enemies[hitEnemy], projectile->damage, projectile->charged, events);
                 SpawnBurst(game, projectile->position, game->secondaryColor, 3);
-                projectile->active = false;
+                if(projectile->pierces>0 && !game->upgradePending) {
+                    projectile->pierces--;
+                    projectile->position=Vector3Add(projectile->position,Vector3Scale(Vector3Normalize(projectile->velocity),.02f));
+                } else projectile->active = false;
                 continue;
             }
         }
@@ -984,6 +1174,8 @@ static void UpdateEffects(GameplaySystem *game, float dt) {
     game->weaponFlash = fmaxf(0.0f, game->weaponFlash - dt * 1.25f);
     game->beamTimer = fmaxf(0.0f, game->beamTimer - dt);
     game->bombTimer = fmaxf(0.0f, game->bombTimer - dt);
+    game->grazeFlash=fmaxf(0,game->grazeFlash-dt);
+    game->modifierBanner=fmaxf(0,game->modifierBanner-dt);
     game->loopTransitionTimer = fmaxf(0.0f, game->loopTransitionTimer - dt);
     game->boss.introFlash = fmaxf(0.0f, game->boss.introFlash - dt * 0.48f);
     game->boss.defeatFlash = fmaxf(0.0f, game->boss.defeatFlash - dt * 0.42f);
@@ -999,11 +1191,17 @@ void InitGameplay(GameplaySystem *game, uint32_t runSeed) {
     game->boss.coreSlot = -1;
     for (int node = 0; node < 4; node++) game->boss.nodeSlots[node] = -1;
     game->boss.nextSpawnDistance = 1400.0f + Hash01(runSeed ^ 0xb05594u) * 320.0f;
+    ResetFlightTutorial(game);
 }
 
 void AdvanceGameplayLoop(GameplaySystem *game, uint32_t runSeed, double virtualPlayerZ) {
     game->runSeed = runSeed;
     SetGameplayPalette(game);
+    // Exactly one modifier is active. Its deterministic rotation never stacks
+    // incompatible hazards as an endless run gets deeper.
+    game->modifier=(RecursionModifier)(1+(GetGameplayRecursionDepth(game)-2)%3);
+    game->modifierBanner=4;
+    game->roundTime=0;
 
     for (int i = 0; i < MAX_ENEMIES; i++) game->enemies[i].active = false;
     for (int i = 0; i < MAX_ENEMY_PROJECTILES; i++) game->projectiles[i].active = false;
@@ -1013,6 +1211,8 @@ void AdvanceGameplayLoop(GameplaySystem *game, uint32_t runSeed, double virtualP
     game->boss.coreSlot = -1;
     for (int node = 0; node < 4; node++) game->boss.nodeSlots[node] = -1;
     game->boss.leviathan = false;
+    game->boss.arrivalPending=false;
+    game->boss.arrivalTime=0;
     game->boss.nextSpawnDistance = virtualPlayerZ + 1450.0f +
         Hash01(runSeed ^ (uint32_t)game->boss.encounterIndex * 0x51c3u) * 320.0f;
     game->spawnTimer = 0.45f;
@@ -1133,6 +1333,7 @@ bool ValidateGameplaySpecials(void) {
     leviathanGame.boss.nextSpawnDistance = 0.0;
     events = (GameplayEvents){ 0 };
     UpdateBoss(&leviathanGame, 0.01f, 1.0, &events);
+    for(int step=0;step<45;step++) UpdateBoss(&leviathanGame,.05f,1.0,&events);
     bool leviathanSpawnValid = events.bossStarted && leviathanGame.boss.leviathan &&
                                leviathanGame.boss.maxHealth > 180.0f;
     leviathanGame.boss.phase = BOSS_EXPOSED;
@@ -1252,9 +1453,11 @@ bool ValidateGameplaySpecials(void) {
     return valid;
 }
 
+#include "playability_validation.inc"
+
 bool CanGameplayBoost(const GameplaySystem *game) {
     return !game->gameOver && game->loopTransitionTimer <= 0.0f &&
-           !game->boss.active && game->player.energy > 1.0f;
+           !game->upgradePending && !game->boss.active && !game->boss.arrivalPending && game->player.energy > 1.0f;
 }
 
 float GetGameplayTravelSpeed(const GameplaySystem *game, double virtualPlayerZ,
@@ -1277,33 +1480,40 @@ GameplayEvents UpdateGameplay(GameplaySystem *game, float dt, double virtualPlay
                               bool boosting) {
     GameplayEvents events = { 0 };
     dt = fminf(dt, 0.05f);
+    if(game->gameOver || game->upgradePending) return events;
     game->runTime += dt;
+    bool transitioning=game->loopTransitionTimer>0;
     UpdateEffects(game, dt);
+    if(transitioning) return events;
     if (game->player.invulnerability > 0.0f) {
         game->player.invulnerability = fmaxf(0.0f, game->player.invulnerability - dt);
     }
-    if (game->comboTimer > 0.0f) {
+    if (game->comboTimer > 0.0f && !game->boss.arrivalPending &&
+        !(game->boss.active && game->boss.phase==BOSS_APPROACH)) {
         game->comboTimer -= dt;
         if (game->comboTimer <= 0.0f) {
             game->combo = 0;
             game->weaponTier = 0;
         }
     }
-    if (game->gameOver) return events;
-    if (game->loopTransitionTimer > 0.0f) return events;
+    game->activeTime+=dt;
+    if(!game->boss.active) game->roundTime+=dt;
 
     game->overdriveActive = boosting;
     UpdatePlayer(game, dt, boosting, &events);
+    if(game->upgradePending) return events;
     game->difficulty = ClampFloat(log1pf((float)(fmax(virtualPlayerZ, 0.0) / 350.0)) *
                                   0.43429448f, 0.0f, 1.0f);
     UpdateBoss(game, dt, virtualPlayerZ, &events);
-    if (!game->boss.active) {
+    if (!game->boss.active && !game->boss.arrivalPending) {
+        float phase=fmodf(game->roundTime,32);
         game->spawnTimer -= dt * (boosting ? 1.8f : 1.0f);
-        if (game->spawnTimer <= 0.0f) {
+        if (game->spawnTimer <= 0.0f && phase<24) {
             SpawnFormation(game);
             game->spawnTimer = (1.18f - game->difficulty * 0.68f) *
                                (1.0f - LoopPressure(game) * 0.45f) *
                                (boosting ? 0.72f : 1.0f);
+            game->spawnTimer*=phase<14?1.65f:1.05f;
         }
     }
 
@@ -1318,7 +1528,7 @@ GameplayEvents UpdateGameplay(GameplaySystem *game, float dt, double virtualPlay
 }
 
 void UpdateGameplayCamera(const GameplaySystem *game, Camera3D *camera, float dt, bool boosting) {
-    float shake = game->cameraKick;
+    float shake = game->cameraKick*playerPreferences.shake;
     float shakeX = sinf(game->runTime * 91.0f) * shake * 0.18f;
     float shakeY = cosf(game->runTime * 77.0f) * shake * 0.13f;
     float desiredPositionX = game->player.position.x * 0.32f + shakeX;
@@ -1814,7 +2024,7 @@ static void DrawBastionBoss(const GameplaySystem *game, Vector3 p, float time) {
                  game->hotColor);
 }
 
-static void DrawPrismBoss(const GameplaySystem *game, Vector3 p, float time) {
+static void DrawPrismBoss(const GameplaySystem *game, Vector3 p, float time, bool real) {
     Color hull={20,29,39,255}, edge={7,13,21,255}, facet={71,84,97,255};
     Color ridge={112,119,119,255};
     DrawCylinderEx((Vector3){p.x,p.y,p.z-2.0f},
@@ -1845,6 +2055,13 @@ static void DrawPrismBoss(const GameplaySystem *game, Vector3 p, float time) {
     DrawLitTriangle3D(top,left,right,facet);
     DrawRingHousing((Vector3){p.x,p.y,p.z+2.21f},0.78f,0.45f,0.30f,ridge,edge);
     DrawSphereEx((Vector3){p.x,p.y,p.z+2.36f},0.30f,8,10,game->primaryColor);
+    // The real iris has two pale mechanical eyelids. This travels with the
+    // model through a shuffle; no floating marker or additional light source.
+    if(real) for(int side=-1;side<=1;side+=2) {
+        float y=p.y+side*(.72f+.08f*sinf(time*2.0f));
+        DrawCylinderEx((Vector3){p.x-.65f,y,p.z+2.48f},
+                       (Vector3){p.x+.65f,y,p.z+2.48f},.12f,.12f,6,(Color){184,197,194,255});
+    }
 }
 
 static void DrawMantisBoss(const GameplaySystem *game, Vector3 p, float time) {
@@ -1920,6 +2137,7 @@ static void DrawLeviathanBoss(const GameplaySystem *game, Vector3 p, float time)
 }
 
 static void DrawEnemy(const GameplaySystem *game, const Enemy *enemy, float runTime) {
+    if(enemy->type>=ENEMY_SNIPER) { DrawRoleEnemy(game,enemy); return; }
     Color color = EnemyColor(game, enemy);
     Vector3 p = enemy->position;
     Color armor = MixColor(color, (Color){ 6, 10, 24, 255 }, 0.76f, 255);
@@ -1927,7 +2145,7 @@ static void DrawEnemy(const GameplaySystem *game, const Enemy *enemy, float runT
     if (enemy->type == ENEMY_BOSS_CORE) {
         int form=game->boss.encounterIndex%BOSSES_PER_RECURSION;
         if(form==1) DrawBastionBoss(game,p,runTime);
-        else if(form==2) DrawPrismBoss(game,p,runTime);
+        else if(form==2) DrawPrismBoss(game,p,runTime,true);
         else if(form==3) DrawMantisBoss(game,p,runTime);
         else if(form==4) DrawLeviathanBoss(game,p,runTime);
         else {
@@ -2442,6 +2660,7 @@ void DrawGameplay3D(const GameplaySystem *game, Shader craftShader, int objectCl
     if (game->boss.active && game->boss.coreSlot >= 0 &&
         game->enemies[game->boss.coreSlot].active) {
         Vector3 core = game->enemies[game->boss.coreSlot].position;
+        if(GetGameplayRound(game)==3) core=PrismFormationCenter(&game->boss);
         if (game->boss.phase == BOSS_APPROACH) {
             float progress = ClampFloat(game->boss.phaseTime / 2.6f, 0.0f, 1.0f);
             float arrival = sinf(progress * 3.14159265f);
@@ -2498,7 +2717,49 @@ void DrawGameplay3D(const GameplaySystem *game, Shader craftShader, int objectCl
             int enemyType = (int)game->enemies[i].type;
             SetShaderValue(craftShader, enemyTypeLoc, &enemyType, SHADER_UNIFORM_INT);
         }
-        DrawEnemy(game, &game->enemies[i], game->runTime);
+        const Enemy *enemy=&game->enemies[i];
+        float departure=enemy->phase==ENEMY_WITHDRAW?
+            ClampFloat((BOSS_CLEARANCE_TIME-enemy->phaseTime)/.85f,0,1):1;
+        departure=departure*departure*(3-2*departure);
+        rlPushMatrix();
+        rlTranslatef(enemy->position.x,enemy->position.y,enemy->position.z);
+        rlScalef(departure,departure,departure);
+        rlTranslatef(-enemy->position.x,-enemy->position.y,-enemy->position.z);
+        DrawEnemy(game,enemy,game->runTime);
+        rlPopMatrix();
+    }
+    if(game->boss.active && game->boss.encounterIndex%BOSSES_PER_RECURSION==2) {
+        int enemyType=ENEMY_BOSS_CORE;
+        rlDrawRenderBatchActive();
+        if(enemyTypeLoc>=0) SetShaderValue(craftShader,enemyTypeLoc,&enemyType,SHADER_UNIFORM_INT);
+        for(int identity=1;identity<3;identity++) {
+            Vector3 copy=PrismBodyPosition(&game->boss,identity);
+            rlDrawRenderBatchActive();
+            SetShaderValue(craftShader,objectOriginLoc,&copy,SHADER_UNIFORM_VEC3);
+            DrawPrismBoss(game,copy,game->runTime,false);
+        }
+    }
+    // Opaque mechanical lattice shells occlude each other instead of building
+    // up into an additive flare when a boss releases a dense formation.
+    for(int i=0;i<MAX_ENEMY_PROJECTILES;i++) {
+        const EnemyProjectile *shot=&game->projectiles[i];
+        if(!shot->active || shot->kind!=3) continue;
+        rlDrawRenderBatchActive();
+        SetShaderValue(craftShader,objectOriginLoc,&shot->position,SHADER_UNIFORM_VEC3);
+        Vector3 p=shot->position;
+        float fade=shot->dissipating?ClampFloat(shot->life/ARRIVAL_SHOT_FADE,0,1):1;
+        rlPushMatrix(); rlTranslatef(p.x,p.y,p.z); rlScalef(fade,fade,fade); rlTranslatef(-p.x,-p.y,-p.z);
+        DrawSphereEx(p,1.15f,5,8,(Color){74,12,22,255});
+        DrawSphereWires(p,1.30f,4,8,(Color){166,27,39,255});
+        for(int tooth=0;tooth<6;tooth++) {
+            float angle=tooth*PI/3.0f+game->runTime*.8f;
+            Vector3 root={p.x+cosf(angle)*.78f,p.y+sinf(angle)*.78f,p.z};
+            Vector3 tip={p.x+cosf(angle)*1.46f,p.y+sinf(angle)*1.46f,p.z};
+            DrawCylinderEx(root,tip,.30f,0,5,(Color){187,29,42,255});
+        }
+        DrawCube((Vector3){p.x-.25f,p.y,p.z+1.09f},.12f,.73f,.12f,(Color){217,46,51,255});
+        DrawCube((Vector3){p.x+.25f,p.y,p.z+1.09f},.12f,.73f,.12f,(Color){217,46,51,255});
+        rlPopMatrix();
     }
     rlDrawRenderBatchActive();
     objectClass = 2;
@@ -2520,6 +2781,21 @@ void DrawGameplay3D(const GameplaySystem *game, Shader craftShader, int objectCl
             ? MixColor(game->threatColor,(Color){255,172,83,255},0.48f,255)
             : game->threatColor;
         Color threatDark = ScaleColor(threat, 0.45f, 0);
+        if(projectile->kind==1) threat=(Color){255,200,130,255};
+        if(projectile->dissipating) {
+            float fade=ClampFloat(projectile->life/ARRIVAL_SHOT_FADE,0,1);
+            DrawEnergyHalo(projectile->position,.9f*fade,(Color){threat.r,threat.g,threat.b,(unsigned char)(70*fade)});
+            DrawCylinderEx(trail,projectile->position,.025f*fade,.15f*fade,7,
+                (Color){threat.r,threat.g,threat.b,(unsigned char)(150*fade)});
+            DrawSphereEx(projectile->position,.18f*fade,6,10,
+                (Color){threat.r,threat.g,threat.b,(unsigned char)(255*fade)});
+            continue;
+        }
+        if(projectile->kind==3) {
+            DrawSphereEx((Vector3){projectile->position.x,projectile->position.y,projectile->position.z+1.25f},
+                         .13f,4,6,(Color){229,36,47,160});
+            continue;
+        }
         DrawEnergyHalo(projectile->position,0.9f,
                        (Color){threat.r,threat.g,threat.b,70});
         DrawCylinderEx(trail, projectile->position, 0.025f, 0.15f, 7,
@@ -2551,6 +2827,11 @@ void DrawGameplay3D(const GameplaySystem *game, Shader craftShader, int objectCl
         SetShaderValue(craftShader,objectClassLoc,&objectClass,SHADER_UNIFORM_INT);
         SetShaderValue(craftShader,objectOriginLoc,&game->player.position,SHADER_UNIFORM_VEC3);
         DrawDetailedBeam(game);
+        Vector3 arc=game->player.position; arc.z=-35;
+        for(int branch=0;branch<game->beamBranchCount;branch++) {
+            DrawCylinderEx(arc,game->beamBranches[branch],.08f,.04f,7,(Color){175,220,209,235});
+            arc=game->beamBranches[branch];
+        }
         rlDrawRenderBatchActive();
         objectClass=2;
         SetShaderValue(craftShader,objectClassLoc,&objectClass,SHADER_UNIFORM_INT);
@@ -2631,7 +2912,7 @@ void DrawGameplayHUD(const GameplaySystem *game, Camera3D camera, int screenWidt
         DrawRectangle(0, scanY - 1, screenWidth, 3,
                       (Color){ game->secondaryColor.r, game->secondaryColor.g,
                                game->secondaryColor.b, alpha });
-        const char *compileText = "HOSTILE RECURSION // COMPILING ARENA";
+        const char *compileText = "HOSTILE INBOUND";
         DrawText(compileText, screenWidth / 2 - MeasureText(compileText, 16) / 2,
                  screenHeight - barHeight + 18, 16,
                  (Color){ game->primaryColor.r, game->primaryColor.g,
@@ -2639,14 +2920,14 @@ void DrawGameplayHUD(const GameplaySystem *game, Camera3D camera, int screenWidt
     }
     const int barX = 20;
     const int barY = 18;
-    const int barWidth = 286;
+    const int barWidth = 230;
     Color energyColor = game->player.energy < 28.0f
         ? (Color){ 255, 50, 105, 255 }
         : (Color){ 0, 235, 190, 255 };
     DrawHudPanel(barX, barY, barWidth, 62,
                  (Color){ game->primaryColor.r, game->primaryColor.g,
                           game->primaryColor.b, 145 });
-    DrawText("CORE // ENERGY", barX + 12, barY + 9, 13,
+    DrawText("ENERGY", barX + 12, barY + 9, 13,
              (Color){ 155, 205, 220, 235 });
     const char *energyText = TextFormat("%03d", (int)game->player.energy);
     DrawText(energyText, barX + barWidth - MeasureText(energyText, 15) - 12,
@@ -2659,12 +2940,12 @@ void DrawGameplayHUD(const GameplaySystem *game, Camera3D camera, int screenWidt
                       game->secondaryColor.b, 95 });
 
     int linkPanelY = barY + 70;
-    Color linkColor = game->chainLinks >= BOMB_LINK_COST ? game->hotColor
-                    : game->chainLinks >= BEAM_LINK_COST ? game->secondaryColor
+    Color linkColor = game->chainLinks >= GameplayBombCost(game) ? game->hotColor
+                    : game->chainLinks >= GameplayBeamCost(game) ? game->secondaryColor
                     : (Color){ 95, 145, 180, 235 };
     DrawHudPanel(barX, linkPanelY, barWidth, 58,
                  (Color){ game->hotColor.r, game->hotColor.g, game->hotColor.b, 125 });
-    DrawText("CHAIN LINKS", barX + 12, linkPanelY + 8, 13,
+    DrawText("LINKS", barX + 12, linkPanelY + 8, 13,
              (Color){ 155, 205, 220, 235 });
     const char *linkText = TextFormat("%03d", game->chainLinks);
     DrawText(linkText, barX + barWidth - MeasureText(linkText, 15) - 12,
@@ -2672,44 +2953,37 @@ void DrawGameplayHUD(const GameplaySystem *game, Camera3D camera, int screenWidt
     DrawSegmentMeter(barX + 12, linkPanelY + 30, barWidth - 24, 9,
                      (float)game->chainLinks / (float)MAX_CHAIN_LINKS, 20, linkColor,
                      (Color){ 18, 33, 49, 205 });
-    const char *specialText = game->chainLinks >= BOMB_LINK_COST ? "K BEAM 50 // L BOMB READY"
-                            : game->chainLinks >= BEAM_LINK_COST ? "K BEAM READY // L BOMB 100"
-                            : "K BEAM 50 // L BOMB 100";
-    DrawText(specialText, barX + 12, linkPanelY + 43, 10,
-             (Color){ linkColor.r, linkColor.g, linkColor.b, 220 });
+    DrawText(TextFormat("%s BEAM",PlayerActionLabel(ACT_BEAM)),barX+12,linkPanelY+43,10,
+             game->chainLinks>=GameplayBeamCost(game)?RAYWHITE:(Color){98,128,145,220});
+    DrawText(TextFormat("%s BOMB",PlayerActionLabel(ACT_BOMB)),barX+120,linkPanelY+43,10,
+             game->chainLinks>=GameplayBombCost(game)?RAYWHITE:(Color){98,128,145,220});
 
     const char *scoreText = TextFormat("SCORE %08d", game->score);
-    int rightPanelWidth = 290;
+    int rightPanelWidth = 230;
     int rightPanelX = screenWidth - rightPanelWidth - 20;
-    int rightPanelHeight = game->weaponTier < 3 ? 100 : 82;
+    int rightPanelHeight = 76;
     DrawHudPanel(rightPanelX, 18, rightPanelWidth, rightPanelHeight,
                  (Color){ game->secondaryColor.r, game->secondaryColor.g,
                           game->secondaryColor.b, 145 });
-    DrawText(scoreText, rightPanelX + rightPanelWidth - MeasureText(scoreText, 22) - 12,
-             26, 22, (Color){ 195, 230, 240, 255 });
+    DrawText(TextFormat("%02d:%02d",(int)game->activeTime/60,(int)game->activeTime%60),
+             rightPanelX+12,26,22,(Color){215,230,234,255});
+    DrawText(scoreText,rightPanelX+12,58,13,(Color){149,183,198,240});
     if (game->combo > 1) {
-        const char *comboText = TextFormat("x%d CHAIN", game->combo);
-        DrawText(comboText, rightPanelX + 12, 28, 17, game->hotColor);
+        const char *comboText = TextFormat("x%d", game->combo);
+        DrawText(comboText, rightPanelX + rightPanelWidth-MeasureText(comboText,14)-12,58,14,game->hotColor);
     }
 
     static const char *weaponNames[4] = {
         "PULSE", "ACCELERATOR", "MULTILOCK-6", "OVERDRIVE"
     };
-    static const int nextThreshold[4] = { 4, 8, 12, 12 };
-    const char *weaponText = TextFormat("WEAPON  %s", weaponNames[game->weaponTier]);
-    int weaponY = 55;
     Color weaponColor = game->weaponTier == 0 ? (Color){ 120, 175, 205, 235 }
                         : (game->weaponTier >= 3 ? game->hotColor : game->secondaryColor);
-    DrawText(weaponText, rightPanelX + rightPanelWidth - MeasureText(weaponText, 15) - 12,
-             weaponY, 15, weaponColor);
-    if (game->weaponTier < 3) {
-        const char *nextText = TextFormat("NEXT UPLINK  x%d", nextThreshold[game->weaponTier]);
-        DrawText(nextText, rightPanelX + rightPanelWidth - MeasureText(nextText, 11) - 12,
-                 weaponY + 22, 11, (Color){ 100, 145, 175, 210 });
-    }
+    for(int level=0;level<3;level++)
+        DrawRectangle(rightPanelX+rightPanelWidth-50+level*12,32,8,8,
+            level<game->weaponTier?weaponColor:(Color){39,58,69,220});
 
     int campaignY = 18 + rightPanelHeight + 8;
-    DrawHudPanel(rightPanelX, campaignY, rightPanelWidth, 50,
+    DrawHudPanel(rightPanelX, campaignY, rightPanelWidth, 42,
                  (Color){ game->primaryColor.r, game->primaryColor.g,
                           game->primaryColor.b, 112 });
     const char *campaignText = TextFormat("DEPTH %d  //  ROUND %d/%d",
@@ -2722,15 +2996,9 @@ void DrawGameplayHUD(const GameplaySystem *game, Camera3D camera, int screenWidt
     DrawSegmentMeter(rightPanelX + 12, campaignY + 29, rightPanelWidth - 24, 7,
                      proximity, BOSSES_PER_RECURSION - 1, game->hotColor,
                      (Color){ 24, 34, 43, 205 });
-    DrawText(GetGameplayRound(game) == BOSSES_PER_RECURSION ? "EVENT HORIZON" : "SINGULARITY RANGE",
-             rightPanelX + 12, campaignY + 38, 9,
-             (Color){ 105, 145, 165, 205 });
 
     if (game->boss.active && game->boss.coreSlot >= 0) {
         const Enemy *core = &game->enemies[game->boss.coreSlot];
-        static const char *phaseNames[] = {
-            "DORMANT", "INBOUND", "FIREWALL", "CORE EXPOSED", "ENRAGED", "SINGULARITY"
-        };
         const int bossBarWidth = 420;
         int bossBarX = screenWidth / 2 - bossBarWidth / 2;
         float healthRatio = core->active && game->boss.maxHealth > 0.0f
@@ -2739,34 +3007,24 @@ void DrawGameplayHUD(const GameplaySystem *game, Camera3D camera, int screenWidt
             "RECURSIVE CORE", "IRON BASTION", "PRISM WRAITH",
             "SIEGE MANTIS", "FRACTAL LEVIATHAN"
         };
-        const char *bossTitle = TextFormat("%s // %s",
-            bossNames[game->boss.encounterIndex % BOSSES_PER_RECURSION],
-            phaseNames[game->boss.phase]);
+        const char *bossTitle=bossNames[game->boss.encounterIndex%BOSSES_PER_RECURSION];
         DrawHudPanel(bossBarX - 16, 17, bossBarWidth + 32, 64,
                      (Color){ game->hotColor.r, game->hotColor.g,
                               game->hotColor.b, 150 });
         DrawText(bossTitle, screenWidth / 2 - MeasureText(bossTitle, 16) / 2,
                  25, 16, game->hotColor);
         DrawSegmentMeter(bossBarX, 49, bossBarWidth, 9, healthRatio, 28,
-                         game->hotColor, (Color){ 30, 14, 34, 210 });
-        if (game->boss.phase == BOSS_APPROACH) {
-            const char *lockingText = game->boss.leviathan
-                ? "EVENT HORIZON LOCK // GRAVITY FIELD RISING"
-                : "CORE SIGNATURE LOCKING";
-            DrawText(lockingText, screenWidth / 2 - MeasureText(lockingText, 13) / 2,
-                     64, 12, game->primaryColor);
-        } else if (game->boss.shieldNodes > 0) {
-            const char *shieldText = TextFormat(game->boss.leviathan
-                                                ? "BREAK HORIZON ANCHORS  %d/4"
-                                                : "DESTROY FIREWALL NODES  %d/4",
-                                                game->boss.shieldNodes);
-            DrawText(shieldText, screenWidth / 2 - MeasureText(shieldText, 13) / 2,
-                     64, 12, game->primaryColor);
+                         game->boss.phase>=BOSS_ENRAGED?(Color){226,58,73,255}:game->hotColor,
+                         (Color){ 30, 14, 34, 210 });
+        if(game->boss.shieldNodes>0) {
+            DrawText("SHIELD",screenWidth/2-51,65,10,(Color){155,184,191,240});
+            for(int i=0;i<4;i++) DrawRectangle(screenWidth/2+8+i*12,66,8,6,
+                i<game->boss.shieldNodes?game->primaryColor:(Color){37,46,52,220});
         }
     }
 
-    Vector2 reticle = GetWorldToScreen(
-        (Vector3){ game->player.position.x, game->player.position.y, -34.0f }, camera);
+    Vector2 reticle = GetWorldToScreenEx(
+        (Vector3){ game->player.position.x, game->player.position.y, -34.0f }, camera,screenWidth,screenHeight);
     float reticleRadius = 8.0f + ClampFloat(game->player.chargeTime, 0.0f, 1.0f) * 25.0f;
     Color reticleColor = game->player.chargeTime > TAP_THRESHOLD
         ? (Color){ 255, 225, 65, 255 }
@@ -2787,6 +3045,7 @@ void DrawGameplayHUD(const GameplaySystem *game, Camera3D camera, int screenWidt
         DrawRectangle(screenWidth / 2 - 90, screenHeight - 68, chargeWidth, 6,
                       (Color){ 255, 205, 45, 255 });
         int lockCapacity = game->weaponTier >= 2 ? 6 : 4;
+        if(game->upgrades[UPG_FOCUS]) lockCapacity=2;
         const char *lockText = TextFormat("LOCKS %d/%d", game->lockedCount, lockCapacity);
         DrawText(lockText, screenWidth / 2 - MeasureText(lockText, 16) / 2,
                  screenHeight - 94, 16, reticleColor);
@@ -2795,14 +3054,13 @@ void DrawGameplayHUD(const GameplaySystem *game, Camera3D camera, int screenWidt
     for (int i = 0; i < MAX_ENEMIES; i++) {
         const Enemy *enemy = &game->enemies[i];
         if (!enemy->active || !enemy->locked) continue;
-        Vector2 marker = GetWorldToScreen(enemy->position, camera);
-        DrawText("LOCK", (int)marker.x - 19, (int)marker.y - 30, 12,
-                 (Color){ 255, 225, 65, 255 });
+        Vector2 marker = GetWorldToScreenEx(enemy->position, camera,screenWidth,screenHeight);
+        DrawCircleLines((int)marker.x,(int)marker.y,12,(Color){255,225,65,225});
     }
 
-    float helpFade = ClampFloat((12.0f - game->runTime) / 3.0f, 0.0f, 1.0f);
+    float helpFade = ClampFloat((5.0f - game->activeTime) / 1.5f, 0.0f, 1.0f);
     if (helpFade > 0.001f) {
-        const char *help = "MOVE WASD / ARROWS   FIRE J / MOUSE   BEAM K   BOMB L   BOOST SPACE";
+        const char *help = "F1 tips   F2 controls";
         unsigned char alpha = (unsigned char)(helpFade * 195.0f);
         int helpWidth = MeasureText(help, 14);
         DrawRectangle(18, screenHeight - 38, helpWidth + 22, 25,
@@ -2814,9 +3072,9 @@ void DrawGameplayHUD(const GameplaySystem *game, Camera3D camera, int screenWidt
                  (Color){ 135, 175, 205, alpha });
     }
 
-    if (game->weaponFlash > 0.0f) {
+    if (game->weaponFlash > 0.0f && !game->boss.active) {
         unsigned char alpha = (unsigned char)(ClampFloat(game->weaponFlash, 0.0f, 1.0f) * 235.0f);
-        const char *upgrade = TextFormat("CHAIN WEAPON // %s", weaponNames[game->weaponTier]);
+        const char *upgrade = weaponNames[game->weaponTier];
         int width = MeasureText(upgrade, 24);
         DrawRectangle(screenWidth / 2 - width / 2 - 18, 112, width + 36, 43,
                       (Color){ 3, 8, 20, (unsigned char)(alpha * 3 / 4) });
@@ -2828,17 +3086,17 @@ void DrawGameplayHUD(const GameplaySystem *game, Camera3D camera, int screenWidt
 
     if (game->boss.introFlash > 0.0f) {
         unsigned char alpha = (unsigned char)(game->boss.introFlash * 230.0f);
-        const char *warning = game->boss.leviathan
-            ? "FRACTAL LEVIATHAN // EVENT HORIZON"
-            : "RECURSIVE CORE DETECTED";
+        static const char *arrivalNames[]={"RECURSIVE CORE INBOUND","IRON BASTION INBOUND",
+            "PRISM WRAITH INBOUND","SIEGE MANTIS INBOUND","FRACTAL LEVIATHAN // EVENT HORIZON"};
+        const char *warning=arrivalNames[game->boss.encounterIndex%BOSSES_PER_RECURSION];
         DrawText(warning, screenWidth / 2 - MeasureText(warning, 30) / 2,
                  174, 30, (Color){ game->hotColor.r, game->hotColor.g,
                                     game->hotColor.b, alpha });
     } else if (game->boss.defeatFlash > 0.0f) {
         unsigned char alpha = (unsigned char)(game->boss.defeatFlash * 230.0f);
         const char *clear = game->boss.leviathan
-            ? "LEVIATHAN COLLAPSED // DEEPER RECURSION UNLOCKED"
-            : "ROUND CLEARED // DESCENT CONTINUES";
+            ? "DESCENDING DEEPER"
+            : "ROUND CLEARED";
         DrawText(clear, screenWidth / 2 - MeasureText(clear, 25) / 2,
                  174, 25, (Color){ game->primaryColor.r, game->primaryColor.g,
                                     game->primaryColor.b, alpha });
@@ -2854,22 +3112,34 @@ void DrawGameplayHUD(const GameplaySystem *game, Camera3D camera, int screenWidt
         DrawRectangleGradientH(screenWidth - 190, 0, 190, screenHeight, clear, damage);
         DrawRectangleGradientV(0, 0, screenWidth, 105, damage, clear);
         DrawRectangleGradientV(0, screenHeight - 105, screenWidth, 105, clear, damage);
+        Vector2 center={(float)screenWidth*.5f,(float)screenHeight*.5f};
+        Vector2 direction=game->hitDirection;
+        if(Vector2LengthSqr(direction)<.01f) direction=(Vector2){0,-1};
+        DrawLineEx(Vector2Add(center,Vector2Scale(direction,62)),
+                   Vector2Add(center,Vector2Scale(direction,90)),6,(Color){255,210,160,alpha});
     }
     if (game->overdriveActive && !game->gameOver) {
-        const char *warning="BOOST // GUIDED FIRE // HIT DAMAGE +15%";
+        const char *warning="BOOST";
         int x=screenWidth-MeasureText(warning,13)-32;
         int y=screenHeight-127;
         DrawRectangle(x-9,y-4,screenWidth-x-11,24,(Color){27,16,16,222});
         DrawRectangleLines(x-9,y-4,screenWidth-x-11,24,(Color){185,94,77,220});
         DrawText(warning,x,y,13,(Color){242,175,130,255});
     }
-    if (game->gameOver) {
-        DrawRectangle(0, 0, screenWidth, screenHeight, (Color){ 2, 4, 12, 205 });
-        const char *title = "CORE DESYNCHRONIZED";
-        const char *restart = "PRESS R TO RECOMPILE RUN";
-        DrawText(title, screenWidth / 2 - MeasureText(title, 38) / 2,
-                 screenHeight / 2 - 48, 38, (Color){ 255, 45, 125, 255 });
-        DrawText(restart, screenWidth / 2 - MeasureText(restart, 20) / 2,
-                 screenHeight / 2 + 18, 20, (Color){ 180, 225, 240, 255 });
+    DrawBossPatternHints(game,camera,screenWidth,screenHeight);
+    DrawHudPanel(20,154,230,32,(Color){94,149,157,135});
+    DrawText(TextFormat("%s EVADE",PlayerActionLabel(ACT_DODGE)),32,163,12,(Color){159,209,185,255});
+    float evadeReady=1.0f-ClampFloat(game->player.dodgeCooldown/(3.2f-.4f*game->upgrades[UPG_AGILITY]),0,1);
+    DrawSegmentMeter(158,166,80,5,evadeReady,8,(Color){159,209,185,255},(Color){26,42,49,220});
+    if(game->grazeFlash>0) DrawText("+LINKS",32,194,12,(Color){204,224,169,255});
+    if(game->modifier!=MUT_NONE && game->modifierBanner>0) {
+        const char *mod=GameplayModifierName(game->modifier);
+        if(game->modifierBanner>0) {
+            DrawRectangle(screenWidth/2-320,166,640,65,(Color){9,20,27,225});
+            DrawText("UNIVERSE REFORMED",screenWidth/2-MeasureText("UNIVERSE REFORMED",23)/2,176,23,RAYWHITE);
+            DrawText(mod,screenWidth/2-MeasureText(mod,15)/2,207,15,LIGHTGRAY);
+        }
     }
+    DrawFlightTutorial(game,screenWidth,screenHeight);
+    if(game->gameOver) DrawRunReport(game,screenWidth,screenHeight);
 }

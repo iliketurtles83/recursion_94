@@ -349,6 +349,8 @@ static void TriggerStep(SynthSystem *synth, float intensity, float bossIntensity
 }
 
 static void RenderAudioFrames(SynthSystem *synth, short *output, unsigned int frames) {
+    float musicVolume=BitsFloat(atomic_load_explicit(&synth->musicVolume,memory_order_relaxed));
+    float effectsVolume=BitsFloat(atomic_load_explicit(&synth->effectsVolume,memory_order_relaxed));
     if (atomic_exchange_explicit(&synth->reseedPending, false, memory_order_acquire)) {
         uint32_t runSeed = atomic_load_explicit(&synth->pendingSeed, memory_order_relaxed);
         ConfigureSynthSeed(synth, runSeed);
@@ -707,6 +709,9 @@ static void RenderAudioFrames(SynthSystem *synth, short *output, unsigned int fr
                 float envelope = attack * expf(-progress * 3.4f);
                 sfx += SoftClip((body + edge + transient) * 1.35f) *
                        envelope * sfxVoice->volume;
+            } else if(sfxVoice->type==SFX_WARNING) {
+                float pitch=sfxVoice->time<.11f?880.0f:1320.0f;
+                sfx+=sinf(2*PI*pitch*sfxVoice->time)*sinf(PI*progress)*sfxVoice->volume;
             } else if (sfxVoice->type == SFX_BOSS_RISER) {
                 float eased = progress * progress;
                 float frequency = sfxVoice->freqStart +
@@ -819,8 +824,8 @@ static void RenderAudioFrames(SynthSystem *synth, short *output, unsigned int fr
                reverbRight * reverbWet;
         float musicLeft = kick * (0.26f + bossIntensity * 0.015f) + musicBedLeft * 1.12f;
         float musicRight = kick * (0.26f + bossIntensity * 0.015f) + musicBedRight * 1.12f;
-        float left = musicLeft * MUSIC_BUS_GAIN + sfx * SFX_BUS_GAIN;
-        float right = musicRight * MUSIC_BUS_GAIN + sfx * SFX_BUS_GAIN;
+        float left = musicLeft * MUSIC_BUS_GAIN * musicVolume + sfx * SFX_BUS_GAIN * effectsVolume;
+        float right = musicRight * MUSIC_BUS_GAIN * musicVolume + sfx * SFX_BUS_GAIN * effectsVolume;
 
         if (synth->glitchAmount > 0.08f) {
             float levels = 32.0f - synth->glitchAmount * 20.0f;
@@ -967,6 +972,8 @@ static void InitializeSynthState(SynthSystem *synth, uint32_t runSeed,
     atomic_init(&synth->controlDrops, 0u);
     atomic_init(&synth->sfxCommandDrops, 0u);
     atomic_init(&synth->initialized, false);
+    atomic_init(&synth->musicVolume,FloatBits(1.0f));
+    atomic_init(&synth->effectsVolume,FloatBits(1.0f));
     ConfigureSynthSeed(synth, runSeed);
     synth->currentBpm = synth->ambientBpm;
     synth->targetBpm = synth->ambientBpm;
@@ -1015,6 +1022,11 @@ static void InitializeSynthState(SynthSystem *synth, uint32_t runSeed,
         synth->reverbAllpasses[i].size = allpassSizes[i];
         synth->reverbAllpasses[i].feedback = 0.5f;
     }
+}
+
+void SetSynthVolumes(SynthSystem *synth,float music,float effects) {
+    atomic_store_explicit(&synth->musicVolume,FloatBits(fmaxf(0,fminf(1,music))),memory_order_relaxed);
+    atomic_store_explicit(&synth->effectsVolume,FloatBits(fmaxf(0,fminf(1,effects))),memory_order_relaxed);
 }
 
 void InitAudioSynth(SynthSystem *synth, uint32_t runSeed) {
@@ -1120,6 +1132,8 @@ static void StartSynthSFX(SynthSystem *synth, SFXType type) {
         } else if (type == SFX_BOSS_RISER) {
             voice->duration = 2.55f; voice->freqStart = 48.0f;
             voice->freqEnd = 720.0f; voice->volume = 0.46f;
+        } else if(type==SFX_WARNING) {
+            voice->duration=.24f; voice->freqStart=880; voice->freqEnd=1320; voice->volume=.15f;
         } else if (type == SFX_CORE_COLLAPSE) {
             voice->duration = 3.25f; voice->freqStart = 92.0f;
             voice->freqEnd = 23.0f; voice->volume = 1.0f;
@@ -1133,7 +1147,7 @@ static void StartSynthSFX(SynthSystem *synth, SFXType type) {
 
 void TriggerSynthSFX(SynthSystem *synth, SFXType type) {
     if (!atomic_load_explicit(&synth->initialized, memory_order_acquire) ||
-        type <= SFX_NONE || type > SFX_CORE_COLLAPSE) return;
+        type <= SFX_NONE || type > SFX_WARNING) return;
 
     unsigned int commandWrite = atomic_load_explicit(&synth->sfxCommandWrite,
                                                      memory_order_relaxed);

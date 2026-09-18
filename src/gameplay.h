@@ -15,20 +15,32 @@
 #define MAX_CHAIN_LINKS 100
 #define BEAM_LINK_COST 50
 #define BOMB_LINK_COST 100
+#define UPGRADE_COUNT 13
+#define UPGRADE_MAX_LEVEL 3
+
+typedef enum {
+    UPG_PIERCE, UPG_FOCUS, UPG_BRANCH, UPG_CAPACITOR, UPG_EFFICIENCY,
+    UPG_AGILITY, UPG_GRAZE, UPG_CHAIN, UPG_WIDELOCK, UPG_TWIN,
+    UPG_QUICKCHARGE, UPG_BOMB_GUARD, UPG_HARVEST
+} UpgradeType;
+
+typedef enum { MUT_NONE, MUT_CROSSFIRE, MUT_GRAVITY, MUT_ESCORTS, MUT_COUNT } RecursionModifier;
 
 typedef enum {
     ENEMY_DRIFTER = 0,
     ENEMY_CHASER,
     ENEMY_SPLITTER,
     ENEMY_BOSS_NODE,
-    ENEMY_BOSS_CORE
+    ENEMY_BOSS_CORE,
+    ENEMY_SNIPER, ENEMY_CARRIER, ENEMY_SUPPORT
 } EnemyType;
 
 typedef enum {
     ENEMY_APPROACH = 0,
     ENEMY_HOVER,
     ENEMY_TELEGRAPH,
-    ENEMY_ATTACK
+    ENEMY_ATTACK,
+    ENEMY_WITHDRAW
 } EnemyPhase;
 
 typedef struct {
@@ -46,6 +58,7 @@ typedef struct {
     int generation;
     bool active;
     bool locked;
+    Vector3 attackAim;
 } Enemy;
 
 typedef struct {
@@ -54,6 +67,9 @@ typedef struct {
     float life;
     bool homing; // Mild boost guidance; retains lock until the shot expires.
     bool active;
+    bool grazed;
+    bool dissipating; // Boss-arrival cleanup: visible, harmless, no graze rewards.
+    unsigned char kind; // 0 regular, 1 sniper, 2 boss, 3 large boss lattice; patterns never home.
 } EnemyProjectile;
 
 // Charged shots home toward their enemy slot. Tap shots use targetEnemy = -1
@@ -66,6 +82,8 @@ typedef struct {
     float life;
     int targetEnemy;
     bool charged;
+    int pierces;
+    uint64_t hitMask;
     bool active;
 } PlayerProjectile;
 
@@ -86,8 +104,12 @@ typedef struct {
     float energy;
     float invulnerability;
     float chargeTime;
+    float fireHoldTime;
     float bank;
     bool fireHeldLast;
+    float dodgeTimer;
+    float dodgeCooldown;
+    Vector2 dodgeDirection;
 } PlayerState;
 
 typedef struct {
@@ -101,6 +123,8 @@ typedef struct {
     bool bossStarted;
     bool bossDefeated;
     bool recursionCompleted;
+    bool attackWarning;
+    bool dodged;
 } GameplayEvents;
 
 typedef enum {
@@ -130,6 +154,15 @@ typedef struct {
     BossPhase phase;
     bool leviathan;
     bool active;
+    float encounterTime;
+    bool warningArmed;
+    Vector3 attackAim;
+    float safeLane;
+    float prismFrom[3], prismTo[3]; // Identity 0 is real; slots move, identity/health do not.
+    float prismBlend;
+    unsigned int prismShuffles;
+    bool arrivalPending;
+    float arrivalTime;
 } BossState;
 
 typedef struct {
@@ -166,6 +199,25 @@ typedef struct {
     bool suppressLinkRewards;
     bool overdriveActive;
     bool gameOver;
+    float activeTime;
+    float roundTime;
+    int bestCombo;
+    int hitsTaken;
+    int nearMisses;
+    int shotsFired;
+    int chargeBursts;
+    int dodges;
+    int upgrades[UPGRADE_COUNT];
+    int upgradeOffers[3];
+    bool upgradePending;
+    bool practice;
+    RecursionModifier modifier;
+    float modifierBanner;
+    float grazeFlash;
+    Vector2 hitDirection;
+    int lastHitSource; // 0 projectile, 1 guided, 2 sniper, 3 boss, 4 collision.
+    Vector3 beamBranches[3];
+    int beamBranchCount;
 } GameplaySystem;
 
 void InitGameplay(GameplaySystem *game, uint32_t runSeed);
@@ -182,5 +234,14 @@ void DrawGameplay3D(const GameplaySystem *game, Shader craftShader, int objectCl
                     int enemyTypeLoc, int objectOriginLoc);
 void DrawGameplayHUD(const GameplaySystem *game, Camera3D camera, int screenWidth, int screenHeight);
 bool ValidateGameplaySpecials(void);
+bool ValidatePlayability(void);
+void OfferGameplayUpgrade(GameplaySystem *game);
+bool ChooseGameplayUpgrade(GameplaySystem *game, int choice);
+const char *GameplayUpgradeName(int upgrade);
+const char *GameplayUpgradeDescription(int upgrade);
+const char *GameplayUpgradePreview(const GameplaySystem *game,int upgrade);
+const char *GameplayModifierName(RecursionModifier modifier);
+int GameplayBeamCost(const GameplaySystem *game);
+int GameplayBombCost(const GameplaySystem *game);
 
 #endif // GAMEPLAY_H

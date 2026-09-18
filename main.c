@@ -6,6 +6,7 @@
 #include "gameplay.h"
 #include "demoscene.h"
 #include "shader_sources.h"
+#include "player_ui.h"
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -222,7 +223,7 @@ static void UnloadPostProcess(PostProcessSystem *post) {
     post->ready = false;
 }
 
-typedef enum { MENU_NONE, MENU_PAUSED, MENU_QUIT_CONFIRM } MenuMode;
+typedef enum { MENU_NONE, MENU_PAUSED, MENU_QUIT_CONFIRM, MENU_SETTINGS, MENU_UPGRADE } MenuMode;
 
 static Rectangle PauseControl(int width, int height) {
     return (Rectangle){ (float)(width-128), (float)(height-92), 108.0f, 34.0f };
@@ -231,6 +232,10 @@ static Rectangle PauseControl(int width, int height) {
 static Rectangle MenuControl(int width, int height, bool right) {
     float x=(float)width*0.5f+(right?11.0f:-173.0f);
     return (Rectangle){x,(float)height*0.5f+49.0f,162.0f,39.0f};
+}
+
+static Rectangle SettingsControl(int width,int height) {
+    return (Rectangle){width*.5f-95,height*.5f+4,190,32};
 }
 
 static void DrawMenuControl(Rectangle bounds, const char *label, Color accent) {
@@ -246,7 +251,7 @@ static void DrawPauseControl(int width, int height) {
     DrawMenuControl(bounds,"II PAUSE",(Color){136,193,204,235});
 }
 
-static void DrawMenuOverlay(MenuMode mode,int width,int height) {
+static void DrawMenuOverlay(MenuMode mode,int width,int height,int selected) {
     DrawRectangle(0,0,width,height,(Color){2,5,11,190});
     int panelX=width/2-223, panelY=height/2-117;
     DrawRectangle(panelX,panelY,446,228,(Color){10,18,28,248});
@@ -261,11 +266,12 @@ static void DrawMenuOverlay(MenuMode mode,int width,int height) {
     DrawText(subtext,width/2-MeasureText(subtext,15)/2,panelY+86,15,
              (Color){139,180,190,235});
     if(mode==MENU_PAUSED) {
+        DrawMenuControl(SettingsControl(width,height),"SETTINGS / F2",(Color){173,197,182,255});
         DrawMenuControl(MenuControl(width,height,false),"RESUME",
                         (Color){125,211,197,255});
         DrawMenuControl(MenuControl(width,height,true),"QUIT...",
                         (Color){219,155,155,255});
-        const char *hint="P / ENTER TO RESUME  //  ESC TO QUIT";
+        const char *hint="ARROWS / STICK + ENTER / A  //  ESC / B TO RESUME";
         DrawText(hint,width/2-MeasureText(hint,12)/2,panelY+207,12,
                  (Color){105,151,164,225});
     } else {
@@ -273,10 +279,12 @@ static void DrawMenuOverlay(MenuMode mode,int width,int height) {
                         (Color){223,142,142,255});
         DrawMenuControl(MenuControl(width,height,true),"NO, RESUME",
                         (Color){125,211,197,255});
-        const char *hint="ENTER / Y: QUIT  //  ESC / N: RESUME";
+        const char *hint="CHOOSE + ENTER / A  //  Y: QUIT  //  ESC / B: BACK";
         DrawText(hint,width/2-MeasureText(hint,12)/2,panelY+207,12,
                  (Color){105,151,164,225});
     }
+    Rectangle focused=mode==MENU_PAUSED&&selected==2?SettingsControl(width,height):MenuControl(width,height,selected==1);
+    DrawRectangleLinesEx(focused,2,(Color){211,224,196,255});
 }
 #endif
 
@@ -307,11 +315,13 @@ int main(int argc, char **argv) {
 #elif defined(RECURSION_VALIDATE_GAMEPLAY)
     (void)argc;
     (void)argv;
-    return ValidateGameplaySpecials() ? 0 : 1;
+    bool classic=ValidateGameplaySpecials();
+    bool expanded=ValidatePlayability();
+    return classic && expanded ? 0 : 1;
 #else
     const int screenWidth = 1280;
     const int screenHeight = 720;
-    SetConfigFlags(FLAG_VSYNC_HINT | FLAG_MSAA_4X_HINT);
+    SetConfigFlags(FLAG_VSYNC_HINT | FLAG_MSAA_4X_HINT | FLAG_WINDOW_RESIZABLE);
     InitWindow(screenWidth, screenHeight, "RECURSION_94 - Procedural Cyberspace Trench");
     int renderWidth = GetScreenWidth();
     int renderHeight = GetScreenHeight();
@@ -322,6 +332,8 @@ int main(int argc, char **argv) {
     // Raylib normally treats Escape as an unconditional window-close key.
     // Route it through our confirmation state instead.
     SetExitKey(KEY_NULL);
+    SetWindowMinSize(960,600);
+    InitPlayerPreferences();
 
     Camera3D camera = { 0 };
     camera.position = (Vector3){ 0.0f, 5.5f, 8.0f };
@@ -355,6 +367,7 @@ int main(int argc, char **argv) {
             InitEnvironment(&env, activeSeed);
             InitAudioSynth(&synth, activeSeed);
             InitGameplay(&game, activeSeed);
+            game.practice=bossTestStart;
             InitDemoscene(&demo, activeSeed);
             InitPostProcess(&post, renderWidth, renderHeight, activeSeed, &demo);
             runStarted = true;
@@ -372,6 +385,9 @@ int main(int argc, char **argv) {
     DemosceneSystem transitionToDemo = { 0 };
     bool debugOverlay = false;
     MenuMode menuMode = MENU_NONE;
+    MenuMode settingsReturn=MENU_NONE,quitReturn=MENU_NONE;
+    int menuSelection=0,upgradeSelection=0;
+    bool audioPaused=false,recordedRun=false;
     bool quitConfirmed = false;
     float musicIntensity = 0.24f;
     float beatPulse = 0.0f;
@@ -382,9 +398,14 @@ int main(int argc, char **argv) {
     SetTargetFPS(60);
 
     while (!WindowShouldClose() && !quitConfirmed) {
-        float dt = GetFrameTime();
+        float dt = fminf(GetFrameTime(),.05f);
+        PollPlayerControls();
 
-        if (IsKeyPressed(KEY_F)) ToggleFullscreen();
+        if (IsKeyPressed(KEY_F) && menuMode!=MENU_SETTINGS) ToggleFullscreen();
+        if(IsKeyPressed(KEY_F1) && menuMode!=MENU_SETTINGS) {
+            playerPreferences.tutorialDone=!playerPreferences.tutorialDone;
+            ResetFlightTutorial(&game);
+        }
 
         int currentWidth = GetScreenWidth();
         int currentHeight = GetScreenHeight();
@@ -400,48 +421,80 @@ int main(int argc, char **argv) {
         bool clicked=IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
         Vector2 mouse=GetMousePosition();
         bool resumedThisFrame=false;
-        if(menuMode==MENU_QUIT_CONFIRM) {
-            if(IsKeyPressed(KEY_Y)||IsKeyPressed(KEY_ENTER)||IsKeyPressed(KEY_KP_ENTER)||
+        if(runStarted && !game.gameOver && menuMode==MENU_NONE &&
+           !IsWindowState(FLAG_WINDOW_HIDDEN) && !IsWindowFocused()) {
+            menuMode=MENU_PAUSED; menuSelection=0;
+        }
+        if(menuMode==MENU_SETTINGS) {
+            if(UpdatePlayerSettings()) { menuMode=settingsReturn; resumedThisFrame=true; SuppressPlayerFire(&game); }
+        } else if(menuMode==MENU_QUIT_CONFIRM) {
+            int direction=MenuHorizontal();
+            if(direction) menuSelection=direction>0?1:0;
+            if(IsKeyPressed(KEY_Y)||(MenuAccept()&&menuSelection==0)||
                (clicked&&CheckCollisionPointRec(mouse,MenuControl(renderWidth,renderHeight,false)))) {
                 quitConfirmed=true;
                 continue;
             }
-            if(IsKeyPressed(KEY_N)||IsKeyPressed(KEY_ESCAPE)||
+            if(IsKeyPressed(KEY_N)||MenuBack()||(MenuAccept()&&menuSelection==1)||
                (clicked&&CheckCollisionPointRec(mouse,MenuControl(renderWidth,renderHeight,true)))) {
-                menuMode=MENU_NONE;
+                menuMode=quitReturn;
                 resumedThisFrame=true;
-                if(runStarted) ResumeAudioStream(synth.stream);
+                SuppressPlayerFire(&game);
             }
         } else if(menuMode==MENU_PAUSED) {
-            if(IsKeyPressed(KEY_ESCAPE)||
+            if(MenuHorizontal()) menuSelection=MenuHorizontal()>0?1:0;
+            if(MenuVertical()) menuSelection=menuSelection==2?0:2;
+            if(IsKeyPressed(KEY_F2)||(MenuAccept()&&menuSelection==2)||
+               (clicked&&CheckCollisionPointRec(mouse,SettingsControl(renderWidth,renderHeight)))) {
+                settingsReturn=MENU_PAUSED; menuMode=MENU_SETTINGS; OpenPlayerSettings();
+            } else if((MenuAccept()&&menuSelection==1)||
                (clicked&&CheckCollisionPointRec(mouse,MenuControl(renderWidth,renderHeight,true)))) {
-                menuMode=MENU_QUIT_CONFIRM;
-            } else if(IsKeyPressed(KEY_P)||IsKeyPressed(KEY_ENTER)||IsKeyPressed(KEY_KP_ENTER)||
+                quitReturn=MENU_NONE; menuMode=MENU_QUIT_CONFIRM; menuSelection=1;
+            } else if(MenuBack()||PlayerActionPressed(ACT_PAUSE)||(MenuAccept()&&menuSelection==0)||
                       (clicked&&CheckCollisionPointRec(mouse,MenuControl(renderWidth,renderHeight,false)))) {
                 menuMode=MENU_NONE;
                 resumedThisFrame=true;
-                ResumeAudioStream(synth.stream);
+                SuppressPlayerFire(&game);
             }
-        } else if(IsKeyPressed(KEY_ESCAPE)) {
-            menuMode=MENU_QUIT_CONFIRM;
-            if(runStarted) PauseAudioStream(synth.stream);
-        } else if(runStarted&&(IsKeyPressed(KEY_P)||
+        } else if(menuMode==MENU_UPGRADE) {
+            upgradeSelection=(upgradeSelection+MenuHorizontal()+3)%3;
+            int choice=ClickedUpgrade(renderWidth,renderHeight);
+            if(IsKeyPressed(KEY_ONE)) choice=0;
+            if(IsKeyPressed(KEY_TWO)) choice=1;
+            if(IsKeyPressed(KEY_THREE)) choice=2;
+            if(MenuAccept()) choice=upgradeSelection;
+            if(choice>=0 && ChooseGameplayUpgrade(&game,choice)) {
+                menuMode=MENU_NONE; resumedThisFrame=true; SuppressPlayerFire(&game);
+            } else if(MenuBack()) { quitReturn=MENU_UPGRADE; menuMode=MENU_QUIT_CONFIRM; menuSelection=1; }
+            else if(IsKeyPressed(KEY_F2)) { settingsReturn=MENU_UPGRADE; menuMode=MENU_SETTINGS; OpenPlayerSettings(); }
+        } else if(MenuBack()) {
+            quitReturn=MENU_NONE; menuMode=MENU_QUIT_CONFIRM; menuSelection=1;
+        } else if(IsKeyPressed(KEY_F2)) {
+            settingsReturn=MENU_NONE; menuMode=MENU_SETTINGS; OpenPlayerSettings();
+        } else if(runStarted&&(PlayerActionPressed(ACT_PAUSE)||
                   (clicked&&CheckCollisionPointRec(mouse,PauseControl(renderWidth,renderHeight))))) {
-            menuMode=MENU_PAUSED;
-            PauseAudioStream(synth.stream);
+            menuMode=MENU_PAUSED; menuSelection=0;
+        }
+        if(runStarted) {
+            SetSynthVolumes(&synth,playerPreferences.musicVolume,playerPreferences.sfxVolume);
+            // Salvage freezes the flight simulation, not the music callback.
+            // Actual pause/settings/quit screens retain their pause behavior.
+            bool shouldPause=menuMode!=MENU_NONE && menuMode!=MENU_UPGRADE;
+            if(shouldPause!=audioPaused) {
+                if(shouldPause) PauseAudioStream(synth.stream); else ResumeAudioStream(synth.stream);
+                audioPaused=shouldPause;
+            }
         }
 
         if (!runStarted) {
             if(menuMode==MENU_NONE && !resumedThisFrame) {
                 selectorTime += dt;
-                if (IsKeyPressed(KEY_LEFT)) selectedSeed -= 1u;
-                if (IsKeyPressed(KEY_RIGHT)) selectedSeed += 1u;
-                if (IsKeyPressed(KEY_UP)) selectedSeed += 100u;
-                if (IsKeyPressed(KEY_DOWN)) selectedSeed -= 100u;
+                selectedSeed+=(uint32_t)MenuHorizontal();
+                selectedSeed-=(uint32_t)(MenuVertical()*100);
             }
 
             if (menuMode==MENU_NONE && !resumedThisFrame &&
-                (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER))) {
+                MenuAccept()) {
                 activeSeed = selectedSeed;
                 InitEnvironment(&env, activeSeed);
                 InitAudioSynth(&synth, activeSeed);
@@ -452,6 +505,7 @@ int main(int argc, char **argv) {
                 musicArrangementOriginZ = 0.0f;
                 glitchAmount = 0.0f;
                 runStarted = true;
+                SuppressPlayerFire(&game);
             }
 
             BeginDrawing();
@@ -460,13 +514,15 @@ int main(int argc, char **argv) {
                                  GetSynthSeedBpm(selectedSeed),
                                  GetSynthSeedKeyName(selectedSeed),
                                  renderWidth, renderHeight);
-                if(menuMode!=MENU_NONE) DrawMenuOverlay(menuMode,renderWidth,renderHeight);
+                DrawText("F2 SETTINGS / CONTROLS     F1 FLIGHT TIPS",24,renderHeight-26,14,LIGHTGRAY);
+                if(menuMode==MENU_SETTINGS) DrawPlayerSettings(renderWidth,renderHeight);
+                else if(menuMode!=MENU_NONE) DrawMenuOverlay(menuMode,renderWidth,renderHeight,menuSelection);
             EndDrawing();
             continue;
         }
 
         if(menuMode==MENU_NONE && !resumedThisFrame) {
-        if (game.gameOver && IsKeyPressed(KEY_R)) {
+        if (game.gameOver && (IsKeyPressed(KEY_R)||MenuAccept())) {
             activeSeed = selectedSeed;
             InitGameplay(&game, activeSeed);
             ReseedEnvironment(&env, activeSeed);
@@ -480,16 +536,19 @@ int main(int argc, char **argv) {
             coreTransitionTimer = 0.0f;
             seedTransitionPending = false;
             seedTransitionCommitted = false;
+            recordedRun=false;
+            SuppressPlayerFire(&game);
         }
         if (IsKeyPressed(KEY_F3)) debugOverlay = !debugOverlay;
 
-        bool boosting = IsKeyDown(KEY_SPACE) && CanGameplayBoost(&game);
+        bool boosting = PlayerActionDown(ACT_BOOST) && CanGameplayBoost(&game);
         currentSpeed = game.gameOver || seedTransitionPending
             ? 0.0f : GetGameplayTravelSpeed(&game, virtualPlayerZ, boosting);
         virtualPlayerZ += currentSpeed * dt;
 
         GameplayEvents gameplayEvents = UpdateGameplay(
             &game, dt, virtualPlayerZ, boosting);
+        if(game.gameOver && !recordedRun) { RecordPersonalBest(&game); recordedRun=true; }
         for (int shot = 0; shot < gameplayEvents.tapShots; shot++) {
             TriggerSynthSFX(&synth, SFX_LASER_TAP);
         }
@@ -511,6 +570,8 @@ int main(int argc, char **argv) {
         if (gameplayEvents.bossStarted) {
             TriggerSynthSFX(&synth, SFX_BOSS_RISER);
         }
+        if(gameplayEvents.attackWarning) TriggerSynthSFX(&synth,SFX_WARNING);
+        if(gameplayEvents.dodged) TriggerSynthSFX(&synth,SFX_LASER_TAP);
         if (gameplayEvents.bossDefeated) {
             TriggerSynthSFX(&synth, SFX_CORE_COLLAPSE);
         }
@@ -611,6 +672,12 @@ int main(int argc, char **argv) {
             bossTransition = fmaxf(0.001f, fminf(game.boss.phaseTime / 2.6f, 1.0f));
         }
         }
+        if(game.upgradePending && menuMode==MENU_NONE) {
+            menuMode=MENU_UPGRADE; upgradeSelection=0;
+            SuppressPlayerFire(&game);
+            UpdateAudioSynth(&synth,.30f,0,0,
+                (float)fmax(0.0,virtualPlayerZ-musicArrangementOriginZ),0);
+        }
         BeginDrawing();
             BeginTextureMode(post.target);
                 ClearBackground((Color){ 2, 3, 10, 255 });
@@ -632,7 +699,12 @@ int main(int argc, char **argv) {
             ClearBackground((Color){ 2, 3, 9, 255 });
             DrawPostProcess(&post, game.runTime, musicIntensity, beatPulse, bossTransition,
                             renderWidth, renderHeight, camera.fovy);
-            DrawGameplayHUD(&game, camera, renderWidth, renderHeight);
+            if(menuMode!=MENU_UPGRADE) {
+                float hudScale=fminf(1,(float)renderWidth/1280.0f);
+                BeginMode2D((Camera2D){.zoom=hudScale});
+                DrawGameplayHUD(&game,camera,(int)(renderWidth/hudScale),(int)(renderHeight/hudScale));
+                EndMode2D();
+            }
             if(menuMode==MENU_NONE) DrawPauseControl(renderWidth,renderHeight);
             if (seedTransitionPending) {
                 float transitionProgress = 1.0f - coreTransitionTimer / CORE_TRANSITION_DURATION;
@@ -668,10 +740,13 @@ int main(int argc, char **argv) {
                              10, 184, 16, (Color){ 255, 120, 90, 230 });
                 }
             }
-            if(menuMode!=MENU_NONE) DrawMenuOverlay(menuMode,renderWidth,renderHeight);
+            if(menuMode==MENU_SETTINGS) DrawPlayerSettings(renderWidth,renderHeight);
+            else if(menuMode==MENU_UPGRADE) DrawUpgradeChoices(&game,upgradeSelection,renderWidth,renderHeight);
+            else if(menuMode!=MENU_NONE) DrawMenuOverlay(menuMode,renderWidth,renderHeight,menuSelection);
         EndDrawing();
     }
 
+    SavePlayerPreferences();
     if (runStarted) {
         UnloadAudioSynth(&synth);
         UnloadEnvironment(&env);

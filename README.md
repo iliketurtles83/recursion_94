@@ -2,6 +2,67 @@
 
 RECURSION_94 is a small procedural rail shooter written in C11 with Raylib 6. Its worlds, geometry, music and sound effects are generated at runtime. A compact procedurally baked micro-material atlas is embedded in the executable.
 
+## Playability expansion — 2026-09-18
+
+The endless five-boss campaign now includes distinct combat mechanics, thirteen
+run upgrades, new enemy roles, encounter pacing, evasive rolls, close-dodge
+rewards, recursion modifiers, controller support, remappable keyboard controls,
+audio/shake settings, guided flight tips, and local personal bests.
+
+The latest Windows executable is **1,015,296 bytes**, leaving **459,264 bytes**
+under the enforced floppy limit. This transition/upgrade pass adds 2,560 bytes
+over the combat refinement. It requires no external runtime assets.
+
+Newest changes: enemies visibly withdraw before boss arrival; music continues
+while selecting salvage; Link Harvester improves per-kill income; Piercing
+Pulse adds boss-effective damage; upgrade offers include resource/offense
+choices with before/after values. See [FLOW-AND-UPGRADES.md](FLOW-AND-UPGRADES.md)
+for the current release, tests and a candid explanation of the depth curve.
+
+Latest playtest refinements: crimson bladed firewalls; continuing depth scaling
+and more demanding Leviathan patterns; seeded, moving Prism identities with a
+subtle iris detail; compact HUD and 5-second hints with a 20-second overall
+timeout. The old `OPEN` text meant the safe firewall corridor; it is now an
+inward-bracket cue. See [COMBAT-REFINEMENT.md](COMBAT-REFINEMENT.md) for balance
+numbers and verification.
+
+- **Boss identities:** the Core fires a moving-gap lattice; the Bastion's four
+  destructible cannons each contribute attacks; the Wraith has two decoys and
+  a real target with pale iris eyelids that swaps sides; the Mantis alternates sweeping claw banks; the
+  Leviathan combines corridor, fan and vertical patterns with its existing
+  gravity and health phases. Warnings commit before shots launch. Extended
+  fights increase pressure. Large lattice projectiles are dark mechanical
+  shells, not additive walls of light.
+- **Salvage:** after each boss choose one of three seeded upgrades, using
+  1/2/3, mouse, or controller/stick + A. Thirteen upgrades stack to level three,
+  last for the run, and survive black-hole transitions. The selection freezes
+  flight and survival time while music keeps playing; after all upgrades are capped, salvage
+  continues offering useful resource/chain/score choices.
+- **Combat:** sniper lanes commit before firing; carriers deploy attack craft;
+  support ships protect nearby ordinary enemies. Patrol, assault and recovery
+  stretches vary pressure. Shift / LB performs a short evasive roll with a
+  visible cooldown. Close dodges earn Links once per bullet, outside immunity.
+- **Recursion:** one modifier at a time rotates through crossfire, gentle
+  gravity currents, and support escorts. Modifiers are announced on arrival.
+- **Controls:** F2 opens settings, including keyboard rebinding, independent
+  music/effects volume and camera shake. Controller: left stick moves,
+  A/RT fires and charges, X beam, Y bomb, RB boost, LB evade, Start pauses.
+  Menus support D-pad/stick, A to select, B to go back. F1 toggles flight tips.
+- **Run reporting:** survival time, bosses cleared, best chain, near misses,
+  hits and final damage source appear after death. R / Enter / A restarts.
+  Local bests and preferences are stored in the user's `Recursion94` settings
+  directory. `--boss` practice runs never update personal bests. Pauses,
+  salvage choices, collapse transitions and death screens do not add survival
+  time. This release does not yet connect to Steam leaderboards.
+
+The original Core Energy system remains: ordinary hits cost 18 Energy,
+boosted hits cost 20.7, and base boost drain is 1 Energy/second. Boost guidance
+remains mild; new committed sniper/boss patterns do not home. Assets remain
+embedded and all combat pools remain fixed. Both builds enforce the strict
+1,474,560-byte packed executable limit.
+
+See [PLAYABILITY.md](PLAYABILITY.md) for upgrade details and validation steps.
+
 ## Tuned boost-risk combat — 2026-09-16
 
 Core Energy is the ship's original health meter again: when it reaches zero

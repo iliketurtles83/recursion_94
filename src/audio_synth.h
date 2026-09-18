@@ -44,7 +44,8 @@ typedef enum {
     SFX_EXPLOSION,
     SFX_POWER_UP,
     SFX_BOSS_RISER,
-    SFX_CORE_COLLAPSE
+    SFX_CORE_COLLAPSE,
+    SFX_WARNING
 } SFXType;
 
 typedef struct {
@@ -243,6 +244,8 @@ typedef struct {
     atomic_uint controlDrops;
     atomic_uint sfxCommandDrops;
     atomic_bool initialized;
+    atomic_uint musicVolume;
+    atomic_uint effectsVolume;
 } SynthSystem;
 
 void InitAudioSynth(SynthSystem *synth, uint32_t runSeed);
@@ -252,6 +255,7 @@ void ReseedAudioSynth(SynthSystem *synth, uint32_t runSeed);
 void UpdateAudioSynth(SynthSystem *synth, float intensity, float glitchAmount,
                       float bossIntensity, float virtualPlayerZ, float preBossHush);
 void TriggerSynthSFX(SynthSystem *synth, SFXType type);
+void SetSynthVolumes(SynthSystem *synth, float music, float effects);
 void UnloadAudioSynth(SynthSystem *synth);
 
 float GetSynthSeedBpm(uint32_t runSeed);

@@ -54,10 +54,27 @@ RECURSION_94 is a C11 + Raylib 6 procedural rail shooter. Worlds, geometry, musi
   Flush before changing class/origin uniforms. Draw translucent attacks after
   opaque geometry with additive blending, depth testing on and depth writes off.
   Detail geometry must not change damage, timers, projectile pools or flight clearance.
-- Boss core visual form is chosen by `boss.encounterIndex % BOSSES_PER_RECURSION`.
-  Keep the five silhouettes in `src/gameplay.c` render-only: shared core/node
-  hit targets, health and attack state must not change accidentally. HUD names
-  use the same modulo mapping so later recursion depths repeat the identities.
+- Boss form is chosen by `boss.encounterIndex % BOSSES_PER_RECURSION`.
+  The five forms now have distinct attack patterns in `src/boss_patterns.inc`.
+  Warnings cache aim/lane before launch; do not home committed sniper/boss shots.
+  Bastion nodes are its destructible cannons. The Wraith's identity 0 is real,
+  has paired pale iris eyelids, starts in a seeded slot, and changes slots every
+  two volleys. Use PrismBodyPosition for both collision and drawing; keep the
+  same core slot/health through shuffles. Shield tethers use the formation
+  center. Crossings finish before the next aim commits; no HUD diamond.
+  Lattice shots (kind 3) have a 1.46 collision radius and crimson armored shells
+  with blades reaching that radius; ordinary/guided shots retain radius sqrt(.72).
+  Keep advertised safe corridors clear and attack allocation within the pool.
+  Boss arrival first marks surviving ships ENEMY_WITHDRAW for a 2.2s departure.
+  Preserve their pool identities/positions, stop spawning/firing/targeting,
+  and shrink them only at the distant end of the departure. Existing hostile
+  shots visibly dissipate for up to .65s without damage, homing or graze rewards.
+  SpawnBoss requires five free slots and must never delete live ships for room.
+  Preserve the weapon-chain timer during clearance and the boss approach.
+  Depth pressure approaches a safe asymptote instead of hard-capping at depth 3.
+  Boss health continues scaling; cadence has .8s / wall-heavy 1.65s floors for
+  readable warning/flight time. Leviathan height sweeps cache player height
+  and always retain a vertical escape. Test sustained volleys with adds alive.
 - Boost arms existing enemy projectiles for mild bounded lateral homing; the
   flag persists on each shot after boost ends. Guidance commits in the last
   4 world units so a dodge remains possible. Keep this within the fixed
@@ -67,16 +84,42 @@ RECURSION_94 is a C11 + Raylib 6 procedural rail shooter. Worlds, geometry, musi
   not boss attack timers, accelerate
   while boosting. Do not add a separate hull/damage system.
 - `main.c` disables Raylib's default Escape exit with `SetExitKey(KEY_NULL)`.
-  The menu state freezes all gameplay/world/camera updates and pauses the audio
-  stream; only rendering continues. When adding input, do not let a paused frame
+  The menu state freezes all gameplay/world/camera updates. Salvage selection
+  keeps the audio callback playing with calm music controls; actual pause,
+  settings and quit-confirmation screens still pause the stream. Returning to
+  salvage resumes music without advancing simulation. Do not let a paused frame
   fall through to `UpdateGameplay`. The bottom-right pause button and centered
   menu rectangles are screen-size-derived for mouse hit testing and drawing.
+- `src/player_ui.c` owns controls, preferences, settings, tutorial and reports.
+  Poll controls once per frame. Suppress held fire across every modal resume.
+  Only `activeTime` is survival time; exclude death, menus and black-hole
+  collapse. `runTime` is the separate visual clock. Practice boss starts cannot
+  update personal bests. Do not perform preference file I/O during live combat;
+  save on settings close, run end or application exit.
+  Flight hints advance after 5 active seconds per step and expire by 20 seconds
+  overall; F1 restarts them. Never draw tips during boss combat. Keep essential
+  energy, Links, time, depth, shield/health and evade status in the compact HUD;
+  detailed controls/statistics belong in settings and the run report.
+- `src/progression.inc` implements seeded, distinct salvage choices and costs.
+  Upgrades last for a run, are capped at three, and survive universe reseeding.
+  Upgrade selection must pause all simulation. Keep special-attack kills from
+  refunding Links. Clamp score arithmetic to avoid overflow during long runs.
+  Thirteen upgrades: prefer a resource upgrade in card 1, offense in card 2,
+  and any uncapped upgrade in card 3; capped lanes fall back without duplicates.
+  Link Harvester adds one Link per ordinary kill per level, inside the existing
+  suppressLinkRewards guard. Piercing Pulse adds 25% pulse damage per level,
+  including shield nodes/exposed boss cores; never bypass boss shielding.
+- Audio volume controls cross the callback boundary through atomic bit fields.
+  Do not read UI preferences directly from the audio callback.
 
 ## Architecture
 
 - `main.c` — game loop, CLI parsing, post-processing, validation-mode entrypoints.
 - `src/environment.c` — deterministic procedural world (sectors/zones/districts) + `ValidateEnvironmentGenerator`.
 - `src/gameplay.c` — combat and runtime game state.
+- `src/boss_patterns.inc`, `src/encounters.inc`, `src/progression.inc` — compact
+  gameplay helpers included by gameplay.c; no separate compilation units.
+- `src/player_ui.c` — input, settings, tutorial, salvage UI, local run reports.
 - `src/audio_synth.c` — sample-by-sample synthesis in the Raylib audio callback.
 - `src/demoscene.c` — seed selector and background visuals.
 - `audio_validation.c` — standalone audio validation harness.
@@ -86,4 +129,9 @@ RECURSION_94 is a C11 + Raylib 6 procedural rail shooter. Worlds, geometry, musi
 
 - Determinism: all procedural content derives from seeded integer hash functions — never `rand()`. The same seed must reproduce the same run.
 - No gameplay-time heap allocation; fixed-size pools for enemies, projectiles, particles, and environment structures (caps in `src/gameplay.h` / `src/environment.h`).
+- Additional Windows validation: `tools/validate_windows.sh` builds separate
+  headless checks without overwriting the release EXE. `tools/build_smoke.sh`
+  builds deterministic production-loop, feature-render, and audio-control tests.
+  Set `RECURSION_PROFILE_DIR` to a fresh test directory before UI tests so they
+  never write the player's preferences. Render checks use hidden windows.
 - `.github/copilot-instructions.md` contains stale claims (upx "optional", shaders loaded from relative paths) — trust `build.sh` and `README.md` instead.
