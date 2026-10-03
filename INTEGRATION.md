@@ -164,6 +164,8 @@ A game simply never calls it, nor `ct_debug_draw`.
      per-chunk uniform data into `out->uniforms` (96 vec4 slots, layout is yours), and collision
      data into `out->debris`.
    - `uploadChunk`/`releaseChunk` – usually `chunk_upload_default` / `chunk_release_default`.
+   - `pathReach` (field) – how far beyond its chunk `buildChunk` samples the path; the core keeps
+     the path generated that much further around the chunk window (max 1500).
    - `energyAt` – the pacing energy 0..1 at `s` (drives global intensity when not overridden).
    - `atmosphere` (optional) – adjust the frame's `Atmosphere` (fog range, fades, `fogToCore`,
      core tint). It receives a per-frame copy filled from the core "Fog" params.
@@ -353,4 +355,4 @@ unknown keys are skipped, and loading first resets everything to defaults).
 | Pacing | `pacing` | bool | on | | |
 
 The template environment adds `tplRadius`, `tplYawStepDeg`, `tplMarkerIntensity` (group Template) while it is active.
-The city environment (Env #2, in progress) adds, while it is active: `cityLaneHalfWidth`, `cityYawStepDeg`, `cityFloorDepth`, `cityYawSpring` (group Path); `showFloor`, `gridCell`, `gridLineWidth`, `gridHaloWidth`, `gridIntensity`, `gridHalo`, `gridNodeBoost`, `gridWhiteCore`, `floorFogStart`, `floorFogEnd`, `floorSheen`, `gridFilter` (group Floor); `showSky`, `cityFogStart`, `cityFogEnd`, `hazeWidth`, `hazeGlow`, `skyDust` (group City). The core adds `rebaseDist` (group Sim, default 1024).
+The city environment (Env #2, in progress) adds, while it is active: `cityLaneHalfWidth`, `cityYawStepDeg`, `cityFloorDepth`, `cityYawSpring` (group Path); `showFloor`, `gridCell`, `gridLineWidth`, `gridHaloWidth`, `gridIntensity`, `gridHalo`, `gridNodeBoost`, `gridWhiteCore`, `floorFogStart`, `floorFogEnd`, `floorSheen`, `gridFilter` (group Floor); `showSky`, `cityFogStart`, `cityFogEnd`, `hazeWidth`, `hazeGlow`, `skyDust` (group City); `showTowers`, `towerLatticeCells`, `towerClearance`, `towerBandMax`, `towerDensityNear`, `towerDensityFar`, `towerHeightMin`, `towerHeightMax`, `towerHeightFar`, `landmarkChance`, `landmarkMul`, `towerFootMin`, `towerFootMax`, `setbackChance`, `towerEdgeIntensity`, `towerEdgeWidth`, `towerBrightness`, `towerRim`, `towerUnderglow`, `panelW`, `panelH`, `seamDark`, `recessed` (group Towers). The core adds `rebaseDist` (group Sim, default 1024).

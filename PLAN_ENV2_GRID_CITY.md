@@ -1,6 +1,6 @@
 # Plan — Environment #2 "Neon Grid City"
 
-Status: Phases A and B done (see `NOTES.md`); Phases C–F open. Reference frames: `reference/t_0.5s.png`,
+Status: Phases A–C done (see `NOTES.md`); Phases D–F open. Reference frames: `reference/t_0.5s.png`,
 `reference/t_2.5s.png` and the first row and a half of `reference/contact_sheet.png` (0–3.5 s).
 
 ## 0. Why this one
@@ -118,6 +118,7 @@ Each phase ends with its checks passing, a commit, and a short `NOTES.md` sectio
 
 ### Phase C — Towers: placement and bodies
 - World-lattice placement with chunk ownership, keep-out lane, opaque bodies with setbacks and `tower.fs` panels, edge lines.
+- *(Done — see NOTES.md Phase C.)*
 - **Accept (tests)**: building chunks 0..200 in order and in shuffled order gives identical hashes. **No lattice cell is claimed by two chunks**, and none inside the band is claimed by zero chunks. No tower intersects the lane (distance check against path samples). Chunk build time stays below 3 ms.
 
 ### Phase D — Traces, glyph panels, rain

@@ -236,10 +236,19 @@ static void draw_ship_emissive(CtTunnel *ct)
 // ---------------------------------------------------------------------------
 // Lifecycle
 
+// Path coverage needed around the ship: the chunk window plus the environment's build reach.
+static double path_reach(const CtTunnel *ct) { return fmin(fmax(ct->env->pathReach, 0.0), 1500.0); }
+
+static void ensure_path(CtTunnel *ct, double s)
+{
+    double reach = path_reach(ct);
+    path_ensure(&ct->path, s - 100.0 - reach, s + CT_VIEW_DIST + 100.0 + reach);
+}
+
 static void prewarm(CtTunnel *ct)
 {
     double s = ct->cur.s;
-    path_ensure(&ct->path, s - 100.0, s + CT_VIEW_DIST + 100.0);
+    ensure_path(ct, s);
     chunks_update(&ct->chunks, ct->env, &ct->path, s, CT_VIEW_DIST, ct->simTime, 0, 0);
 }
 
@@ -247,7 +256,7 @@ static void reset_world(CtTunnel *ct, double s, bool regenPath)
 {
     chunks_release_all(&ct->chunks, ct->env);
     if (regenPath) path_reset(&ct->path, ct->seed, ct->env->pathStyle(ct->env));
-    path_ensure(&ct->path, s - 100.0, s + CT_VIEW_DIST + 100.0);
+    ensure_path(ct, s);
     flight_reset(&ct->cur, &ct->fp, &ct->path, s);
     ct->prev = ct->cur;
     ct->view = flight_interpolate(&ct->prev, &ct->cur, 0.0f);
@@ -352,7 +361,7 @@ uint64_t ct_get_seed(const CtTunnel *ct) { return ct->seed; }
 void ct_jump_to(CtTunnel *ct, double s)
 {
     if (s < 0.0) s = 0.0;
-    bool regen = s - 100.0 < path_s_min(&ct->path);
+    bool regen = s - 100.0 - path_reach(ct) < path_s_min(&ct->path);
     reset_world(ct, s, regen);
 }
 
@@ -396,7 +405,7 @@ void ct_update(CtTunnel *ct, float dt)
     if (dt < 0.0f) dt = 0.0f;
     float sdt = ct->paused ? 0.0f : dt * ct->core.timeScale;
 
-    path_ensure(&ct->path, ct->cur.s - 100.0, ct->cur.s + CT_VIEW_DIST + 100.0);
+    ensure_path(ct, ct->cur.s);
     int steps = flight_advance(&ct->prev, &ct->cur, &ct->fp, &ct->path, &ct->input, &ct->acc, sdt, 24);
     ct->simTime += steps * SIM_DT;
     float alpha = (float)(ct->acc / SIM_DT);

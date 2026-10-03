@@ -7,6 +7,8 @@
 #include "core/flight.h"
 #include "env/env.h"
 #include "render/gridfloor.h"
+#include "env/city_towers.h"
+#include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -124,11 +126,18 @@ static uint64_t chunk_hash(const ChunkCpu *c)
     return h;
 }
 
+// Path coverage a chunk build needs, as the core provides it (the ring buffer only holds
+// PATH_CAP samples, so long test runs must stream the path like the game does).
+static void ensure_for_chunk(PathSystem *p, const Environment *env, int k)
+{
+    path_ensure(p, k * CHUNK_LEN - 100.0 - env->pathReach, (k + 1) * CHUNK_LEN + 100.0 + env->pathReach);
+}
+
 // Builds chunks 0..n-1 in order on one path instance and shuffled on an independently
 // generated one; fills inOrder[] with the hashes. Returns true when both orders agree.
 static bool build_order_independent(Environment *env, uint64_t seed, int n, uint64_t *inOrder)
 {
-    enum { NMAX = 64 };
+    enum { NMAX = 256 };
     PathStyle st = env->pathStyle(env);
     static ChunkCpu a, b;   // large; static to keep them off the stack
     uint64_t outOfOrder[NMAX];
@@ -136,20 +145,20 @@ static bool build_order_independent(Environment *env, uint64_t seed, int n, uint
 
     PathSystem p1, p2;
     path_init(&p1, seed, st);
-    path_ensure(&p1, 0.0, n * CHUNK_LEN + 50.0);
     for (int k = 0; k < n; k++) {
+        ensure_for_chunk(&p1, env, k);
         chunk_cpu_begin(&a, &p1, k);
         env->buildChunk(env, &p1, k, &a);
         inOrder[k] = chunk_hash(&a);
     }
     path_init(&p2, seed, st);
-    path_ensure(&p2, 0.0, n * CHUNK_LEN + 50.0);
     int order[NMAX];
     for (int i = 0; i < n; i++) order[i] = i;
     Pcg32 r = pcg32_seed(3);
     for (int i = n - 1; i > 0; i--) { int j = pcg32_int(&r, 0, i); int t = order[i]; order[i] = order[j]; order[j] = t; }
     for (int i = 0; i < n; i++) {
         int k = order[i];
+        ensure_for_chunk(&p2, env, k);   // jumping back regenerates the path from 0, as in the game
         chunk_cpu_begin(&b, &p2, k);
         env->buildChunk(env, &p2, k, &b);
         outOfOrder[k] = chunk_hash(&b);
@@ -326,9 +335,12 @@ static void test_city(void)
     CHECK(minOffset < -0.5f * st.floorDepth, "ship can still descend toward the floor (%f)", minOffset);
     path_free(&p);
 
-    enum { N = 24 };
-    uint64_t h[N];
-    CHECK(build_order_independent(&env, 11, N, h), "city chunk build independent of order");
+    enum { N = 200 };
+    static uint64_t h[N];
+    CHECK(build_order_independent(&env, 11, N, h), "city chunk build independent of order (%d chunks)", N);
+    int distinct = 0;
+    for (int k = 1; k < N; k++) if (h[k] != h[k - 1]) distinct++;
+    CHECK(distinct == N - 1, "city chunks differ from each other (%d/%d)", distinct, N - 1);
 
     // Grid floor phase: the shader adds a float render-space position to gridfloor_offset();
     // that must give the same grid phase as the exact world position, at any origin.
@@ -349,6 +361,133 @@ static void test_city(void)
     }
     printf("  grid floor: worst phase error %.2e cells over 20000 random origins up to 1e6\n", worst);
     CHECK(worst < 1e-3, "grid floor phase exact across origins (%g cells)", worst);
+    env.unload(&env);
+}
+
+static int claim_cmp(const void *a, const void *b)
+{
+    const CellClaim *x = (const CellClaim *)a, *y = (const CellClaim *)b;
+    if (x->ix != y->ix) return x->ix < y->ix ? -1 : 1;
+    if (x->iz != y->iz) return x->iz < y->iz ? -1 : 1;
+    return 0;
+}
+
+static const CellClaim *find_claim(const CellClaim *c, int n, int ix, int iz)
+{
+    CellClaim key = { ix, iz, 0.0, 0.0f, 0 };
+    return (const CellClaim *)bsearch(&key, c, (size_t)n, sizeof(CellClaim), claim_cmp);
+}
+
+// Tower placement: every lattice cell near the path has exactly one owning chunk, no tower
+// enters the lane, footprints sit on floor grid lines, builds stay inside the budget.
+static void test_city_towers(void)
+{
+    Environment env = env_city_create();
+    ParamRegistry reg;
+    params_clear(&reg);
+    env.registerParams(&env, &reg);
+    PathStyle st = env.pathStyle(&env);
+    CityTowerParams tp = { 0 };
+    tp.cell = 2.2f; tp.latticeCells = 8; tp.laneHalfWidth = st.baseRadius; tp.clearance = 6.0f;
+    tp.bandMax = 150.0f; tp.densityNear = 0.5f; tp.densityFar = 0.3f;
+    tp.heightMin = 28.0f; tp.heightMax = 65.0f; tp.heightFar = 40.0f;
+    tp.landmarkChance = 0.05f; tp.landmarkMul = 1.7f; tp.footMin = 3; tp.footMax = 5;
+    tp.setbackChance = 0.55f; tp.floorY = -st.floorDepth;
+    double reach = city_towers_reach(&tp);
+
+    enum { N = 200, MAXC = 200000 };
+    PathSystem p;
+    path_init(&p, 23, st);
+
+    static CellClaim all[MAXC], chunkClaims[4096];
+    static TowerDesc towers[CITY_MAX_TOWERS];
+    static LineGeo body, edges;
+    int nAll = 0, nTowers = 0, laneOk = 1, gridOk = 1, ownerOk = 1;
+    double worstMs = 0.0, minGap = 1e9;
+    float inner = tp.laneHalfWidth + tp.clearance;
+    for (int k = 0; k < N; k++) {
+        int nc = 0;
+        path_ensure(&p, k * CHUNK_LEN - 100.0 - reach, (k + 1) * CHUNK_LEN + 100.0 + reach);
+        clock_t c0 = clock();
+        int n = city_towers_plan(&tp, 23, &p, k, towers, CITY_MAX_TOWERS, chunkClaims, 4096, &nc);
+        lg_clear(&body); lg_clear(&edges);
+        PathSample o = path_sample(&p, k * CHUNK_LEN);
+        city_towers_build(towers, n, o.pos, &body, &edges, 0.9f, 0.03f);
+        double ms = (double)(clock() - c0) * 1000.0 / CLOCKS_PER_SEC;
+        if (ms > worstMs) worstMs = ms;
+        nTowers += n;
+        for (int i = 0; i < nc && nAll < MAXC; i++) {
+            if (chunk_index_at(chunkClaims[i].sOwner) != k) ownerOk = 0;
+            all[nAll++] = chunkClaims[i];
+        }
+        for (int i = 0; i < n; i++) {
+            const TowerDesc *t = &towers[i];
+            // Brute-force distance from a fine polyline of the path to the footprint.
+            for (double s = fmax(0.0, t->sOwner - 250.0); s <= t->sOwner + 250.0; s += 0.5) {
+                DVec3 q = path_sample(&p, s).pos;
+                double dx = q.x < t->x0[0] ? t->x0[0] - q.x : (q.x > t->x1[0] ? q.x - t->x1[0] : 0.0);
+                double dz = q.z < t->z0[0] ? t->z0[0] - q.z : (q.z > t->z1[0] ? q.z - t->z1[0] : 0.0);
+                double d = sqrt(dx * dx + dz * dz);
+                if (d < minGap) minGap = d;
+                if (d < inner - 0.05) laneOk = 0;
+            }
+            double v[4] = { t->x0[0], t->x1[0], t->z0[0], t->z1[0] };
+            for (int j = 0; j < 4; j++) if (fabs(v[j] / tp.cell - floor(v[j] / tp.cell + 0.5)) > 1e-6) gridOk = 0;
+        }
+    }
+    qsort(all, (size_t)nAll, sizeof(CellClaim), claim_cmp);
+    int dups = 0;
+    for (int i = 1; i < nAll; i++) if (!claim_cmp(&all[i - 1], &all[i])) dups++;
+
+    // Brute force: owner of every cell near the interior of the path, from the whole polyline.
+    int nSeg = (int)((N * CHUNK_LEN + reach) / 2.0);
+    double *px = (double *)malloc(sizeof(double) * (size_t)(nSeg + 1)), *pz = (double *)malloc(sizeof(double) * (size_t)(nSeg + 1));
+    double minx = 1e300, maxx = -1e300, minz = 1e300, maxz = -1e300;
+    path_reset(&p, 23, st);
+    for (int i = 0; i <= nSeg; i++) {
+        path_ensure(&p, i * 2.0 - 10.0, i * 2.0 + 10.0);
+        DVec3 q = path_sample(&p, i * 2.0).pos;
+        px[i] = q.x; pz[i] = q.z;
+        if (i * 2.0 >= CHUNK_LEN && i * 2.0 <= (N - 1) * CHUNK_LEN) {
+            if (q.x < minx) minx = q.x;
+            if (q.x > maxx) maxx = q.x;
+            if (q.z < minz) minz = q.z;
+            if (q.z > maxz) maxz = q.z;
+        }
+    }
+    double L = tp.latticeCells * (double)tp.cell;
+    int checked = 0, missing = 0, wrongOwner = 0;
+    for (int iz = (int)floor((minz - tp.bandMax) / L); iz <= (int)floor((maxz + tp.bandMax) / L); iz++) {
+        for (int ix = (int)floor((minx - tp.bandMax) / L); ix <= (int)floor((maxx + tp.bandMax) / L); ix++) {
+            double cx = (ix + 0.5) * L, cz = (iz + 0.5) * L, best = 1e300, bs = 0.0;
+            for (int i = 0; i < nSeg; i++) {
+                double dx = px[i + 1] - px[i], dz = pz[i + 1] - pz[i], l2 = dx * dx + dz * dz;
+                double t = l2 > 0.0 ? ((cx - px[i]) * dx + (cz - pz[i]) * dz) / l2 : 0.0;
+                t = t < 0.0 ? 0.0 : (t > 1.0 ? 1.0 : t);
+                double ex = px[i] + dx * t - cx, ez = pz[i] + dz * t - cz, d2 = ex * ex + ez * ez;
+                if (d2 < best) { best = d2; bs = (i + t) * 2.0; }
+            }
+            int owner = chunk_index_at(bs);
+            if (sqrt(best) > tp.bandMax - 0.01 || owner < 1 || owner > N - 2) continue;
+            checked++;
+            const CellClaim *c = find_claim(all, nAll, ix, iz);
+            if (!c) missing++;
+            else if (chunk_index_at(c->sOwner) != owner) wrongOwner++;
+        }
+    }
+    free(px); free(pz);
+    printf("  city towers: %d chunks, %d towers, %d claimed cells, %d brute-force checked; worst build %.2f ms; min lane gap %.2f (need %.1f)\n",
+           N, nTowers, nAll, checked, worstMs, minGap, inner);
+    CHECK(nTowers > N * 5, "towers are placed (%d)", nTowers);
+    CHECK(ownerOk, "every claim lies in its own chunk");
+    CHECK(dups == 0, "no lattice cell claimed by two chunks (%d duplicates)", dups);
+    CHECK(checked > 1000 && missing == 0, "every cell in the band claimed (%d of %d missing)", missing, checked);
+    CHECK(wrongOwner == 0, "claimed by the brute-force owner (%d wrong)", wrongOwner);
+    CHECK(laneOk, "no tower footprint inside lane + clearance (min gap %.3f)", minGap);
+    CHECK(gridOk, "tower footprints on floor grid lines");
+    CHECK(worstMs < 3.0, "chunk tower build < 3 ms (%.2f ms)", worstMs);
+    lg_free(&body); lg_free(&edges);
+    path_free(&p);
     env.unload(&env);
 }
 
@@ -381,6 +520,7 @@ int main(void)
     test_chunks();
     test_flight_framerate();
     test_city();
+    test_city_towers();
     test_params();
     printf("%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

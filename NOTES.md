@@ -311,3 +311,42 @@ designed (one idea: the vortex itself as the transition).
   pitched further down); left alone per the camera decision above. Floor reflections (the purple
   smears and the trail stripe under the ship) are Phase E.
 
+## Phase C — Towers: placement and bodies
+
+- `env/city_towers.c` (pure CPU): world xz lattice of `towerLatticeCells` (8) floor cells, so
+  footprints land on grid lines. A cell belongs to the chunk containing s*, the nearest path
+  point to its centre, found on a polyline of path samples at fixed global arc lengths
+  (every 2 units). Every chunk that looks at a cell runs the same computation, so all agree
+  on the owner. A chunk only looks at cells within `bandMax` of its own piece of the path and
+  searches s* within `city_towers_reach()` = 2.2 · bandMax + 4. That covers the true nearest
+  point while the path cannot bend back on itself, which the yaw spring guarantees.
+- New core field `Environment.pathReach`: the core generates the path that far beyond the
+  chunk window (`ensure_path`, also used by `ct_jump_to`'s regeneration check). City: 668
+  (enough for bandMax up to 300).
+- Per cell (RNG from `hash(seed, ENV_CITY, F_TOWERS, ix, iz)`): occupancy (near 0.5 → far 0.3),
+  footprint 3–5 cells, height 28–65 + up to 40 with distance, 5 % landmarks ×1.7, 0–2 setback
+  tiers inset by one grid cell. The footprint's exact distance to the path polyline
+  (segment/rectangle distance) must be ≥ lane + clearance (9 + 6), otherwise the cell stays empty.
+- Bodies: `tower.vs/fs`, opaque, drawn before the floor. Panel seams and recessed panels (world-
+  unit face UVs, seams fade out below a few pixels), key light + faint cyan rim, grid underglow
+  near the base, fog toward the sky colour *along the view ray* (same formula as `sky.fs`).
+  Edges: dim cyan camera-facing lines (emissive pass).
+- Pop-in: the far chunk becomes visible with its nearest towers ≈ 358 units away, so the city
+  fog ends at 350 (`cityFogEnd`) and emissive lines use the same range as their far fade.
+- Tuning vs t_0.5: density/footprint/height lowered from the first try, which read as continuous
+  walls; clearance 6 gives an avenue (`screenshots/compare_city_towers_t0.5.png`,
+  `city_towers_seed4_s3000.png`). The purple traces and code text are Phase D.
+- **Bug found by the tests (test setup, not placement):** ensuring 200 chunks of path up front
+  overflows the 4096-unit path ring, so `path_sample(0)` clamped to s ≈ 5900 and chunk 0
+  claimed cells far away. Tests now stream the path per chunk (`ensure_for_chunk`), as the core does.
+- **Accept:**
+  - 200 chunks, built in order and shuffled (env level, hashes): identical; all 199 neighbours differ.
+  - Placement over 200 chunks: 3244 towers, 9415 claimed cells, **0 cells claimed twice**;
+    9200 cells checked against a brute-force nearest point on the whole path: **0 unclaimed,
+    0 with the wrong owner**; minimum footprint distance to a 0.5-step path polyline 15.01 (limit
+    15.0); all footprints on grid lines.
+  - Build: worst 0.34 ms per chunk in the test; in the 1080p bench max chunk build 1.18 ms, max
+    streaming per frame 1.24 ms (budget 4 ms).
+  - Bench (60 s, 1080p, speed 120): avg 0.64 ms, p99 0.77 ms, 37 draw calls, 13k vertices.
+  - Tests: 53 passed. Vortex regression set byte-identical.
+

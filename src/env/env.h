@@ -54,6 +54,10 @@ typedef struct Environment {
     const char *name;
     int         id;
     void       *state;
+    // How far (arc length) beyond a chunk's [s0, s1] buildChunk samples the path, e.g. to find
+    // which chunk owns a world-space cell. The core keeps the path generated that far around
+    // the chunk window. 0 for environments that only sample inside the chunk.
+    double      pathReach;
     PathStyle (*pathStyle)(const struct Environment *);
     void (*init)(struct Environment *, uint64_t worldSeed, struct ShaderLib *shaders);
     void (*registerParams)(struct Environment *, ParamRegistry *reg);
