@@ -1,6 +1,6 @@
 # Plan — Environment #3 "Server Corridor"
 
-Status: built (Phases A–F, see NOTES.md); CRYSTAL archetype not built (open question §6). Reference frames: `reference/t_4.5s.png` … `reference/t_7.25s.png`
+Status: built (Phases A–F, see NOTES.md); CRYSTAL archetype left out (decided 2026-10-03, §6). Reference frames: `reference/t_4.5s.png` … `reference/t_7.25s.png`
 (every 0.25 s, extracted from `video.mp4`), with `t_5.0s`, `t_6.0s`, `t_6.5s` and `t_7.0s` as the key frames.
 
 ## 0. Scope
@@ -213,7 +213,7 @@ screenshots and side-by-side comparisons against the reference frames.
 - **Beam vertex/overdraw cost**: kept mostly procedural for that reason. Measure in Phase D.
 - **Pop-in**: pillars are close and tall, but the corridor is enclosed and the fog is shorter, so this should be less
   of a problem than in the city.
-- **Open — orange polyhedra**: put them in this env as a rare `CRYSTAL` archetype, keep them for a transition
-  set piece, or leave them out?
+- **Decided — orange polyhedra**: left out for now (user, 2026-10-03). Revisit when collision is designed:
+  as obstacles they would need collision, which does not exist yet.
 - **Open — vortex at the end of the corridor**: the reference ends the corridor in the vortex. That ties into
   the undecided transition design. Nothing here assumes or blocks it.

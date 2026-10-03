@@ -698,7 +698,8 @@ Plan: `PLAN_ENV3_SERVER_CORRIDOR.md`. Reference frames `reference/t_4.0s` … `t
   | SERVER HALL | 3–6 | denser walls (×1.3), merged slabs ×2 (few gaps), outlines ×1.6, beams ×1.9 | 0.85 |
   | ATRIUM | 2–4 | walls thinned (×0.45) and pushed 10 further out, no beams, ring clusters ×3 and 1.4× larger, props ×2 | 0.30 |
 
-  CRYSTAL (orange polyhedra) is not added: still an open question (plan §6).
+  CRYSTAL (orange polyhedra) is not added: left out for now by user decision, to be reconsidered
+  together with collision (plan §6).
 - Order independence across archetype boundaries: a pillar cell's merge partner and a beam
   cell's neighbours can be owned by the next chunk, so the archetype is not a per-chunk blend
   but a global lookup `arch_at(s)` (previous chunk's archetype fading into this one across the
@@ -732,5 +733,5 @@ archetype): walls of stepped server pillars with Matrix digital rain and white s
 and kerbs over the shared reflective grid floor, a broken lattice of circuit beams above the
 pillars with a gap, a sparse sky lattice, holo rings, light rain, props, three pacing
 archetypes, `presets/corridor.ini`. Shared pieces extracted for it: `lattice_place`, `pacing`,
-`trace_route`, gridfloor ceiling mode. Open: orange polyhedra (CRYSTAL archetype or a transition
-set piece) and the corridor-into-vortex ending, both tied to the transition design.
+`trace_route`, gridfloor ceiling mode. Orange polyhedra are left out for now (revisit
+with collision). Open: the corridor-into-vortex ending, tied to the transition design.
