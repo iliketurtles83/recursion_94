@@ -565,8 +565,9 @@ void ct_render(CtTunnel *ct, const RenderTexture2D *target, int width, int heigh
     pipe_end_scene(&ct->pipe);
 
     if (ct->cfg.usePost) {
-        float speedFactor = c->speed / fmaxf(ct->fp.baseSpeed, 1.0f);
-        float zoom = ct->post.zoomBlur * speedFactor * (0.6f + 0.8f * c->intensity);
+        // Ramps in with boost (speedNorm: 0 at base speed, 1 at boost speed).
+        float boost = ct->post.zoomBlurAtBase + (1.0f - ct->post.zoomBlurAtBase) * c->speedNorm;
+        float zoom = ct->post.zoomBlur * boost * (0.6f + 0.8f * c->intensity);
         pipe_post(&ct->pipe, &ct->post, (RenderTexture2D *)target, width, height, c->vanishingUV, zoom, c->whiteout, c->shaderTime);
         ct->rstats.drawCalls += ct->pipe.drawCalls;
     }

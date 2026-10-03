@@ -16,7 +16,7 @@ typedef struct PostSettings {
     float bloomThreshold, bloomKnee, bloomIntensity, bloomRadius;
     int   bloomMips;
     bool  bloomQuarterRes;
-    float zoomBlur, zoomBlurInner, zoomBlurOuter;
+    float zoomBlur, zoomBlurAtBase, zoomBlurInner, zoomBlurOuter;   // zoomBlur: strength at full boost
     int   zoomTaps;
     float caPixels;
     float exposure;

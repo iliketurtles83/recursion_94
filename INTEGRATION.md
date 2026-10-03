@@ -114,7 +114,7 @@ The game is responsible for bloom/tonemapping. Useful inputs for a game-side pos
 
 | Call | Purpose |
 |---|---|
-| `ct_set_intensity(ct, v)` | 0..1 global energy (ring brightness, streak speed/density, zoom blur); `< 0` = automatic pacing |
+| `ct_set_intensity(ct, v)` | 0..1 global energy (ring brightness, streak speed/density, zoom blur strength); `< 0` = automatic pacing. Zoom blur itself only appears with boost (`zoomBlur` at full boost, `zoomBlurAtBase` fraction at base speed) |
 | `ct_trigger_whiteout(ct)` | whiteout + core flare animation (`whiteoutDuration`) |
 | `ct_set_whiteout(ct, w)` | manual whiteout 0..1 (e.g. scripted transitions); `< 0` returns to the animation |
 | `ct_path_sample(ct, s)` | centerline position, frame (T, N=up, B=right), radius, roll, curvature |
@@ -250,7 +250,8 @@ unknown keys are skipped, and loading first resets everything to defaults).
 | Bloom/Post | `bloomMips` | int | 6 | 1 | 8 |
 | Bloom/Post | `bloomQuarterRes` | bool | off | | |
 | Bloom/Post | `zoomBlurOn` | bool | on | | |
-| Bloom/Post | `zoomBlur` | float | 0.06 | 0 | 0.3 |
+| Bloom/Post | `zoomBlur` | float | 0.096 | 0 | 0.5 |
+| Bloom/Post | `zoomBlurAtBase` | float | 0 | 0 | 1 |
 | Bloom/Post | `zoomBlurInner` | float | 0.08 | 0 | 1 |
 | Bloom/Post | `zoomBlurOuter` | float | 0.75 | 0 | 2 |
 | Bloom/Post | `zoomTaps` | int | 10 | 2 | 16 |

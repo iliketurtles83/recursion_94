@@ -24,6 +24,7 @@ cmake -S . -B build && cmake --build build -j
                     [--bench SECONDS [--speed U]] [--shot S [--out FILE]] [--preset NAME]
                     [--write-preset NAME] [--list-params] [--hdr8] [--noship] [--ui] [--whiteout]
                     [--set NAME=VALUE ...]   (applied after --preset, then rebuilds)
+                    [--boost]               (hold boost during --shot)
 ```
 
 Keys: arrows steer, Shift/Space boost, Q/E barrel roll, F1 panel, F2 free camera (WASD +
@@ -400,4 +401,15 @@ were re-baselined after this change.
     max chunk build 2.55 ms, max streaming per frame 2.96 ms (budgets 3 / 4 ms: within, but the
     build is the closest to its budget; first candidate for optimisation if content grows).
   - Vortex regression set byte-identical.
+
+## Zoom blur is a boost effect (user feedback)
+
+At base speed the radial zoom blur smeared the edges without adding anything; when boosting it
+helps the feeling of speed. It used to scale with `speed / baseSpeed` (always 1 when cruising);
+now it ramps with `speedNorm` (0 at base, 1 at boost): `zoomBlur` is the strength at full boost
+(0.096 = the previous 0.06 × the new boost/base ratio 1.6, so boost looks unchanged) and
+`zoomBlurAtBase` (default 0) is the fraction kept at base speed. Presets updated
+(default 0.096, calm 0.048). Harness: `--boost` holds boost during `--shot`.
+`screenshots/zoomblur_base_vs_boost.png` (left base, right boost; city top, vortex bottom).
+The regression renders were re-baselined (they are taken at base speed).
 

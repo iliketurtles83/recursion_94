@@ -15,7 +15,9 @@ void post_register_params(PostSettings *s, ParamRegistry *reg)
     params_int(reg, g, "bloomMips", &s->bloomMips, 6, 1, PIPE_MAX_MIPS);
     params_bool(reg, g, "bloomQuarterRes", &s->bloomQuarterRes, false);
     params_bool(reg, g, "zoomBlurOn", &s->zoomBlurOn, true);
-    params_float(reg, g, "zoomBlur", &s->zoomBlur, 0.06f, 0.0f, 0.3f);
+    // Radial zoom blur is a boost effect: full strength at boost speed, zoomBlurAtBase of it at base speed.
+    params_float(reg, g, "zoomBlur", &s->zoomBlur, 0.096f, 0.0f, 0.5f);
+    params_float(reg, g, "zoomBlurAtBase", &s->zoomBlurAtBase, 0.0f, 0.0f, 1.0f);
     params_float(reg, g, "zoomBlurInner", &s->zoomBlurInner, 0.08f, 0.0f, 1.0f);
     params_float(reg, g, "zoomBlurOuter", &s->zoomBlurOuter, 0.75f, 0.0f, 2.0f);
     params_int(reg, g, "zoomTaps", &s->zoomTaps, 10, 2, 16);

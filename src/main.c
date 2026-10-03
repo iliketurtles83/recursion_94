@@ -10,7 +10,7 @@ typedef struct Cli {
     int    w, h, vsync, fps, env;
     double bench, speed;
     double shot;
-    bool   hasShot, hdr8, noShip, ui, whiteout;
+    bool   hasShot, hdr8, noShip, ui, whiteout, boost;
     const char *preset;
     const char *shotOut;
     const char *writePreset;
@@ -22,13 +22,13 @@ typedef struct Cli {
 static void usage(void)
 {
     printf("cybertunnel [--seed N] [--w W --h H] [--vsync 0|1] [--fps N] [--env 0|1|2]\n"
-           "            [--bench SECONDS [--speed U]] [--shot S [--out FILE]] [--preset NAME] [--write-preset NAME] [--list-params] [--hdr8] [--noship] [--ui] [--whiteout]\n"
+           "            [--bench SECONDS [--speed U]] [--shot S [--out FILE]] [--preset NAME] [--write-preset NAME] [--list-params] [--hdr8] [--noship] [--ui] [--whiteout] [--boost]\n"
            "            [--set NAME=VALUE ...]\n");
 }
 
 static Cli parse(int argc, char **argv)
 {
-    Cli c = { 1, 1280, 720, 1, 0, 0, 0.0, 120.0, 0.0, false, false, false, false, false, NULL, NULL, NULL, false, { 0 }, 0 };
+    Cli c = { 1, 1280, 720, 1, 0, 0, 0.0, 120.0, 0.0, false, false, false, false, false, false, NULL, NULL, NULL, false, { 0 }, 0 };
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
         const char *v = i + 1 < argc ? argv[i + 1] : NULL;
@@ -50,6 +50,7 @@ static Cli parse(int argc, char **argv)
         else if (!strcmp(a, "--noship")) c.noShip = true;
         else if (!strcmp(a, "--ui")) c.ui = true;
         else if (!strcmp(a, "--whiteout")) c.whiteout = true;
+        else if (!strcmp(a, "--boost")) c.boost = true;
         else if (!strcmp(a, "--help") || !strcmp(a, "-h")) { usage(); exit(0); }
         else { fprintf(stderr, "unknown argument: %s\n", a); usage(); exit(1); }
     }
@@ -158,6 +159,7 @@ int main(int argc, char **argv)
         }
 
         if (cli.whiteout && !whiteoutFired && now >= 1.25) { ct_trigger_whiteout(ct); whiteoutFired = true; }
+        if (cli.hasShot && cli.boost) { CtInput in = { 0 }; in.boost = true; ct_set_input(ct, &in); }   // shot held at boost
         if (bench && !statsReset && now > 1.0) { ct_reset_stats(ct); statsReset = true; }
         ct_update(ct, dt);
 
