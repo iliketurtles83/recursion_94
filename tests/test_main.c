@@ -769,7 +769,7 @@ static void test_corridor_decor(void)
     path_init(&p, 37, st);
     static ChunkCpu c;
     enum { N = 200, B_RAIN = 1, B_OUTLINE = 2, B_KERB = 3 };
-    int maxVerts = 0, rainQuads = 0, outlineVerts = 0, kerbs = 0;
+    int maxVerts = 0, rainQuads = 0, outlineVerts = 0, kerbs = 0, props = 0, propsOut = 1, rings = 0, ringsOut = 1;
     double worstMs = 0.0, minLat = 1e9;
     for (int k = 0; k < N; k++) {
         ensure_for_chunk(&p, &env, k);
@@ -784,6 +784,32 @@ static void test_corridor_decor(void)
         rainQuads += c.geo[B_RAIN].vcount / 4;
         outlineVerts += c.geo[B_OUTLINE].vcount;
         kerbs += c.geo[B_KERB].vcount / 4;
+        // Props: outside the lane, above the floor. Ring clusters: outside the lane or above the
+        // ship's ceiling (keeps the play band clear).
+        for (int i = 0; i < c.debrisCount; i++) {
+            const DebrisInfo *d = &c.debris[i];
+            PathSample ps = path_sample(&p, d->s);
+            DVec3 rel = dv_sub(d->center, ps.pos);
+            double lat = fabs(dv_dot(rel, ps.B)), up = dv_dot(rel, ps.N) + st.floorDepth;
+            if (lat - d->radius < st.baseRadius || up - d->radius < 0.0) propsOut = 0;
+            props++;
+        }
+        for (int slot = 0; slot < 16; slot++) {
+            const float *rb = c.uniforms[16 + slot];
+            if (rb[0] == 0.0f && rb[1] == 0.0f && rb[2] == 0.0f) continue;
+            const float *ra = c.uniforms[slot];
+            double x = c.origin.x + ra[0], y = c.origin.y + ra[1], z = c.origin.z + ra[2];
+            double best = 1e9;
+            for (double s = fmax(0.0, c.s0 - 40.0); s <= c.s1 + 40.0; s += 0.5) {
+                DVec3 q = path_sample(&p, s).pos;
+                double d = sqrt((q.x - x) * (q.x - x) + (q.z - z) * (q.z - z));
+                if (d < best) best = d;
+            }
+            double rMax = params_get(params_find(&reg, "corRingRadiusMax"));
+            double tilt = params_get(params_find(&reg, "corRingTilt")) * 3.14159265 / 180.0;
+            if (best - rMax < st.baseRadius && y - rMax * sin(tilt) - 0.05 < st.ceilingHeight) ringsOut = 0;
+            rings++;
+        }
         const int bs[2] = { B_OUTLINE, B_KERB };
         for (int bi = 0; bi < 2; bi++) {
             const LineGeo *g = &c.geo[bs[bi]];
@@ -801,6 +827,9 @@ static void test_corridor_decor(void)
            maxVerts, rainQuads, outlineVerts, kerbs, N, worstMs, minLat, st.baseRadius);
     CHECK(rainQuads > N * 10 && outlineVerts > 0 && kerbs > 0, "code rain, outlines and kerbs generated");
     CHECK(minLat >= st.baseRadius, "outlines and kerbs stay outside the lane (%.2f >= %.1f)", minLat, st.baseRadius);
+    printf("  corridor props %d, ring clusters %d\n", props, rings);
+    CHECK(props > 0 && propsOut, "corridor props outside the lane, above the floor");
+    CHECK(rings > 0 && ringsOut, "ring clusters outside the lane or above the ship's ceiling");
     CHECK(maxVerts <= 60000, "corridor chunk vertex budget (%d <= 60000)", maxVerts);
     CHECK(worstMs < 3.0, "full corridor chunk build < 3 ms (%.2f ms)", worstMs);
     for (int b = 0; b < CHUNK_BATCHES; b++) lg_free(&c.geo[b]);

@@ -566,7 +566,7 @@ Plan: `PLAN_ENV3_SERVER_CORRIDOR.md`. Reference frames `reference/t_4.0s` … `t
   per tier the lane face and the camera-facing face, plus overhang undersides and ledges.
   Shaded with the city's `tower.fs` (rack-like panels 2.4 × 1.8, darker slate) instead of a new
   `pillar.fs`: the panel uniforms already give the rack look, so a separate shader was not needed.
-- (Screenshot superseded by `corridor_pillars_c.png`, Phase C.)
+- (Screenshots: see Phase E, `corridor_e.png`.)
 - **Accept:**
   - Tests: 75 passed. 200 chunks, 5709 pillars (1716 wall, 247 merged slabs, 879 with an outline
     flag): no cell claimed twice, every cell in the band claimed by its brute-force owner, no
@@ -606,7 +606,7 @@ Plan: `PLAN_ENV3_SERVER_CORRIDOR.md`. Reference frames `reference/t_4.0s` … `t
 - Floor retuned for the enclosed look: grid intensity 1.7, halo 0.2, node pads 1.0, reflection 1.0.
   Pillar bodies brighter (2.6) so the slate shows between the rain.
 - `screenshots/compare_corridor_c.png` (reference t_6.0 / t_6.5 / t_7.0 left, s = 100 / 2600 /
-  1500 right) and `corridor_pillars_c.png`. Beams, sky lattice, rings and rain come in D and E.
+  1500 right). Beams, sky lattice, rings and rain come in D and E.
 - **Accept:**
   - Tests: 79 passed. New: over 200 full chunks every outline and kerb vertex stays ≥ 6.98 from the
     path (lane half-width 6.5; the ship reaches at most 0.9 × 6.5 = 5.85); max 1144 vertices per
@@ -645,12 +645,44 @@ Plan: `PLAN_ENV3_SERVER_CORRIDOR.md`. Reference frames `reference/t_4.0s` … `t
   through them. Pillars are now 14–20 high (back rows the same) and beams 24–29, so there is
   always a gap of at least 4 between pillar tops and beam undersides; the outlines' top runs now
   show. Beams stay above the ship's ceiling (16.2 above the floor).
-- `screenshots/compare_corridor_d.png` (reference t_5.0 / t_5.25 left, s = 700 / 100 right),
-  `corridor_d.png`.
+- `screenshots/compare_corridor_d.png` (reference t_5.0 / t_5.25 left, s = 700 / 100 right).
 - **Accept:**
   - Tests: 85 passed. 200 chunks: 2265 beam segments, no cell owned twice, every end capped
     exactly when the neighbouring cell on its line has no segment (3112 joins, 1118 caps, 0
     wrong), no along-lane beam above the lane, lowest underside 24 (> 16.2), plan 0.09 ms.
   - Bench 720p speed 120, 30 s: avg 0.30 ms, p99 0.43 ms, 119 draw calls, 15.7k vertices;
     1080p speed 40: avg 0.50 ms, 123 draw calls. Max chunk build 1.2 ms.
+  - Regression set byte-identical.
+
+## Phase E — Holo rings, rain, props; Matrix code rain
+
+- **User feedback:** the green dots on the pillars are meant as "The Matrix" digital rain. The
+  code rain shader was rewritten: glyphs on a fixed character grid (0.5 × 0.675), each a hashed
+  set of strokes on a 3×3 node lattice (reads as katakana-like symbols, never empty), changing
+  over time and quickly at the head. Each column (65 % active) carries a stream falling at
+  2–6 u/s with a white head glyph and a green trail (length 3–10, fading and darkening toward
+  deep green), then waits a random gap; faint residual glyphs (10 %) elsewhere; 15 % mint
+  columns. Distance filter: strokes converge to their mean coverage below ~4 px per character
+  and the stream to its mean below ~2 px per row. Params renamed to match (`corRainCharWidth`,
+  `corRainResidual`, `corRainHead`, `corRainTrail`, `corRainGlyphRate`).
+  `screenshots/corridor_matrix_rain.png` (1080p close-up).
+- Holo rings: clusters of 2–3 rings (concentric or stacked, each split into 1–3 arcs with gaps,
+  per-ring spin, some with pulses) share one basis slot of the existing ring shader, so a chunk
+  holds up to 16 clusters. On 12 % of wall pillars (owned with the pillar), radius capped so the
+  edge stays outside the lane; and 0–1 per chunk over the lane, but always above the ship's
+  ceiling and below the beams, so the play band stays clear. Tilt ±6°.
+- Rain: the shared slab streaks, 600 max at density 0.4, white-cyan, 9–26 above the floor (upper
+  half), centre gap 9 with 4 % inside.
+- Props: 0–2 white wireframe cubes per chunk, 1–7 above the floor beside the lane, only where no
+  pillar of this chunk or a neighbour (planned on demand when the prop is within 24 of that chunk
+  end) overlaps them; registered as debris for `ct_debris_in_range`. Orange polyhedra not added
+  (open question, see the plan §6).
+- Draw calls: kerbs, rings and prop faces are skipped in the reflection pass.
+- `screenshots/compare_corridor_e.png` (reference t_5.0 / t_7.25 left, s = 700 / 2600 right),
+  `corridor_e.png` (s = 100, 700, 1500, 2600).
+- **Accept:**
+  - Tests: 87 passed. New: over 200 chunks, 101 props all outside the lane and above the floor,
+    248 ring clusters all outside the lane or above the ship's ceiling.
+  - Bench 720p speed 120, 30 s: avg 0.33 ms, 133 draw calls; 1080p speed 40: avg 0.53 ms, p99
+    0.71 ms, 135 draw calls (budget 150), max chunk build 2.06 ms, streaming 2.2 ms per frame.
   - Regression set byte-identical.

@@ -4,20 +4,31 @@
 //
 // Phases done: A (path style: level, no twist, floor and ceiling, strong yaw spring; grid
 // floor, sky, reflection), B (pillar placement and stepped bodies, corridor_pillars.c),
-// C (code rain, stepped outlines and floor kerbs), D (overhead beams, corridor_beams.c; sky lattice).
+// C (code rain, stepped outlines and floor kerbs), D (overhead beams, corridor_beams.c; sky
+// lattice), E (holo rings, light rain, props).
 #include "env_common.h"
 #include "core/rng.h"
 #include "core/pacing.h"
 #include "corridor_pillars.h"
 #include "corridor_beams.h"
 #include "render/gridfloor.h"
+#include "render/shapes.h"
+#include "render/streaks.h"
 #include "render/rmath.h"
 #include "render/pipeline.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
-enum { KB_BODY = 0, KB_RAIN, KB_OUTLINE, KB_KERB, KB_BEAM };   // chunk batches
+enum { KB_BODY = 0, KB_RAIN, KB_OUTLINE, KB_KERB, KB_BEAM, KB_RING, KB_PROP_EDGES, KB_PROP_FACES };
+
+// Per-chunk uniforms: ring cluster bases (ring.vs) and props (object.vs / face.vs).
+enum { U_RING_A = 0, U_RING_B = 16, U_RING_C = 32, U_OBJ_A = 48, U_OBJ_B = 64, U_OBJ_C = 80 };
+#define MAX_CLUSTERS 16
+#define MAX_PROPS    8
+#define RAIN_COUNT   600
+
+enum { F_RINGS = 4, F_PROPS = 5 };   // corridor feature sub-streams (pillars 1, decor 2, beams 3)   // chunk batches
 
 #define PILLAR_BAND_LIMIT 150.0f   // largest corPillarBandMax (sets pathReach)
 #define BEAM_BAND_LIMIT   120.0f   // largest corBeamBandMax
@@ -34,7 +45,15 @@ typedef struct CorridorParams {
     float beamBrightness, traceIntensity, tracePitch, traceRuns, traceCross, pulseSpeed, pulseAmount;
     GridFloorParams skyGrid;
     float skyGridHeight, skyGridSparse;
-    float rainPitch, rainEmpty, rainSpeedMin, rainSpeedMax, rainFill, rainHead, rainTrail, rainFlicker;
+    bool  showRings;
+    float ringTopChance, ringLaneChance, ringRadiusMin, ringRadiusMax, ringIntensity, ringWidth, ringSpin, ringTilt;
+    StreakParams rain;
+    float rainYMin, rainYMax;
+    bool  showStreaks;
+    bool  showProps;
+    int   propsMax;
+    float propSizeMin, propSizeMax, propHeightMin, propHeightMax, propEdgeIntensity, propFaceIntensity;
+    float rainPitch, rainEmpty, rainSpeedMin, rainSpeedMax, rainResidual, rainHead, rainTrail, rainGlyphRate;
     float bodyBrightness, rimIntensity, underglow, panelW, panelH, seamDark, recessed;
     float fogStart, fogEnd;          // fog for chunk content
     float hazeWidth, hazeGlow, dust; // sky
@@ -48,7 +67,9 @@ typedef struct CorridorState {
     int            shSky;
     Material       mat;
     GridFloor      floor;
-    int            shBody, shRain, shTrace, shLines, shBeam;
+    int            shBody, shRain, shTrace, shLines, shBeam, shRing, shFace;
+    StreakSystem   streaks;
+    PillarDesc     near[2][COR_MAX_PILLARS];   // neighbouring chunks' pillars (prop keep-out)
     BeamDesc       beams[COR_MAX_BEAMS];
     PillarDesc     pillars[COR_MAX_PILLARS];   // build scratch (builds are single-threaded)
 } CorridorState;
@@ -150,18 +171,18 @@ static void cor_register(Environment *env, ParamRegistry *reg)
 
     g = "CodeRain";
     params_bool(reg, g, "corShowRain", &p->showRain, true);
-    params_float(reg, g, "corRainIntensity", &dp->rainIntensity, 1.6f, 0.0f, 10.0f);
+    params_float(reg, g, "corRainIntensity", &dp->rainIntensity, 2.2f, 0.0f, 10.0f);
     params_float(reg, g, "corRainBack", &dp->backRain, 0.35f, 0.0f, 2.0f);
     params_float(reg, g, "corRainLane", &dp->laneRain, 0.6f, 0.0f, 2.0f);
     params_float(reg, g, "corRainOffset", &dp->rainOffset, 0.05f, 0.005f, 0.5f);
-    params_float(reg, g, "corRainPitch", &p->rainPitch, 0.45f, 0.1f, 2.0f);
+    params_float(reg, g, "corRainCharWidth", &p->rainPitch, 0.5f, 0.1f, 2.0f);
     params_float(reg, g, "corRainEmpty", &p->rainEmpty, 0.35f, 0.0f, 1.0f);
-    params_float(reg, g, "corRainSpeedMin", &p->rainSpeedMin, 1.0f, 0.0f, 10.0f);
-    params_float(reg, g, "corRainSpeedMax", &p->rainSpeedMax, 4.0f, 0.0f, 10.0f);
-    params_float(reg, g, "corRainFill", &p->rainFill, 0.7f, 0.0f, 1.0f);
-    params_float(reg, g, "corRainHead", &p->rainHead, 1.0f, 0.0f, 8.0f);
-    params_float(reg, g, "corRainTrail", &p->rainTrail, 3.0f, 0.1f, 20.0f);
-    params_float(reg, g, "corRainFlicker", &p->rainFlicker, 0.03f, 0.0f, 1.0f);
+    params_float(reg, g, "corRainSpeedMin", &p->rainSpeedMin, 2.0f, 0.0f, 10.0f);
+    params_float(reg, g, "corRainSpeedMax", &p->rainSpeedMax, 6.0f, 0.0f, 10.0f);
+    params_float(reg, g, "corRainResidual", &p->rainResidual, 0.1f, 0.0f, 1.0f);
+    params_float(reg, g, "corRainHead", &p->rainHead, 0.8f, 0.0f, 8.0f);
+    params_float(reg, g, "corRainTrail", &p->rainTrail, 6.0f, 0.1f, 20.0f);
+    params_float(reg, g, "corRainGlyphRate", &p->rainGlyphRate, 1.0f, 0.0f, 10.0f);
 
     g = "Beams";
     BeamParams *bp = &p->beams;
@@ -194,6 +215,49 @@ static void cor_register(Environment *env, ParamRegistry *reg)
     params_float(reg, g, "corSkyGridFadeEnd", &p->skyGrid.fogEnd, 300.0f, 1.0f, 1500.0f);
     p->skyGrid.lineColor = (Color){ 0xDC, 0xF2, 0xFF, 255 };
 
+    g = "Rings";
+    params_bool(reg, g, "corShowRings", &p->showRings, true);
+    params_float(reg, g, "corRingTopChance", &p->ringTopChance, 0.12f, 0.0f, 1.0f);
+    params_float(reg, g, "corRingLaneChance", &p->ringLaneChance, 0.35f, 0.0f, 1.0f);
+    params_float(reg, g, "corRingRadiusMin", &p->ringRadiusMin, 2.0f, 0.5f, 8.0f);
+    params_float(reg, g, "corRingRadiusMax", &p->ringRadiusMax, 4.5f, 0.5f, 8.0f);
+    params_float(reg, g, "corRingIntensity", &p->ringIntensity, 3.0f, 0.0f, 10.0f);
+    params_float(reg, g, "corRingWidth", &p->ringWidth, 0.08f, 0.005f, 0.5f);
+    params_float(reg, g, "corRingSpin", &p->ringSpin, 0.35f, 0.0f, 3.0f);
+    params_float(reg, g, "corRingTilt", &p->ringTilt, 6.0f, 0.0f, 30.0f);
+
+    g = "Rain";
+    StreakParams *rn = &p->rain;
+    params_bool(reg, g, "corShowStreaks", &p->showStreaks, true);
+    params_float(reg, g, "corStreakDensity", &rn->density, 0.4f, 0.0f, 1.0f);
+    params_float(reg, g, "corStreakLenMul", &rn->lenMul, 2.4f, 0.1f, 10.0f);
+    params_float(reg, g, "corStreakWMin", &rn->wMin, 0.04f, 0.005f, 0.5f);
+    params_float(reg, g, "corStreakWMax", &rn->wMax, 0.12f, 0.005f, 0.5f);
+    params_float(reg, g, "corStreakIntensity", &rn->intensity, 2.4f, 0.0f, 10.0f);
+    params_float(reg, g, "corStreakCometFrac", &rn->cometFrac, 0.05f, 0.0f, 0.5f);
+    params_float(reg, g, "corStreakZRange", &rn->zRange, 150.0f, 40.0f, 400.0f);
+    params_float(reg, g, "corStreakHalfWidth", &rn->slabHalfWidth, 30.0f, 5.0f, 200.0f);
+    params_float(reg, g, "corStreakYMin", &p->rainYMin, 9.0f, 0.0f, 50.0f);
+    params_float(reg, g, "corStreakYMax", &p->rainYMax, 26.0f, 0.0f, 100.0f);
+    params_float(reg, g, "corStreakFallTilt", &rn->fallTilt, 0.12f, 0.0f, 1.0f);
+    params_float(reg, g, "corStreakCenterGap", &rn->slabGap, 9.0f, 0.0f, 100.0f);
+    params_float(reg, g, "corStreakCenterFrac", &rn->slabGapFrac, 0.04f, 0.0f, 1.0f);
+    params_float(reg, g, "corStreakSpeedMul", &rn->speedMul, 1.0f, 0.0f, 4.0f);
+    rn->zBehind = 12.0f;
+    rn->volume = 1;
+    rn->colMain = (Color){ 0xD8, 0xF6, 0xFF, 255 };
+    rn->colAccent = COL_CYAN;
+
+    g = "Props";
+    params_bool(reg, g, "corShowProps", &p->showProps, true);
+    params_int(reg, g, "corPropsMax", &p->propsMax, 2, 0, MAX_PROPS);
+    params_float(reg, g, "corPropSizeMin", &p->propSizeMin, 0.5f, 0.1f, 4.0f);
+    params_float(reg, g, "corPropSizeMax", &p->propSizeMax, 1.3f, 0.1f, 4.0f);
+    params_float(reg, g, "corPropHeightMin", &p->propHeightMin, 1.0f, 0.4f, 30.0f);
+    params_float(reg, g, "corPropHeightMax", &p->propHeightMax, 7.0f, 0.5f, 30.0f);
+    params_float(reg, g, "corPropEdgeIntensity", &p->propEdgeIntensity, 2.4f, 0.0f, 10.0f);
+    params_float(reg, g, "corPropFaceIntensity", &p->propFaceIntensity, 0.2f, 0.0f, 3.0f);
+
     g = "Corridor";
     params_bool(reg, g, "corShowSky", &p->showSky, true);
     params_float(reg, g, "corFogStart", &p->fogStart, 80.0f, 0.0f, 600.0f);
@@ -216,8 +280,11 @@ static void cor_init(Environment *env, uint64_t seed, ShaderLib *sl)
         st->shTrace = sl_load(sl, "trace.vs", "outline.fs");
         st->shLines = sl_load(sl, "object.vs", "line_facing.fs");
         st->shBeam = sl_load(sl, "tower.vs", "beam.fs");
+        st->shRing = sl_load(sl, "ring.vs", "ring.fs");
+        st->shFace = sl_load(sl, "face.vs", "face.fs");
         st->mat = LoadMaterialDefault();
     }
+    streaks_init(&st->streaks, sl, RAIN_COUNT);
 }
 
 static void cor_reseed(Environment *env, uint64_t seed) { ((CorridorState *)env->state)->seed = seed; }
@@ -230,6 +297,125 @@ static PillarParams pillar_params(const CorridorState *st, const PathSystem *pat
     pp.laneHalfWidth = path->style.baseRadius;
     pp.floorY = (float)(path_sample(path, 0.0).pos.y - path->style.floorDepth);   // level path: y is constant
     return pp;
+}
+
+static const Color COL_RING = { 0x7C, 0xEE, 0xFF, 255 };
+static const Color COL_PALE = { 0xE6, 0xF8, 0xFF, 255 };
+
+static void set_u(ChunkCpu *c, int slot, Vector3 v, float w)
+{
+    c->uniforms[slot][0] = v.x; c->uniforms[slot][1] = v.y; c->uniforms[slot][2] = v.z; c->uniforms[slot][3] = w;
+}
+
+// A cluster of 2-3 horizontal (slightly tilted) holo rings sharing one basis slot: concentric
+// or stacked, each split into 1-3 arcs with gaps, spinning at its own rate.
+static void ring_cluster(const CorridorParams *p, ChunkCpu *c, int slot, DVec3 centre, float radius, Pcg32 *r)
+{
+    float tilt = pcg32_range(r, -p->ringTilt, p->ringTilt) * DEG2RAD, yaw = pcg32_float(r) * 6.2831853f;
+    Vector3 right = { cosf(yaw), 0.0f, sinf(yaw) };
+    Vector3 flat = { -sinf(yaw), 0.0f, cosf(yaw) };          // horizontal, perpendicular to right
+    Vector3 up = Vector3Add(Vector3Scale(flat, cosf(tilt)), (Vector3){ 0.0f, sinf(tilt), 0.0f });
+    set_u(c, U_RING_A + slot, env_local(centre, c->origin), 0.0f);
+    set_u(c, U_RING_B + slot, right, 0.0f);
+    set_u(c, U_RING_C + slot, up, 0.0f);
+    int count = pcg32_int(r, 2, 3);
+    int stacked = pcg32_chance(r, 0.5f);
+    for (int k = 0; k < count; k++) {
+        float rad = stacked ? radius * pcg32_range(r, 0.9f, 1.05f) : radius * (1.0f - 0.22f * (float)k);
+        float z = stacked ? (float)k * pcg32_range(r, 0.5f, 0.9f) : 0.0f;
+        float spin = p->ringSpin * pcg32_range(r, 0.5f, 1.5f) * (pcg32_chance(r, 0.5f) ? 1.0f : -1.0f);
+        LineAttr a = { COL_RING, p->ringIntensity * pcg32_range(r, 0.7f, 1.1f), pcg32_float(r), pcg32_chance(r, 0.5f) ? 0.15f : 0.0f, (float)slot, spin };
+        int arcs = pcg32_int(r, 1, 3);
+        float start = pcg32_float(r) * 6.2831853f, span = 6.2831853f / (float)arcs;
+        for (int i = 0; i < arcs; i++) {
+            float gap = arcs == 1 ? 0.0f : pcg32_range(r, 0.15f, 0.6f);
+            float a0 = start + span * (float)i, a1 = a0 + span - gap;
+            lg_planar_arc(&c->geo[KB_RING], rad, a0, a1, z, p->ringWidth, 0.08f, a);
+        }
+    }
+}
+
+static void build_rings(const CorridorState *st, const PathSystem *path, const PillarDesc *pl, int n, ChunkCpu *c)
+{
+    const CorridorParams *p = &st->p;
+    Pcg32 r = pcg32_seed(ct_hash64_3(st->seed, ((uint64_t)ENV_CORRIDOR << 8) | F_RINGS, (uint64_t)(int64_t)c->index));
+    int slot = 0;
+    // Above the lane, higher than the ship can fly (keeps the play band clear): 0-1 per chunk.
+    float fd = path->style.floorDepth, ceil = path->style.ceilingHeight;
+    float beamY = p->beams.heightMin - 1.5f;   // underside of the lowest beam level, above the floor
+    if (pcg32_chance(&r, p->ringLaneChance)) {
+        double s = c->s0 + pcg32_range(&r, 0.2f, 0.8f) * CHUNK_LEN;
+        PathSample ps = path_sample(path, s);
+        float rad = pcg32_range(&r, p->ringRadiusMin, p->ringRadiusMax);
+        float y = pcg32_range(&r, ceil + fd + 2.0f, fmaxf(beamY - 1.5f, ceil + fd + 2.0f));
+        DVec3 ctr = dv_add(ps.pos, dv_add(dv_scale(ps.B, pcg32_range(&r, -2.0f, 2.0f)), dv_scale(ps.N, y - fd)));
+        ring_cluster(p, c, slot++, ctr, rad, &r);
+    }
+    // On top of wall pillars (owned with the pillar, so this chunk builds them).
+    for (int i = 0; i < n && slot < MAX_CLUSTERS; i++) {
+        const PillarDesc *d = &pl[i];
+        Pcg32 pr = pcg32_seed(ct_hash64_2(d->hash, F_RINGS));
+        if (!d->wall || !pcg32_chance(&pr, p->ringTopChance)) continue;
+        int t = d->tiers - 1;
+        double cl = d->cLane[t], depth = fabs(d->cOut - cl);
+        float rad = fminf(pcg32_range(&pr, p->ringRadiusMin, p->ringRadiusMax), (float)(depth * 0.5 + 0.9));   // edge stays outside the lane
+        DVec3 ctr = pillar_point(d, (d->a0 + d->a1) * 0.5, (cl + d->cOut) * 0.5, d->yTop[t] + pcg32_range(&pr, 0.8f, 2.0f));
+        ring_cluster(p, c, slot++, ctr, rad, &pr);
+    }
+}
+
+static int prop_hits(const PillarDesc *pl, int n, DVec3 ctr, double bound)
+{
+    for (int i = 0; i < n; i++) {
+        double x0, z0, x1, z1;
+        pillar_bounds(&pl[i], &x0, &z0, &x1, &z1);
+        if (ctr.x > x0 - bound && ctr.x < x1 + bound && ctr.z > z0 - bound && ctr.z < z1 + bound) return 1;
+    }
+    return 0;
+}
+
+// Small slowly turning wireframe cubes low beside the lane, in the gaps between pillars. Checked
+// against this chunk's and both neighbours' pillars (a pillar can reach across a chunk boundary).
+static void build_props(CorridorState *st, const PathSystem *path, const PillarParams *pp, const PillarDesc *own, int nOwn, ChunkCpu *c)
+{
+    const CorridorParams *p = &st->p;
+    if (p->propsMax <= 0) return;
+    Pcg32 r = pcg32_seed(ct_hash64_3(st->seed, ((uint64_t)ENV_CORRIDOR << 8) | F_PROPS, (uint64_t)(int64_t)c->index));
+    int count = pcg32_int(&r, 0, p->propsMax > MAX_PROPS ? MAX_PROPS : p->propsMax);
+    if (count == 0) return;
+    int nn[2] = { -1, -1 };   // neighbours' pillars, planned only when a prop comes near that end
+    float lane = path->style.baseRadius;
+    for (int g = 0; g < count; g++) {
+        double s = c->s0 + pcg32_float(&r) * CHUNK_LEN;
+        PathSample ps = path_sample(path, s);
+        float size = pcg32_range(&r, p->propSizeMin, p->propSizeMax);
+        float h = size * 0.5f, bound = h * 1.7320508f;
+        float side = pcg32_chance(&r, 0.5f) ? 1.0f : -1.0f;
+        float lat = pcg32_range(&r, lane + 0.5f + bound, lane + 14.0f);
+        float y = pcg32_range(&r, p->propHeightMin + bound, fmaxf(p->propHeightMax, p->propHeightMin + bound)) - path->style.floorDepth;
+        DVec3 ctr = dv_add(ps.pos, dv_add(dv_scale(ps.B, side * lat), dv_scale(ps.N, y)));
+        Vector3 axis = Vector3Normalize((Vector3){ pcg32_range(&r, -1, 1), pcg32_range(&r, 0.3f, 1), pcg32_range(&r, -1, 1) });
+        float spin = pcg32_range(&r, 0.15f, 0.6f) * (pcg32_chance(&r, 0.5f) ? 1.0f : -1.0f), phase = pcg32_float(&r) * 6.2831853f;
+        float he = pcg32_float(&r), hf = pcg32_float(&r);
+        int hit = prop_hits(own, nOwn, ctr, bound + 0.3);
+        for (int j = 0; j < 2 && !hit; j++) {
+            if ((j ? c->s1 - s : s - c->s0) > 24.0) continue;   // a neighbour's pillar reaches < 24 into this chunk
+            if (nn[j] < 0) nn[j] = pillars_plan(pp, NULL, st->seed, path, c->index + (j ? 1 : -1), st->near[j], COR_MAX_PILLARS, NULL, 0, NULL);
+            hit = prop_hits(st->near[j], nn[j], ctr, bound + 0.3);
+        }
+        if (hit) continue;
+        int slot = c->debrisCount < MAX_PROPS ? c->debrisCount : MAX_PROPS - 1;
+        set_u(c, U_OBJ_A + slot, env_local(ctr, c->origin), size);
+        set_u(c, U_OBJ_B + slot, axis, spin);
+        set_u(c, U_OBJ_C + slot, (Vector3){ phase, 0, 0 }, 0.0f);
+        LineAttr e = { COL_PALE, p->propEdgeIntensity, he, 0.0f, (float)slot, 0.0f };
+        LineAttr f = { COL_CYAN, p->propFaceIntensity, hf, 0.0f, (float)slot, 0.0f };
+        shape_cube(&c->geo[KB_PROP_EDGES], &c->geo[KB_PROP_FACES], h, e, f, 0.035f);
+        if (c->debrisCount < CHUNK_MAX_DEBRIS) {
+            DebrisInfo *d = &c->debris[c->debrisCount++];
+            d->center = ctr; d->radius = bound; d->s = s;
+        }
+    }
 }
 
 static void cor_build_chunk(Environment *env, const PathSystem *path, int chunkIndex, ChunkCpu *out)
@@ -247,6 +433,8 @@ static void cor_build_chunk(Environment *env, const PathSystem *path, int chunkI
     bp.density = 1.0f;
     int nb = beams_plan(&bp, st->seed, path, chunkIndex, st->beams, COR_MAX_BEAMS, NULL, 0, NULL);
     beams_build(st->beams, nb, out->origin, &out->geo[KB_BEAM]);
+    build_rings(st, path, st->pillars, n, out);
+    build_props(st, path, &pp, st->pillars, n, out);
 }
 static void cor_upload(Environment *env, ChunkCpu *in, ChunkGpu *out) { chunk_upload_default(in, out); }
 static void cor_release(Environment *env, ChunkGpu *gpu) { chunk_release_default(gpu); }
@@ -309,7 +497,16 @@ static void draw_batch(CorridorState *st, const FrameContext *ctx, int sh, const
         Matrix xf = env_chunk_transform(c, ctx->renderOrigin);
         for (int m = 0; m < c->meshCount; m++) {
             if (c->meshBatch[m] != batch) continue;
-            if (batch != KB_BODY) sl_f1(st->sl, sh, "uChunkFade", env_chunk_fade(c, ctx->time));
+            if (batch != KB_BODY && batch != KB_BEAM) sl_f1(st->sl, sh, "uChunkFade", env_chunk_fade(c, ctx->time));
+            if (batch == KB_RING) {
+                sl_vec4v(st->sl, sh, "uRingA", c->uniforms[U_RING_A], MAX_CLUSTERS);
+                sl_vec4v(st->sl, sh, "uRingB", c->uniforms[U_RING_B], MAX_CLUSTERS);
+                sl_vec4v(st->sl, sh, "uRingC", c->uniforms[U_RING_C], MAX_CLUSTERS);
+            } else if (batch == KB_PROP_EDGES || batch == KB_PROP_FACES) {
+                sl_vec4v(st->sl, sh, "uObjA", c->uniforms[U_OBJ_A], 16);
+                sl_vec4v(st->sl, sh, "uObjB", c->uniforms[U_OBJ_B], 16);
+                sl_vec4v(st->sl, sh, "uObjC", c->uniforms[U_OBJ_C], 16);
+            }
             DrawMesh(c->meshes[m], st->mat, xf);
             ctx->stats->drawCalls++;
             ctx->stats->vertices += c->meshes[m].vertexCount;
@@ -385,7 +582,7 @@ static void cor_draw_emissive(Environment *env, const FrameContext *ctx, const C
         sl_v3(sl, sh, "uMint", ct_srgb_to_linear(COL_MINT));
         sl_v3(sl, sh, "uWhite", (Vector3){ 1.0f, 1.0f, 1.0f });
         sl_f4(sl, sh, "uRain", p->rainPitch, p->rainEmpty, p->rainSpeedMin, p->rainSpeedMax);
-        sl_f4(sl, sh, "uRain2", p->rainFill, p->rainHead, p->rainTrail, p->rainFlicker);
+        sl_f4(sl, sh, "uRain2", p->rainResidual, p->rainHead, p->rainTrail, p->rainGlyphRate);
         draw_batch(st, ctx, sh, chunks, n, KB_RAIN);
     }
     if (p->showPillars && p->showOutlines) {
@@ -393,11 +590,37 @@ static void cor_draw_emissive(Environment *env, const FrameContext *ctx, const C
         env_set_common_uniforms(sl, t, ctx);
         sl_f1(sl, t, "uGain", ctx->reflectionPass ? p->outlineReflect : 1.0f);
         draw_batch(st, ctx, t, chunks, n, KB_OUTLINE);
-        int l = st->shLines;
-        env_set_common_uniforms(sl, l, ctx);
-        sl_f1(sl, l, "uEdgeMix", 0.0f);
-        sl_f1(sl, l, "uFlicker", 0.0f);
-        draw_batch(st, ctx, l, chunks, n, KB_KERB);
+    }
+    // The blurred reflection cannot show the thin kerbs, rings or faint prop faces: skip them
+    // there (keeps the draw-call budget).
+    bool refl = ctx->reflectionPass;
+    int l = st->shLines;
+    env_set_common_uniforms(sl, l, ctx);
+    sl_f1(sl, l, "uEdgeMix", 0.0f);
+    sl_f1(sl, l, "uFlicker", 0.0f);
+    if (p->showPillars && p->showOutlines && !refl) draw_batch(st, ctx, l, chunks, n, KB_KERB);
+    if (p->showProps) {
+        sl_f1(sl, l, "uFlicker", 0.25f);
+        draw_batch(st, ctx, l, chunks, n, KB_PROP_EDGES);
+        if (!refl) {
+            env_set_common_uniforms(sl, st->shFace, ctx);
+            sl_f1(sl, st->shFace, "uDataRate", 1.2f);
+            draw_batch(st, ctx, st->shFace, chunks, n, KB_PROP_FACES);
+        }
+    }
+    if (p->showRings && !refl) {
+        int rs = st->shRing;
+        env_set_common_uniforms(sl, rs, ctx);
+        sl_f1(sl, rs, "uPulseAmount", 2.0f);
+        sl_f1(sl, rs, "uPulseSpeed", 0.6f);
+        draw_batch(st, ctx, rs, chunks, n, KB_RING);
+    }
+    if (p->showStreaks) {
+        StreakParams rp = p->rain;
+        float fd = ctx->path->style.floorDepth;
+        rp.slabYMin = p->rainYMin - fd;
+        rp.slabYMax = p->rainYMax - fd;
+        streaks_draw(&st->streaks, &rp, ctx);
     }
 }
 
@@ -406,6 +629,7 @@ static const char *cor_label(const Environment *env, int archetype) { return "CO
 static void cor_unload(Environment *env)
 {
     CorridorState *st = (CorridorState *)env->state;
+    streaks_unload(&st->streaks);
     if (st->sl) { st->mat.shader.id = rlGetShaderIdDefault(); UnloadMaterial(st->mat); }
     free(env->state);
     env->state = NULL;
