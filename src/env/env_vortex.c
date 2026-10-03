@@ -2,6 +2,7 @@
 // streaks, tumbling wireframe debris, holographic rings and a blazing core.
 #include "env_common.h"
 #include "core/rng.h"
+#include "core/pacing.h"
 #include "render/rmath.h"
 #include "render/pipeline.h"
 #include "render/shapes.h"
@@ -244,28 +245,12 @@ static const float TRANSITION[ARCH_COUNT][ARCH_COUNT] = {
     { 0.50f, 0.30f, 0.20f, 0.00f },
 };
 
+static const PacingTable PACING = { ARCH_COUNT, ARCH_CALM, RUN_MIN, RUN_MAX, &TRANSITION[0][0] };
+
 static int archetype_of_chunk(const VortexState *st, int k)
 {
     if (!st->p.pacing) return ARCH_DEFAULT;
-    if (k < 0) k = 0;
-    uint64_t base = ct_hash64_3(st->seed, ENV_VORTEX, F_PACING);
-    int a = ARCH_CALM, start = 0;
-    for (int r = 0;; r++) {
-        Pcg32 rng = pcg32_seed(ct_hash64_2(base, (uint64_t)r));
-        if (r > 0) a = pcg32_weighted(&rng, TRANSITION[a], ARCH_COUNT);
-        int len = pcg32_int(&rng, RUN_MIN[a], RUN_MAX[a]);
-        if (k < start + len) return a;
-        start += len;
-    }
-}
-
-static ArchParams arch_lerp(ArchParams a, ArchParams b, float t)
-{
-    ArchParams r;
-    const float *pa = &a.spacingMul, *pb = &b.spacingMul;
-    float *pr = &r.spacingMul;
-    for (int i = 0; i < (int)(sizeof(ArchParams) / sizeof(float)); i++) pr[i] = pa[i] + (pb[i] - pa[i]) * t;
-    return r;
+    return pacing_archetype(&PACING, ct_hash64_3(st->seed, ENV_VORTEX, F_PACING), k);
 }
 
 typedef struct ChunkArch { int prev, cur; double s0; } ChunkArch;
@@ -274,10 +259,10 @@ static ArchParams arch_at(const VortexState *st, const ChunkArch *ca, double s)
 {
     ArchParams cur = st->arch[ca->cur];
     if (ca->prev == ca->cur) return cur;
-    float t = (float)((s - ca->s0) / CHUNK_LEN);
-    t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
-    t = t * t * (3.0f - 2.0f * t);
-    return arch_lerp(st->arch[ca->prev], cur, t);
+    ArchParams r;
+    pacing_lerp(&r.spacingMul, &st->arch[ca->prev].spacingMul, &cur.spacingMul, (int)(sizeof(ArchParams) / sizeof(float)),
+                pacing_blend_t(s, ca->s0, CHUNK_LEN));
+    return r;
 }
 
 static float vortex_energy_at(const Environment *env, const PathSystem *path, double s)

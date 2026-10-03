@@ -6,9 +6,8 @@
 // glyph panel (narrow strip by the front edge, or a block) and sparser traces around it.
 // Faces turned away get nothing (never seen in the chase view).
 //
-// Traces are routed on a square lattice (pitch) per face with an occupancy bitmap: a bus of
-// 2-4 parallel traces climbs in vertical runs and jogs diagonally (45 degrees) as one, keeping
-// an empty column to any other bus; traces drop out individually and end in a via.
+// Traces are routed by trace_route.c (buses of parallel traces with 45-degree jogs and vias)
+// around the glyph panels.
 #ifndef CT_CITY_DECOR_H
 #define CT_CITY_DECOR_H
 

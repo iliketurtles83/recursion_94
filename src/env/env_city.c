@@ -9,6 +9,7 @@
 #include "city_towers.h"
 #include "city_decor.h"
 #include "core/rng.h"
+#include "core/pacing.h"
 #include "render/gridfloor.h"
 #include "render/shapes.h"
 #include "render/streaks.h"
@@ -256,19 +257,13 @@ static CityTowerParams tower_params(const CityState *st, const PathSystem *path)
 
 static void city_reseed(Environment *env, uint64_t seed) { ((CityState *)env->state)->seed = seed; }
 
+static const PacingTable CA_PACING = { CA_COUNT, CA_AVENUE, CA_RUN_MIN, CA_RUN_MAX, &CA_TRANSITION[0][0] };
+
 static int city_archetype_of_chunk(const CityState *st, int k)
 {
     if (!st->p.pacing) return CA_DEFAULT;
-    if (k < 0) k = 0;
-    uint64_t base = ct_hash64_3(st->seed, ENV_CITY, F_PACING);
-    int a = CA_AVENUE, start = 0;   // every flight starts on an avenue (the reference opening)
-    for (int r = 0;; r++) {
-        Pcg32 rng = pcg32_seed(ct_hash64_2(base, (uint64_t)r));
-        if (r > 0) a = pcg32_weighted(&rng, CA_TRANSITION[a], CA_COUNT);
-        int len = pcg32_int(&rng, CA_RUN_MIN[a], CA_RUN_MAX[a]);
-        if (k < start + len) return a;
-        start += len;
-    }
+    // Every flight starts on an avenue (the reference opening).
+    return pacing_archetype(&CA_PACING, ct_hash64_3(st->seed, ENV_CITY, F_PACING), k);
 }
 
 // Blend for chunk k: the previous chunk's archetype fades into this one across chunk k.

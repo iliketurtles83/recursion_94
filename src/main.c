@@ -21,7 +21,7 @@ typedef struct Cli {
 
 static void usage(void)
 {
-    printf("cybertunnel [--seed N] [--w W --h H] [--vsync 0|1] [--fps N] [--env 0|1|2]\n"
+    printf("cybertunnel [--seed N] [--w W --h H] [--vsync 0|1] [--fps N] [--env 0|1|2|3]\n"
            "            [--bench SECONDS [--speed U]] [--shot S [--out FILE]] [--preset NAME] [--write-preset NAME] [--list-params] [--hdr8] [--noship] [--ui] [--whiteout] [--boost]\n"
            "            [--set NAME=VALUE ...]\n");
 }

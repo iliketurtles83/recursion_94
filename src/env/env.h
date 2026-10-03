@@ -89,9 +89,10 @@ typedef struct Environment {
 } Environment;
 
 // Environment registry
-enum { ENV_VORTEX = 0, ENV_TEMPLATE = 1, ENV_CITY = 2, ENV_COUNT };
+enum { ENV_VORTEX = 0, ENV_TEMPLATE = 1, ENV_CITY = 2, ENV_CORRIDOR = 3, ENV_COUNT };
 Environment env_vortex_create(void);
 Environment env_template_create(void);
 Environment env_city_create(void);
+Environment env_corridor_create(void);
 
 #endif

@@ -42,6 +42,7 @@ const char *ct_environment_name(int id)
     case ENV_VORTEX: return "Data Vortex";
     case ENV_TEMPLATE: return "Template";
     case ENV_CITY: return "Neon Grid City";
+    case ENV_CORRIDOR: return "Server Corridor";
     }
     return "?";
 }
@@ -287,6 +288,7 @@ CtTunnel *ct_create(const CtConfig *cfg)
     ct->envs[ENV_VORTEX] = env_vortex_create();
     ct->envs[ENV_TEMPLATE] = env_template_create();
     ct->envs[ENV_CITY] = env_city_create();
+    ct->envs[ENV_CORRIDOR] = env_corridor_create();
     ct->envId = (cfg->environment >= 0 && cfg->environment < ENV_COUNT) ? cfg->environment : ENV_VORTEX;
     ct->env = &ct->envs[ct->envId];
     register_env_params(ct);

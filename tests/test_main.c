@@ -560,6 +560,41 @@ static void test_city_decor(void)
     env.unload(&env);
 }
 
+// Environment #3 (server corridor): level path, world-up frames, heading close to a grid axis.
+static void test_corridor(void)
+{
+    Environment env = env_corridor_create();
+    ParamRegistry reg;
+    params_clear(&reg);
+    env.registerParams(&env, &reg);
+    env.init(&env, 13, NULL);
+    PathStyle st = env.pathStyle(&env);
+    CHECK(!st.hasWalls && st.floorDepth > 0.0f && st.ceilingHeight > 0.0f, "corridor style is open with floor and ceiling");
+    double worstAxis = 0.0, worstY = 0.0, minUp = 1.0, maxCurv = 0.0;
+    for (int seed = 1; seed <= 5; seed++) {
+        PathSystem p;
+        path_init(&p, (uint64_t)seed * 7919u, st);
+        for (double s = 0.0; s <= 20000.0; s += PATH_DS) {
+            path_ensure(&p, s - 100.0, s + 50.0);
+            PathSample q = path_sample(&p, s);
+            if (fabs(q.pos.y) > worstY) worstY = fabs(q.pos.y);
+            if (q.N.y < minUp) minUp = q.N.y;
+            if (q.curvature > maxCurv) maxCurv = q.curvature;
+            double yawDeg = atan2(q.T.x, -q.T.z) * 180.0 / 3.14159265358979;
+            double err = fabs(yawDeg - 90.0 * floor(yawDeg / 90.0 + 0.5));
+            if (err > worstAxis) worstAxis = err;
+        }
+        path_free(&p);
+    }
+    printf("  corridor path (5 seeds x 20000 units): max |y| %.2e, min N.y %.9f, max heading off-axis %.1f deg, maxCurv %.5f (limit %.5f)\n",
+           worstY, minUp, worstAxis, maxCurv, path_curvature_limit(&st));
+    CHECK(worstY < 1e-9, "corridor path stays level (max |y| %g)", worstY);
+    CHECK(minUp > 0.999999, "corridor path N is world up (min N.y %.9f)", minUp);
+    CHECK(worstAxis <= 12.0, "corridor heading within 12 deg of a grid axis (%.1f deg)", worstAxis);
+    CHECK(maxCurv <= path_curvature_limit(&st), "corridor curvature within limit");
+    env.unload(&env);
+}
+
 static void test_params(void)
 {
     ParamRegistry reg;
@@ -591,6 +626,7 @@ int main(void)
     test_city();
     test_city_towers();
     test_city_decor();
+    test_corridor();
     test_params();
     printf("%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

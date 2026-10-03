@@ -34,6 +34,7 @@ set(CT_CORE_SRC
   src/core/chunks.c
   src/core/flight.c
   src/core/params.c
+  src/core/pacing.c
   src/render/linegeo.c
 )
 set(CT_MODULE_SRC
@@ -43,8 +44,11 @@ set(CT_MODULE_SRC
   src/env/env_vortex.c
   src/env/env_template.c
   src/env/env_city.c
+  src/env/env_corridor.c
   src/env/city_towers.c
+  src/env/lattice_place.c
   src/env/city_decor.c
+  src/env/trace_route.c
   src/render/streaks.c
   src/render/shapes.c
   src/render/gridfloor.c

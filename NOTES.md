@@ -516,3 +516,31 @@ and are documented in `INTEGRATION.md`; they are what Env #3 (server canyon, sam
 will build on. Open: per-environment camera framing and environment transitions, both waiting on
 the transition design.
 
+
+# Environment #3 — Server Corridor
+
+Plan: `PLAN_ENV3_SERVER_CORRIDOR.md`. Reference frames `reference/t_4.0s` … `t_7.25s`.
+
+## Phase A — Extraction and stub
+
+- `env/lattice_place.c/.h`: the city's world-lattice cell ownership (path window around a chunk,
+  nearest-point owner, exact path-to-rectangle distance) as a generic iterator
+  (`lattice_window_load`, `lattice_for_each` with a per-cell callback, `lattice_rect_dist`,
+  `lattice_nearest`). `city_towers_plan` is now a callback on it.
+- `core/pacing.c/.h`: the archetype Markov chain (`PacingTable` of run bounds + transition
+  matrix → `pacing_archetype`), the smoothstep blend factor and the float-struct lerp. City and
+  vortex keep their own tables.
+- `env/trace_route.c/.h`: the trace bus router from `city_decor.c` (occupancy lattice, buses with
+  45° jogs, vias). Faces now carry an in-plane `v` axis, so horizontal faces (beam undersides)
+  can be routed too; colours, start-row and alternate-colour chances are parameters.
+  `city_decor.c` keeps face classification and glyph panels.
+- `ENV_CORRIDOR = 3` (`CT_ENV_CORRIDOR`, `--env 3`) with a stub `env_corridor.c`: level path,
+  lane half-width 6.5, floor 2.2 below, ceiling 14 above, yaw spring 0.35 with a 3° step,
+  grid floor (cell 2.0), dark navy sky, floor reflection on. Params are prefixed `cor` so they
+  never collide with the city's in presets.
+- **Accept:**
+  - Tests: 65 passed (60 + 5 new). Corridor path over 5 seeds × 20,000 units: max |y| 0, min
+    N.y 1.000000000, max heading off-axis 8.3° (target ±12°), curvature within limit.
+  - Regression set (13 renders: vortex s=1200/3000/4200, seed 7, calm, intense, template, city
+    s=40/300/1400/4230, city seed 4, city preset) byte-identical before and after the extraction.
+  - Stub bench (`--env 3 --bench 8 --speed 120`): avg 0.15 ms, 22 draw calls.
