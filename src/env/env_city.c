@@ -1,34 +1,37 @@
 // Environment #2: "Neon Grid City" — open flight low over an infinite neon grid floor
 // between circuit-traced monolith towers. See PLAN_ENV2_GRID_CITY.md.
 //
-// Phase A stub: the real path style (level, no twist, floor below the centerline) and
-// atmosphere, plus lane-edge markers on the floor plane so motion, steering and the
-// floor clamp can be checked. Content arrives in later phases.
+// Phases done: A (path style: level, no twist, floor below the centerline; atmosphere)
+// and B (grid floor, sky). Chunks carry no content yet; towers arrive in Phase C.
 #include "env_common.h"
 #include "core/rng.h"
+#include "render/gridfloor.h"
+#include "render/rmath.h"
+#include "render/pipeline.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
-enum { CB_MARKERS = 0 };   // chunk batches
-
-#define MARKER_STEP 4.0     // lane-edge marker dash spacing (divides CHUNK_LEN)
-
 typedef struct CityParams {
     PathStyle path;
-    float markerIntensity;
-    float fogStart, fogEnd;
+    GridFloorParams floor;
+    float fogStart, fogEnd;          // fog for chunk content (towers etc.)
+    float hazeWidth, hazeGlow, dust; // sky
+    bool  showFloor, showSky;
 } CityParams;
 
 typedef struct CityState {
     uint64_t   seed;
     CityParams p;
     ShaderLib *sl;
-    int        shLines;
-    Material   mat;
+    int        shSky;
+    GridFloor  floor;
 } CityState;
 
-static const Color COL_CYAN = { 0x4F, 0xEA, 0xF5, 255 };
+static const Color COL_CYAN    = { 0x4F, 0xEA, 0xF5, 255 };
+static const Color COL_FLOOR   = { 0x02, 0x06, 0x0A, 255 };
+static const Color COL_HORIZON = { 0x0B, 0x2A, 0x3A, 255 };
+static const Color COL_ZENITH  = { 0x02, 0x03, 0x08, 255 };
 
 static PathStyle city_path_style(const Environment *env)
 {
@@ -49,14 +52,38 @@ static void city_register(Environment *env, ParamRegistry *reg)
 {
     CityState *st = (CityState *)env->state;
     CityParams *p = &st->p;
+    GridFloorParams *f = &p->floor;
     const char *g = "Path";
     params_float(reg, g, "cityLaneHalfWidth", &p->path.baseRadius, 9.0f, 3.0f, 40.0f);
     params_float(reg, g, "cityYawStepDeg", &p->path.maxYawStepDeg, 4.0f, 0.0f, 20.0f);
-    params_float(reg, g, "cityFloorDepth", &p->path.floorDepth, 2.2f, 0.8f, 20.0f);
+    params_float(reg, g, "cityFloorDepth", &p->path.floorDepth, 1.4f, 0.8f, 20.0f);
+    params_float(reg, g, "cityYawSpring", &p->path.yawSpring, 0.12f, 0.0f, 1.0f);
+    p->path.yawAxisDeg = 90.0f;   // the floor grid is world-axis aligned
+
+    g = "Floor";
+    params_bool(reg, g, "showFloor", &p->showFloor, true);
+    params_float(reg, g, "gridCell", &f->cell, 2.2f, 0.25f, 16.0f);
+    params_float(reg, g, "gridLineWidth", &f->lineWidth, 0.03f, 0.005f, 0.5f);
+    params_float(reg, g, "gridHaloWidth", &f->haloWidth, 0.07f, 0.0f, 1.0f);
+    params_float(reg, g, "gridIntensity", &f->lineIntensity, 2.2f, 0.0f, 10.0f);
+    params_float(reg, g, "gridHalo", &f->haloIntensity, 0.35f, 0.0f, 3.0f);
+    params_float(reg, g, "gridNodeBoost", &f->nodeBoost, 1.5f, 0.0f, 10.0f);
+    params_float(reg, g, "gridWhiteCore", &f->whiteCore, 0.25f, 0.0f, 1.0f);
+    params_float(reg, g, "floorFogStart", &f->fogStart, 40.0f, 0.0f, 1000.0f);
+    params_float(reg, g, "floorFogEnd", &f->fogEnd, 450.0f, 1.0f, 1500.0f);
+    params_float(reg, g, "floorSheen", &f->sheen, 0.3f, 0.0f, 3.0f);
+    params_bool(reg, g, "gridFilter", &f->filter, true);
+    f->lineColor = COL_CYAN;
+    f->floorColor = COL_FLOOR;
+    f->horizonColor = COL_HORIZON;
+
     g = "City";
-    params_float(reg, g, "cityMarkerIntensity", &p->markerIntensity, 2.0f, 0.0f, 10.0f);
+    params_bool(reg, g, "showSky", &p->showSky, true);
     params_float(reg, g, "cityFogStart", &p->fogStart, 120.0f, 0.0f, 600.0f);
     params_float(reg, g, "cityFogEnd", &p->fogEnd, 420.0f, 1.0f, 800.0f);
+    params_float(reg, g, "hazeWidth", &p->hazeWidth, 0.06f, 0.005f, 0.5f);
+    params_float(reg, g, "hazeGlow", &p->hazeGlow, 1.6f, 0.0f, 8.0f);
+    params_float(reg, g, "skyDust", &p->dust, 0.02f, 0.0f, 0.3f);
 }
 
 static void city_init(Environment *env, uint64_t seed, ShaderLib *sl)
@@ -64,36 +91,13 @@ static void city_init(Environment *env, uint64_t seed, ShaderLib *sl)
     CityState *st = (CityState *)env->state;
     st->seed = seed;
     st->sl = sl;
-    if (sl) {
-        st->shLines = sl_load(sl, "object.vs", "line_facing.fs");
-        st->mat = LoadMaterialDefault();
-    }
+    gridfloor_init(&st->floor, sl);
+    if (sl) st->shSky = sl_load(sl, "fullscreen.vs", "sky.fs");
 }
 
 static void city_reseed(Environment *env, uint64_t seed) { ((CityState *)env->state)->seed = seed; }
 
-// Dashes along both lane edges on the floor plane, plus a cross bar at the chunk start.
-static void city_build_chunk(Environment *env, const PathSystem *path, int chunkIndex, ChunkCpu *out)
-{
-    CityState *st = (CityState *)env->state;
-    const PathStyle *style = &path->style;
-    LineAttr at = { COL_CYAN, st->p.markerIntensity, 0.0f, 0.0f, -1.0f, 0.0f };
-    LineGeo *g = &out->geo[CB_MARKERS];
-    DVec3 down = dv3(0, -style->floorDepth, 0);
-    for (double s = out->s0; s < out->s1 - 1e-6; s += MARKER_STEP) {
-        PathSample a = path_sample(path, s), b = path_sample(path, s + MARKER_STEP * 0.5);
-        for (int side = -1; side <= 1; side += 2) {
-            DVec3 pa = dv_add(dv_add(a.pos, down), dv_scale(a.B, side * a.radius));
-            DVec3 pb = dv_add(dv_add(b.pos, down), dv_scale(b.B, side * b.radius));
-            lg_facing_segment(g, env_local(pa, out->origin), env_local(pb, out->origin), 0.06f, 0.06f, at.intensity, at.intensity, at);
-        }
-        if (s == out->s0) {
-            DVec3 l = dv_add(dv_add(a.pos, down), dv_scale(a.B, -a.radius));
-            DVec3 r = dv_add(dv_add(a.pos, down), dv_scale(a.B, a.radius));
-            lg_facing_segment(g, env_local(l, out->origin), env_local(r, out->origin), 0.04f, 0.04f, at.intensity * 0.5f, at.intensity * 0.5f, at);
-        }
-    }
-}
+static void city_build_chunk(Environment *env, const PathSystem *path, int chunkIndex, ChunkCpu *out) { }
 
 static void city_upload(Environment *env, ChunkCpu *in, ChunkGpu *out) { chunk_upload_default(in, out); }
 static void city_release(Environment *env, ChunkGpu *gpu) { chunk_release_default(gpu); }
@@ -109,37 +113,61 @@ static void city_atmosphere(const Environment *env, Atmosphere *atmo)
 }
 
 static void city_update(Environment *env, const FrameContext *ctx) { }
-static void city_draw_background(Environment *env, const FrameContext *ctx) { }
-static void city_draw_opaque(Environment *env, const FrameContext *ctx, const ChunkGpu *const *chunks, int n) { }
 
-static void city_draw_emissive(Environment *env, const FrameContext *ctx, const ChunkGpu *const *chunks, int n)
+static void camera_basis(const FrameContext *ctx, Vector3 *right, Vector3 *up, Vector3 *fwd)
+{
+    Camera3D cam = ctx->camera;
+    *fwd = Vector3Normalize(Vector3Subtract(cam.target, cam.position));
+    *right = Vector3Normalize(Vector3CrossProduct(*fwd, cam.up));
+    *up = Vector3CrossProduct(*right, *fwd);
+}
+
+static void city_draw_background(Environment *env, const FrameContext *ctx)
 {
     CityState *st = (CityState *)env->state;
+    if (!st->p.showSky) return;
     ShaderLib *sl = st->sl;
-    int sh = st->shLines;
-    env_set_common_uniforms(sl, sh, ctx);
-    sl_f1(sl, sh, "uEdgeMix", 0.0f);
-    sl_f1(sl, sh, "uFlicker", 0.0f);
-    st->mat.shader = sl_shader(sl, sh);
-    for (int i = 0; i < n; i++) {
-        const ChunkGpu *c = chunks[i];
-        sl_f1(sl, sh, "uChunkFade", env_chunk_fade(c, ctx->time));
-        Matrix xf = env_chunk_transform(c, ctx->renderOrigin);
-        for (int m = 0; m < c->meshCount; m++) {
-            DrawMesh(c->meshes[m], st->mat, xf);
-            ctx->stats->drawCalls++;
-            ctx->stats->vertices += c->meshes[m].vertexCount;
-        }
-    }
+    int sh = st->shSky;
+    Vector3 right, up, fwd;
+    camera_basis(ctx, &right, &up, &fwd);
+    rlDrawRenderBatchActive();
+    rlDisableDepthTest();
+    rlDisableDepthMask();
+    BeginShaderMode(sl_shader(sl, sh));
+    sl_f1(sl, sh, "uAspect", (float)ctx->width / (float)ctx->height);
+    sl_v3(sl, sh, "uCamRight", right);
+    sl_v3(sl, sh, "uCamUp", up);
+    sl_v3(sl, sh, "uCamFwd", fwd);
+    sl_f1(sl, sh, "uTanHalf", tanf(ctx->fovy * 0.5f * DEG2RAD));
+    sl_v3(sl, sh, "uZenith", ct_srgb_to_linear(COL_ZENITH));
+    sl_v3(sl, sh, "uHorizon", ct_srgb_to_linear(COL_HORIZON));
+    sl_f2(sl, sh, "uHaze", st->p.hazeWidth, st->p.hazeGlow);
+    sl_f1(sl, sh, "uDust", st->p.dust);
+    pipe_fullscreen_quad();
+    EndShaderMode();
+    ctx->stats->drawCalls++;
+    rlEnableDepthTest();
+    rlEnableDepthMask();
 }
+
+static void city_draw_opaque(Environment *env, const FrameContext *ctx, const ChunkGpu *const *chunks, int n)
+{
+    CityState *st = (CityState *)env->state;
+    if (!st->p.showFloor) return;
+    // The floor fogs into exactly the sky's horizon colour.
+    GridFloorParams fp = st->p.floor;
+    fp.horizonGlow = st->p.hazeGlow;
+    double floorY = path_sample(ctx->path, ctx->sShip).pos.y - ctx->path->style.floorDepth;
+    gridfloor_draw(&st->floor, &fp, ctx, floorY);
+}
+
+static void city_draw_emissive(Environment *env, const FrameContext *ctx, const ChunkGpu *const *chunks, int n) { }
 
 static const char *city_label(const Environment *env, int archetype) { return "CITY"; }
 
 static void city_unload(Environment *env)
 {
-    CityState *st = (CityState *)env->state;
-    if (st->sl) { st->mat.shader.id = rlGetShaderIdDefault(); UnloadMaterial(st->mat); }
-    free(st);
+    free(env->state);
     env->state = NULL;
 }
 

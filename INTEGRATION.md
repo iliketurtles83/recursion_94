@@ -150,6 +150,8 @@ A game simply never calls it, nor `ct_debug_draw`.
      `twistRateMax = 0`: the path then stays in the plane y = 0 with N = world up, the floor
      is the plane y = −floorDepth, and the flight model keeps the ship `FLIGHT_CLEARANCE`
      above it. `baseRadius` remains the lateral steering limit (lane half-width).
+     `yawSpring` / `yawAxisDeg` (0 = off) make the heading weave around world axes, for
+     content aligned to a world grid.
    - `registerParams` – register tunables with **globally unique names**; group names become
      debug-panel sections and ini sections. Path-affecting groups trigger a full rebuild when
      edited (`group_rebuilds_path` in `debug_ui.c`), content groups a chunk rebuild (`group_rebuilds`).
@@ -173,7 +175,9 @@ A game simply never calls it, nor `ct_debug_draw`.
      Count draw calls in `ctx->stats`.
    - Shared building blocks: `render/streaks.h` (GPU speed streaks along the path; keep a
      `StreakParams` in your params and register its fields under your own names) and
-     `render/shapes.h` (wireframe cube / octahedron with data faces).
+     `render/shapes.h` (wireframe cube / octahedron with data faces) and
+     `render/gridfloor.h` (infinite filtered neon grid floor; call from `drawOpaque`, it writes
+     depth from `ctx->zNear/zFar`).
 5. Test: `./cybertunnel --env <id>` or press `T` at runtime; add a determinism case to
    `tests/test_main.c` with `build_order_independent()` (see `test_chunks`, `test_city`).
 
@@ -198,6 +202,7 @@ unknown keys are skipped, and loading first resets everything to defaults).
 | Sim | `uploadBudget` | int | 1 | 1 | 8 |
 | Sim | `showShip` | bool | on | | |
 | Sim | `showPathDebug` | bool | off | | |
+| Sim | `rebaseDist` | float | 1024 | 1 | 100000 |
 | Sim | `engineIntensity` | float | 10 | 0 | 40 |
 | Sim | `trailIntensity` | float | 2.2 | 0 | 20 |
 | Sim | `trailWidth` | float | 0.035 | 0.005 | 0.5 |
@@ -348,4 +353,4 @@ unknown keys are skipped, and loading first resets everything to defaults).
 | Pacing | `pacing` | bool | on | | |
 
 The template environment adds `tplRadius`, `tplYawStepDeg`, `tplMarkerIntensity` (group Template) while it is active.
-The city environment (stub, Env #2 Phase A) adds `cityLaneHalfWidth`, `cityYawStepDeg`, `cityFloorDepth` (group Path) and `cityMarkerIntensity`, `cityFogStart`, `cityFogEnd` (group City) while it is active.
+The city environment (Env #2, in progress) adds, while it is active: `cityLaneHalfWidth`, `cityYawStepDeg`, `cityFloorDepth`, `cityYawSpring` (group Path); `showFloor`, `gridCell`, `gridLineWidth`, `gridHaloWidth`, `gridIntensity`, `gridHalo`, `gridNodeBoost`, `gridWhiteCore`, `floorFogStart`, `floorFogEnd`, `floorSheen`, `gridFilter` (group Floor); `showSky`, `cityFogStart`, `cityFogEnd`, `hazeWidth`, `hazeGlow`, `skyDust` (group City). The core adds `rebaseDist` (group Sim, default 1024).

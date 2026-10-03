@@ -1,6 +1,6 @@
 # Plan — Environment #2 "Neon Grid City"
 
-Status: Phase A done (see `NOTES.md`); Phases B–F open. Reference frames: `reference/t_0.5s.png`,
+Status: Phases A and B done (see `NOTES.md`); Phases C–F open. Reference frames: `reference/t_0.5s.png`,
 `reference/t_2.5s.png` and the first row and a half of `reference/contact_sheet.png` (0–3.5 s).
 
 ## 0. Why this one
@@ -113,6 +113,7 @@ Each phase ends with its checks passing, a commit, and a short `NOTES.md` sectio
 
 ### Phase B — Grid floor
 - `gridfloor.c` plus `grid.fs`, filtered lines, horizon fade, sky shader with horizon haze. City fog/atmosphere via the hook.
+- *(Done — see NOTES.md Phase B. Deviation: heading spring toward world axes added to the path.)*
 - **Accept**: no visible moiré or shimmer in a 60 s flight at 720p and 1080p. Grid continuity across a floating-origin rebase (screenshot before and after an origin snap). Side by side with t_0.5 (floor only).
 
 ### Phase C — Towers: placement and bodies

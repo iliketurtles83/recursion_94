@@ -19,6 +19,10 @@ typedef struct PathStyle {
     // The flight model keeps the ship between them; baseRadius stays the lateral limit.
     float floorDepth;        // distance from centerline down to the floor
     float ceilingHeight;     // distance from centerline up to the ceiling
+    // Optional heading spring (0 = free drift): pulls the yaw toward the nearest multiple of
+    // yawAxisDeg, so the path weaves around world axes (e.g. along a world-aligned grid).
+    float yawSpring;         // fraction of the heading error removed per control point
+    float yawAxisDeg;        // axis spacing, e.g. 90
 } PathStyle;
 
 typedef struct PathSample {

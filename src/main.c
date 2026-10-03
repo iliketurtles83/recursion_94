@@ -15,17 +15,20 @@ typedef struct Cli {
     const char *shotOut;
     const char *writePreset;
     bool   listParams;
+    const char *sets[32];        // --set name=value, applied after --preset
+    int    setCount;
 } Cli;
 
 static void usage(void)
 {
     printf("cybertunnel [--seed N] [--w W --h H] [--vsync 0|1] [--fps N] [--env 0|1|2]\n"
-           "            [--bench SECONDS [--speed U]] [--shot S [--out FILE]] [--preset NAME] [--write-preset NAME] [--list-params] [--hdr8] [--noship] [--ui] [--whiteout]\n");
+           "            [--bench SECONDS [--speed U]] [--shot S [--out FILE]] [--preset NAME] [--write-preset NAME] [--list-params] [--hdr8] [--noship] [--ui] [--whiteout]\n"
+           "            [--set NAME=VALUE ...]\n");
 }
 
 static Cli parse(int argc, char **argv)
 {
-    Cli c = { 1, 1280, 720, 1, 0, 0, 0.0, 120.0, 0.0, false, false, false, false, false, NULL, NULL, NULL, false };
+    Cli c = { 1, 1280, 720, 1, 0, 0, 0.0, 120.0, 0.0, false, false, false, false, false, NULL, NULL, NULL, false, { 0 }, 0 };
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
         const char *v = i + 1 < argc ? argv[i + 1] : NULL;
@@ -41,6 +44,7 @@ static Cli parse(int argc, char **argv)
         else if (!strcmp(a, "--out") && v) { c.shotOut = v; i++; }
         else if (!strcmp(a, "--preset") && v) { c.preset = v; i++; }
         else if (!strcmp(a, "--write-preset") && v) { c.writePreset = v; i++; }
+        else if (!strcmp(a, "--set") && v) { if (c.setCount < 32) c.sets[c.setCount++] = v; i++; }
         else if (!strcmp(a, "--list-params")) c.listParams = true;
         else if (!strcmp(a, "--hdr8")) c.hdr8 = true;
         else if (!strcmp(a, "--noship")) c.noShip = true;
@@ -94,6 +98,16 @@ int main(int argc, char **argv)
     cfg.drawShip = !cli.noShip;
     CtTunnel *ct = ct_create(&cfg);
     if (cli.preset) ct_preset_load(ct, cli.preset);
+    for (int i = 0; i < cli.setCount; i++) {
+        char name[128];
+        const char *eq = strchr(cli.sets[i], '=');
+        size_t n = eq ? (size_t)(eq - cli.sets[i]) : 0;
+        if (!eq || n >= sizeof(name)) { fprintf(stderr, "--set expects NAME=VALUE: %s\n", cli.sets[i]); continue; }
+        memcpy(name, cli.sets[i], n);
+        name[n] = 0;
+        if (!ct_param_set(ct, name, (float)atof(eq + 1))) fprintf(stderr, "--set: unknown parameter %s\n", name);
+    }
+    if (cli.setCount) ct_rebuild(ct);   // path/content params only take effect on rebuild
     if (cli.listParams) {
         ct_params_write_markdown(ct, stdout);
         ct_destroy(ct);

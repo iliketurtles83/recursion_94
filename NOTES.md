@@ -23,6 +23,7 @@ cmake -S . -B build && cmake --build build -j
 ./build/cybertunnel [--seed N] [--w W --h H] [--vsync 0|1] [--fps N] [--env 0|1|2]
                     [--bench SECONDS [--speed U]] [--shot S [--out FILE]] [--preset NAME]
                     [--write-preset NAME] [--list-params] [--hdr8] [--noship] [--ui] [--whiteout]
+                    [--set NAME=VALUE ...]   (applied after --preset, then rebuilds)
 ```
 
 Keys: arrows steer, Shift/Space boost, Q/E barrel roll, F1 panel, F2 free camera (WASD +
@@ -261,4 +262,52 @@ smoke-tested (10 switches while rendering, no crash).
   - City stub: `--env 2 --bench 8 --speed 120`: avg 0.18 ms, max chunk build 0.007 ms.
 - Not checked: switching environments at runtime with `T` (no scripted key input in the
   harness); the code path is unchanged apart from the extra environment.
+
+## Phase B — Grid floor and sky
+
+Direction from the user: paths may drift gently as in the vortex, as long as flight stays a
+treadmill (fixed path, player moves inside the lane, camera pans slightly toward the
+movement). Per-environment camera settings are on hold until the environment transitions are
+designed (one idea: the vortex itself as the transition).
+
+- `render/gridfloor.c` + `grid.fs`: one fullscreen pass in the opaque phase. The view ray
+  through each pixel hits the plane `y = floorY`; the shader writes `gl_FragDepth` (from the
+  core's `zNear/zFar`, now in `FrameContext`) so towers will depth-test against it, and
+  discards misses so the sky shows. No floor geometry, no streaming, infinite extent.
+- Filtering: per axis, the line core is a box widened to ≥ ½ pixel with its energy kept and
+  blended to its mean coverage once cells shrink below a pixel; the halo is a gaussian widened
+  by the pixel footprint (energy kept) and blended to its lattice mean (h·√π). `gridFilter = 0`
+  turns this off (debug) to show what it prevents.
+- Precision: the shader only sees render-space positions plus `gridfloor_offset()` = render
+  origin mod (1024 cells), reduced in double.
+- `sky.fs`: zenith→horizon gradient, horizon haze band, dust above the horizon. At the horizon it
+  equals `horizonColor × hazeGlow`, which is exactly what the floor fogs into (the env passes
+  `hazeGlow` as the floor's `horizonGlow`), so the two meet without a seam.
+- **Path heading spring (deviation from the plan's "free drift"):** with free drift the heading
+  wandered ~40° by s = 800 and the world-aligned grid ran diagonally across the lane; the
+  reference flies along the grid. New `PathStyle.yawSpring` / `yawAxisDeg` pull the heading
+  toward the nearest world axis *inside the existing per-step yaw clamp* (so
+  `path_curvature_limit` still holds). City: spring 0.12, axis 90°; the path still weaves,
+  max 21.6° off-axis over 20,000 units. Vortex has spring 0 and takes the old code path.
+- Tuning vs t_0.5 (floor only, `screenshots/compare_city_t0.5.png`): cell 2.2 (≈ the reference's
+  8 cells across the bottom of the frame), core half width 0.03, halo 0.07, white core 0.25,
+  floor depth 1.4 (was 2.2: the reference ship skims the floor).
+- Harness: `--set NAME=VALUE` (repeatable, rebuilds afterwards); `rebaseDist` Sim param
+  (default 1024 = previous constant).
+- **Accept:**
+  - Shimmer (1080p, 10 consecutive frames at s = 1500, mean per-frame change in grey levels):
+    far floor just below the horizon (rows 485–515) **0.2–0.9 filtered vs 27–36 unfiltered**;
+    mid/near floor ≈ 45 for both (real motion). Stills: `screenshots/city_grid_filter_on_off.png`
+    (top filtered, bottom unfiltered, 2× crop of the horizon).
+  - Rebase continuity: the same shot with `rebaseDist=1` (snap every frame) vs `100000`
+    (never): 0 pixels differ by more than 2 %, PSNR 71.6 dB at s = 3000 and 71.9 dB at s = 52,000
+    (vortex: 74.2 dB). Test: grid phase from `gridfloor_offset` + float local position vs exact
+    double, 20,000 random origins up to 1e6 → worst error 2.4e-4 cells.
+  - Tests: 44 passed (new: heading near axis, curvature within limit with the spring, grid phase).
+  - Vortex regression set still byte-identical.
+  - Bench (autopilot, 60 s): 1080p speed 120 avg 0.52 ms / p99 0.62 ms; 720p speed 40 avg
+    0.29 ms; 17 draw calls.
+- Open: our camera frames the horizon at ~45 % from the top vs ~55 % in the reference (camera
+  pitched further down); left alone per the camera decision above. Floor reflections (the purple
+  smears and the trail stripe under the ship) are Phase E.
 

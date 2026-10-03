@@ -13,6 +13,8 @@
 
 #define CT_VIEW_DIST     400.0
 #define CT_REBASE_DIST   1024.0
+#define CT_Z_NEAR        0.1
+#define CT_Z_FAR         1500.0
 
 typedef struct CoreParams {
     float timeScale;
@@ -23,6 +25,7 @@ typedef struct CoreParams {
     bool  showShip, showPathDebug;
     float engineIntensity, trailIntensity, trailWidth;
     float coreR, coreG, coreB;   // core tint (sRGB 0..1)
+    float rebaseDist;            // floating origin snaps to the ship beyond this distance
 } CoreParams;
 
 struct CtTunnel {

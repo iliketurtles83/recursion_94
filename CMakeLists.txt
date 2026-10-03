@@ -45,6 +45,7 @@ set(CT_MODULE_SRC
   src/env/env_city.c
   src/render/streaks.c
   src/render/shapes.c
+  src/render/gridfloor.c
   src/debug/debug_ui.c
   src/cybertunnel.c
 )

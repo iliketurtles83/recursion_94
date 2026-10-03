@@ -38,7 +38,15 @@ static void gen_ctrl(PathSystem *ps)
     double n = (double)(i - 2);
     double ny = ct_noise1(ct_hash64_2(ps->seed, PATH_FEATURE_YAW), n * 0.15);
     double np = ct_noise1(ct_hash64_2(ps->seed, PATH_FEATURE_PITCH), n * 0.15);
-    ps->yaw += clampd(ny * maxYaw, -maxYaw, maxYaw);
+    if (st->yawSpring > 0.0f) {
+        // Spring toward the nearest axis inside the same per-step clamp, so the curvature
+        // bound (path_curvature_limit) is unchanged.
+        double axis = (st->yawAxisDeg > 0.0f ? st->yawAxisDeg : 90.0) * DEG2RADD;
+        double err = ps->yaw - floor(ps->yaw / axis + 0.5) * axis;
+        ps->yaw += clampd(ny * maxYaw - st->yawSpring * err, -maxYaw, maxYaw);
+    } else {
+        ps->yaw += clampd(ny * maxYaw, -maxYaw, maxYaw);
+    }
     ps->pitch += np * maxPitch * 0.35 - st->pitchSpring * ps->pitch;
     ps->pitch = clampd(ps->pitch, -maxPitch, maxPitch);
     DVec3 prev = ctrl_at(ps, i - 1);

@@ -62,6 +62,7 @@ static void register_core_params(CtTunnel *ct)
     params_int(reg, g, "uploadBudget", &c->uploadBudget, 1, 1, 8);
     params_bool(reg, g, "showShip", &c->showShip, true);
     params_bool(reg, g, "showPathDebug", &c->showPathDebug, false);
+    params_float(reg, g, "rebaseDist", &c->rebaseDist, (float)CT_REBASE_DIST, 1.0f, 100000.0f);
     params_float(reg, g, "engineIntensity", &c->engineIntensity, 10.0f, 0.0f, 40.0f);
     params_float(reg, g, "trailIntensity", &c->trailIntensity, 2.2f, 0.0f, 20.0f);
     params_float(reg, g, "trailWidth", &c->trailWidth, 0.035f, 0.005f, 0.5f);
@@ -403,7 +404,7 @@ void ct_update(CtTunnel *ct, float dt)
     double sShip = ct->view.s;
 
     // Floating origin.
-    if (dv_len(dv_sub(ct->view.shipPos, ct->renderOrigin)) > CT_REBASE_DIST) {
+    if (dv_len(dv_sub(ct->view.shipPos, ct->renderOrigin)) > ct->core.rebaseDist) {
         DVec3 delta = dv_sub(ct->view.shipPos, ct->renderOrigin);
         ct->renderOrigin = ct->view.shipPos;
         Vector3 d = dv_to_v3(delta);
@@ -466,7 +467,9 @@ void ct_update(CtTunnel *ct, float dt)
     c->camera = cam;
     c->renderOrigin = ct->renderOrigin;
     c->view = MatrixLookAt(cam.position, cam.target, cam.up);
-    c->proj = MatrixPerspective(fov * DEG2RAD, (double)w / (double)h, 0.1, 1500.0);
+    c->proj = MatrixPerspective(fov * DEG2RAD, (double)w / (double)h, CT_Z_NEAR, CT_Z_FAR);
+    c->zNear = (float)CT_Z_NEAR;
+    c->zFar = (float)CT_Z_FAR;
     c->fovy = fov;
     c->width = w;
     c->height = h;
@@ -534,7 +537,7 @@ void ct_render(CtTunnel *ct, const RenderTexture2D *target, int width, int heigh
     FrameContext *c = &ct->ctx;
     if (c->width != ct->pipe.w || c->height != ct->pipe.h) {
         c->width = ct->pipe.w; c->height = ct->pipe.h;
-        c->proj = MatrixPerspective(c->fovy * DEG2RAD, (double)c->width / (double)c->height, 0.1, 1500.0);
+        c->proj = MatrixPerspective(c->fovy * DEG2RAD, (double)c->width / (double)c->height, CT_Z_NEAR, CT_Z_FAR);
         c->pixelScale = 2.0f * tanf(c->fovy * 0.5f * DEG2RAD) / (float)c->height;
     }
     int nvis;

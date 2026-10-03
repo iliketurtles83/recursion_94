@@ -40,6 +40,7 @@ typedef struct FrameContext {
     DVec3    renderOrigin;   // world offset of render space
     Matrix   view, proj;
     float    fovy;           // degrees
+    float    zNear, zFar;    // projection clip planes
     int      width, height;
     float    pixelScale;     // world size of one pixel at distance 1
     Vector2  vanishingUV;    // 0..1, y up

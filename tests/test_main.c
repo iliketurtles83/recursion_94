@@ -6,6 +6,7 @@
 #include "core/params.h"
 #include "core/flight.h"
 #include "env/env.h"
+#include "render/gridfloor.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -283,16 +284,24 @@ static void test_city(void)
     // Level path: y stays 0 and N stays world up, so the floor is the plane y = -floorDepth.
     PathSystem p;
     path_init(&p, 11, st);
-    double maxY = 0.0, minUp = 1.0;
+    double maxY = 0.0, minUp = 1.0, maxAxisErr = 0.0, maxCurv = 0.0;
     for (double s = 0.0; s <= 20000.0; s += PATH_DS) {
         path_ensure(&p, s - 100.0, s + 50.0);
         PathSample q = path_sample(&p, s);
         if (fabs(q.pos.y) > maxY) maxY = fabs(q.pos.y);
         if (q.N.y < minUp) minUp = q.N.y;
+        if (q.curvature > maxCurv) maxCurv = q.curvature;
+        // Heading spring: the path weaves around the world axes the floor grid follows.
+        double yawDeg = atan2(q.T.x, -q.T.z) * 180.0 / 3.14159265358979;
+        double err = fabs(yawDeg - 90.0 * floor(yawDeg / 90.0 + 0.5));
+        if (err > maxAxisErr) maxAxisErr = err;
     }
-    printf("  city path: max |y| %.2e, min N.y %.9f over 20000 units\n", maxY, minUp);
+    printf("  city path: max |y| %.2e, min N.y %.9f, max heading off-axis %.1f deg, maxCurv %.5f (limit %.5f)\n",
+           maxY, minUp, maxAxisErr, maxCurv, path_curvature_limit(&st));
     CHECK(maxY < 1e-9, "city path stays level (max |y| %g)", maxY);
     CHECK(minUp > 0.999999, "city path N is world up (min N.y %.9f)", minUp);
+    CHECK(maxAxisErr < 30.0, "city heading stays near a grid axis (%.1f deg)", maxAxisErr);
+    CHECK(maxCurv <= path_curvature_limit(&st), "city curvature within limit with yaw spring");
 
     // Flight: full down (and diagonals) never takes the ship below floor + clearance.
     path_ensure(&p, 0.0, 2000.0);
@@ -320,6 +329,26 @@ static void test_city(void)
     enum { N = 24 };
     uint64_t h[N];
     CHECK(build_order_independent(&env, 11, N, h), "city chunk build independent of order");
+
+    // Grid floor phase: the shader adds a float render-space position to gridfloor_offset();
+    // that must give the same grid phase as the exact world position, at any origin.
+    Pcg32 r = pcg32_seed(17);
+    double worst = 0.0;
+    for (int i = 0; i < 20000; i++) {
+        float cell = pcg32_range(&r, 0.5f, 8.0f);
+        DVec3 o = dv3(pcg32_range(&r, -1e6f, 1e6f), 0.0, pcg32_range(&r, -1e6f, 1e6f));
+        float lx = pcg32_range(&r, -1500.0f, 1500.0f), lz = pcg32_range(&r, -1500.0f, 1500.0f);
+        Vector2 off = gridfloor_offset(o, cell);
+        float gx = (off.x + lx) / cell, gz = (off.y + lz) / cell;          // what the shader does
+        double ex = (o.x + lx) / cell, ez = (o.z + lz) / cell;             // exact
+        double dx = fabs((gx - floor(gx)) - (ex - floor(ex))), dz = fabs((gz - floor(gz)) - (ez - floor(ez)));
+        if (dx > 0.5) dx = 1.0 - dx;
+        if (dz > 0.5) dz = 1.0 - dz;
+        if (dx > worst) worst = dx;
+        if (dz > worst) worst = dz;
+    }
+    printf("  grid floor: worst phase error %.2e cells over 20000 random origins up to 1e6\n", worst);
+    CHECK(worst < 1e-3, "grid floor phase exact across origins (%g cells)", worst);
     env.unload(&env);
 }
 
