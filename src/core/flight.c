@@ -142,6 +142,16 @@ void flight_step(FlightState *st, const FlightParams *p, const PathSystem *path,
         float vo = st->vx * nx + st->vy * ny;
         if (vo > 0.0f) { st->vx -= vo * nx; st->vy -= vo * ny; }
     }
+    // Floor / ceiling (open environments): a flat clamp on the vertical offset.
+    const PathStyle *style = &path->style;
+    if (style->floorDepth > 0.0f) {
+        float yMin = fminf(-style->floorDepth + FLIGHT_CLEARANCE, 0.0f);
+        if (st->y < yMin) { st->y = yMin; if (st->vy < 0.0f) st->vy = 0.0f; }
+    }
+    if (style->ceilingHeight > 0.0f) {
+        float yMax = fmaxf(style->ceilingHeight - FLIGHT_CLEARANCE, 0.0f);
+        if (st->y > yMax) { st->y = yMax; if (st->vy > 0.0f) st->vy = 0.0f; }
+    }
     float vmax = p->steerAccel / p->steerDamping;
     float bankTarget = clampf(st->vx / vmax, -1.0f, 1.0f) * p->maxBankDeg * PI_F / 180.0f;
     float tiltTarget = clampf(st->vy / vmax, -1.0f, 1.0f) * p->maxPitchDeg * PI_F / 180.0f;

@@ -63,6 +63,9 @@ typedef struct Environment {
     void (*releaseChunk)(struct Environment *, ChunkGpu *);
     // Pacing energy 0..1 the environment wants at arc length s (drives global intensity).
     float (*energyAt)(const struct Environment *, const PathSystem *, double s);
+    // Optional: adjust this frame's atmosphere (fog, fades, core tint). `atmo` arrives filled
+    // from the core "Fog" params; the environment overrides what it needs.
+    void (*atmosphere)(const struct Environment *, Atmosphere *atmo);
     void (*update)(struct Environment *, const FrameContext *);
     void (*drawBackground)(struct Environment *, const FrameContext *);
     void (*drawOpaque)(struct Environment *, const FrameContext *, const ChunkGpu *const *chunks, int n);
@@ -72,8 +75,9 @@ typedef struct Environment {
 } Environment;
 
 // Environment registry
-enum { ENV_VORTEX = 0, ENV_TEMPLATE = 1, ENV_COUNT };
+enum { ENV_VORTEX = 0, ENV_TEMPLATE = 1, ENV_CITY = 2, ENV_COUNT };
 Environment env_vortex_create(void);
 Environment env_template_create(void);
+Environment env_city_create(void);
 
 #endif

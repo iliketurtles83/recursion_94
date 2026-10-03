@@ -145,7 +145,11 @@ A game simply never calls it, nor `ct_debug_draw`.
 3. Add the `.c` file to `CT_MODULE_SRC` in `CMakeLists.txt`.
 4. Implement the interface (`Environment` in `env.h`):
    - `pathStyle` – radius, noise, curvature limits, twist, `hasWalls` (set `false` for open
-     environments; nothing in the core assumes a cylinder).
+     environments; nothing in the core assumes a cylinder). Open environments with a ground
+     set `floorDepth` (and optionally `ceilingHeight`) together with `maxPitchDeg = 0` and
+     `twistRateMax = 0`: the path then stays in the plane y = 0 with N = world up, the floor
+     is the plane y = −floorDepth, and the flight model keeps the ship `FLIGHT_CLEARANCE`
+     above it. `baseRadius` remains the lateral steering limit (lane half-width).
    - `registerParams` – register tunables with **globally unique names**; group names become
      debug-panel sections and ini sections. Path-affecting groups trigger a full rebuild when
      edited (`group_rebuilds_path` in `debug_ui.c`), content groups a chunk rebuild (`group_rebuilds`).
@@ -159,14 +163,19 @@ A game simply never calls it, nor `ct_debug_draw`.
      data into `out->debris`.
    - `uploadChunk`/`releaseChunk` – usually `chunk_upload_default` / `chunk_release_default`.
    - `energyAt` – the pacing energy 0..1 at `s` (drives global intensity when not overridden).
+   - `atmosphere` (optional) – adjust the frame's `Atmosphere` (fog range, fades, `fogToCore`,
+     core tint). It receives a per-frame copy filled from the core "Fog" params.
    - `drawBackground`, `drawOpaque`, `drawEmissive` – called inside the HDR scene pass.
      On entry: scene target bound, camera matrices loaded, depth test on, backface culling off.
      Opaque: alpha blend, depth write on. Emissive: additive blend, depth write off.
      Use `env_chunk_transform(chunk, ctx->renderOrigin)` as the model matrix and
      `env_set_common_uniforms()` for the shared fog/fade/time uniforms (`shaders/common.glsl`).
      Count draw calls in `ctx->stats`.
+   - Shared building blocks: `render/streaks.h` (GPU speed streaks along the path; keep a
+     `StreakParams` in your params and register its fields under your own names) and
+     `render/shapes.h` (wireframe cube / octahedron with data faces).
 5. Test: `./cybertunnel --env <id>` or press `T` at runtime; add a determinism case to
-   `tests/test_main.c` modelled on `test_chunks`.
+   `tests/test_main.c` with `build_order_independent()` (see `test_chunks`, `test_city`).
 
 Transitions between environments (future): the whiteout uniform and core flare already
 exist (`ct_set_whiteout`); `PathStyle` is sampled at path-generation time, so blending two
@@ -339,3 +348,4 @@ unknown keys are skipped, and loading first resets everything to defaults).
 | Pacing | `pacing` | bool | on | | |
 
 The template environment adds `tplRadius`, `tplYawStepDeg`, `tplMarkerIntensity` (group Template) while it is active.
+The city environment (stub, Env #2 Phase A) adds `cityLaneHalfWidth`, `cityYawStepDeg`, `cityFloorDepth` (group Path) and `cityMarkerIntensity`, `cityFogStart`, `cityFogEnd` (group City) while it is active.

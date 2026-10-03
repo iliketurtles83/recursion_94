@@ -42,6 +42,9 @@ set(CT_MODULE_SRC
   src/render/shaderlib.c
   src/env/env_vortex.c
   src/env/env_template.c
+  src/env/env_city.c
+  src/render/streaks.c
+  src/render/shapes.c
   src/debug/debug_ui.c
   src/cybertunnel.c
 )

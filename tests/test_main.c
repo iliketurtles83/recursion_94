@@ -123,6 +123,43 @@ static uint64_t chunk_hash(const ChunkCpu *c)
     return h;
 }
 
+// Builds chunks 0..n-1 in order on one path instance and shuffled on an independently
+// generated one; fills inOrder[] with the hashes. Returns true when both orders agree.
+static bool build_order_independent(Environment *env, uint64_t seed, int n, uint64_t *inOrder)
+{
+    enum { NMAX = 64 };
+    PathStyle st = env->pathStyle(env);
+    static ChunkCpu a, b;   // large; static to keep them off the stack
+    uint64_t outOfOrder[NMAX];
+    if (n > NMAX) n = NMAX;
+
+    PathSystem p1, p2;
+    path_init(&p1, seed, st);
+    path_ensure(&p1, 0.0, n * CHUNK_LEN + 50.0);
+    for (int k = 0; k < n; k++) {
+        chunk_cpu_begin(&a, &p1, k);
+        env->buildChunk(env, &p1, k, &a);
+        inOrder[k] = chunk_hash(&a);
+    }
+    path_init(&p2, seed, st);
+    path_ensure(&p2, 0.0, n * CHUNK_LEN + 50.0);
+    int order[NMAX];
+    for (int i = 0; i < n; i++) order[i] = i;
+    Pcg32 r = pcg32_seed(3);
+    for (int i = n - 1; i > 0; i--) { int j = pcg32_int(&r, 0, i); int t = order[i]; order[i] = order[j]; order[j] = t; }
+    for (int i = 0; i < n; i++) {
+        int k = order[i];
+        chunk_cpu_begin(&b, &p2, k);
+        env->buildChunk(env, &p2, k, &b);
+        outOfOrder[k] = chunk_hash(&b);
+    }
+    bool same = true;
+    for (int k = 0; k < n; k++) if (inOrder[k] != outOfOrder[k]) same = false;
+    path_free(&p1); path_free(&p2);
+    for (int i = 0; i < CHUNK_BATCHES; i++) { lg_free(&a.geo[i]); lg_free(&b.geo[i]); }
+    return same;
+}
+
 static void test_chunks(void)
 {
     Environment env = env_vortex_create();
@@ -133,38 +170,14 @@ static void test_chunks(void)
     PathStyle st = env.pathStyle(&env);
 
     enum { N = 24 };
-    uint64_t inOrder[N], outOfOrder[N];
+    uint64_t inOrder[N];
     static ChunkCpu cpu;   // large; static to keep it off the stack
     memset(&cpu, 0, sizeof(cpu));
+    CHECK(build_order_independent(&env, 99, N, inOrder), "chunk build determinism independent of order");
 
     PathSystem p1;
     path_init(&p1, 99, st);
     path_ensure(&p1, 0.0, N * CHUNK_LEN + 50.0);
-    double maxBuild = 0.0;
-    for (int k = 0; k < N; k++) {
-        chunk_cpu_begin(&cpu, &p1, k);
-        env.buildChunk(&env, &p1, k, &cpu);
-        inOrder[k] = chunk_hash(&cpu);
-    }
-    // Different order, different path instance generated incrementally.
-    PathSystem p2;
-    path_init(&p2, 99, st);
-    path_ensure(&p2, 0.0, N * CHUNK_LEN + 50.0);
-    static ChunkCpu cpu2;
-    memset(&cpu2, 0, sizeof(cpu2));
-    int order[N];
-    for (int i = 0; i < N; i++) order[i] = i;
-    Pcg32 r = pcg32_seed(3);
-    for (int i = N - 1; i > 0; i--) { int j = pcg32_int(&r, 0, i); int t = order[i]; order[i] = order[j]; order[j] = t; }
-    for (int i = 0; i < N; i++) {
-        int k = order[i];
-        chunk_cpu_begin(&cpu2, &p2, k);
-        env.buildChunk(&env, &p2, k, &cpu2);
-        outOfOrder[k] = chunk_hash(&cpu2);
-    }
-    int same = 1;
-    for (int k = 0; k < N; k++) if (inOrder[k] != outOfOrder[k]) same = 0;
-    CHECK(same, "chunk build determinism independent of order");
 
     int distinct = 0;
     for (int k = 1; k < N; k++) if (inOrder[k] != inOrder[k - 1]) distinct++;
@@ -206,9 +219,8 @@ static void test_chunks(void)
     }
     CHECK(lane, "debris outside keep-out radius");
 
-    (void)maxBuild;
-    path_free(&p1); path_free(&p2); path_free(&p3);
-    for (int b = 0; b < CHUNK_BATCHES; b++) { lg_free(&cpu.geo[b]); lg_free(&cpu2.geo[b]); }
+    path_free(&p1); path_free(&p3);
+    for (int b = 0; b < CHUNK_BATCHES; b++) lg_free(&cpu.geo[b]);
     env.unload(&env);
 }
 
@@ -257,6 +269,60 @@ static void test_flight_framerate(void)
     path_free(&path);
 }
 
+// Environment #2 (open, floored): level path with world-up frames, floor clamp, chunk determinism.
+static void test_city(void)
+{
+    Environment env = env_city_create();
+    ParamRegistry reg;
+    params_clear(&reg);
+    env.registerParams(&env, &reg);
+    env.init(&env, 11, NULL);
+    PathStyle st = env.pathStyle(&env);
+    CHECK(!st.hasWalls && st.floorDepth > 0.0f, "city style is open with a floor");
+
+    // Level path: y stays 0 and N stays world up, so the floor is the plane y = -floorDepth.
+    PathSystem p;
+    path_init(&p, 11, st);
+    double maxY = 0.0, minUp = 1.0;
+    for (double s = 0.0; s <= 20000.0; s += PATH_DS) {
+        path_ensure(&p, s - 100.0, s + 50.0);
+        PathSample q = path_sample(&p, s);
+        if (fabs(q.pos.y) > maxY) maxY = fabs(q.pos.y);
+        if (q.N.y < minUp) minUp = q.N.y;
+    }
+    printf("  city path: max |y| %.2e, min N.y %.9f over 20000 units\n", maxY, minUp);
+    CHECK(maxY < 1e-9, "city path stays level (max |y| %g)", maxY);
+    CHECK(minUp > 0.999999, "city path N is world up (min N.y %.9f)", minUp);
+
+    // Flight: full down (and diagonals) never takes the ship below floor + clearance.
+    path_ensure(&p, 0.0, 2000.0);
+    ParamRegistry freg;
+    params_clear(&freg);
+    FlightParams fp;
+    flight_register_params(&fp, &freg);
+    static FlightState fs;
+    flight_reset(&fs, &fp, &p, 0.0);
+    double floorY = -st.floorDepth, lowest = 1e9;
+    float minOffset = 1e9f;
+    for (int i = 0; i < 720; i++) {
+        FlightInput in = { 0 };
+        in.steerY = -1.0f;
+        in.steerX = i < 360 ? 1.0f : -1.0f;
+        flight_step(&fs, &fp, &p, &in, 1.0 / FLIGHT_HZ);
+        if (fs.shipPos.y < lowest) lowest = fs.shipPos.y;
+        if (fs.y < minOffset) minOffset = fs.y;
+    }
+    printf("  city flight: lowest ship y %.3f (floor %.2f, clearance %.2f)\n", lowest, floorY, FLIGHT_CLEARANCE);
+    CHECK(lowest >= floorY + FLIGHT_CLEARANCE - 1e-4, "ship stays above floor + clearance (%f)", lowest);
+    CHECK(minOffset < -0.5f * st.floorDepth, "ship can still descend toward the floor (%f)", minOffset);
+    path_free(&p);
+
+    enum { N = 24 };
+    uint64_t h[N];
+    CHECK(build_order_independent(&env, 11, N, h), "city chunk build independent of order");
+    env.unload(&env);
+}
+
 static void test_params(void)
 {
     ParamRegistry reg;
@@ -285,6 +351,7 @@ int main(void)
     test_path();
     test_chunks();
     test_flight_framerate();
+    test_city();
     test_params();
     printf("%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

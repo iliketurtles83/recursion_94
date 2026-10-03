@@ -4,6 +4,8 @@
 #include "core/rng.h"
 #include "render/rmath.h"
 #include "render/pipeline.h"
+#include "render/shapes.h"
+#include "render/streaks.h"
 #include "rlgl.h"
 #include <math.h>
 #include <stdlib.h>
@@ -62,8 +64,7 @@ typedef struct VortexParams {
     float ribbonRMin, ribbonRMax, ribbonWMin, ribbonWMax, ribbonOmegaMin, ribbonOmegaMax;
     float ribbonIntensity, ribbonScroll;
     // streaks
-    float streakDensity, streakLenMul, streakWMin, streakWMax, streakIntensity;
-    float cometFrac, purpleFrac, helixFrac, helixRate, streakZRange, streakZBehind, streakSpeedMul;
+    StreakParams streaks;
     // debris
     int   debrisMax;
     float debrisSizeMin, debrisSizeMax, octaChance, debrisRMin, debrisRMax, keepout;
@@ -83,11 +84,9 @@ typedef struct VortexState {
     VortexParams p;
     ArchParams   arch[ARCH_COUNT + 1];
     ShaderLib   *sl;
-    int          shRing, shRibbon, shObject, shFace, shStreak, shCore, shBg;
+    int          shRing, shRibbon, shObject, shFace, shCore, shBg;
     Material     mat;
-    Mesh         streakMesh;
-    LineGeo      streakGeo;
-    bool         streakUploaded;
+    StreakSystem streaks;
     Vector2      coreUV;         // smoothed screen position of the core
     float        coreVisible;
     bool         coreInit;
@@ -167,18 +166,20 @@ static void vortex_register(Environment *env, ParamRegistry *reg)
 
     g = "Streaks";
     params_bool(reg, g, "showStreaks", &p->showStreaks, true);
-    params_float(reg, g, "streakDensity", &p->streakDensity, 1.0f, 0.0f, 1.0f);
-    params_float(reg, g, "streakLenMul", &p->streakLenMul, 1.0f, 0.1f, 5.0f);
-    params_float(reg, g, "streakWMin", &p->streakWMin, 0.03f, 0.005f, 0.3f);
-    params_float(reg, g, "streakWMax", &p->streakWMax, 0.08f, 0.005f, 0.3f);
-    params_float(reg, g, "streakIntensity", &p->streakIntensity, 1.6f, 0.0f, 10.0f);
-    params_float(reg, g, "cometFrac", &p->cometFrac, 0.01f, 0.0f, 0.2f);
-    params_float(reg, g, "purpleFrac", &p->purpleFrac, 0.15f, 0.0f, 1.0f);
-    params_float(reg, g, "helixFrac", &p->helixFrac, 0.2f, 0.0f, 1.0f);
-    params_float(reg, g, "helixRate", &p->helixRate, 0.05f, -0.3f, 0.3f);
-    params_float(reg, g, "streakZRange", &p->streakZRange, 160.0f, 40.0f, 400.0f);
-    params_float(reg, g, "streakZBehind", &p->streakZBehind, 12.0f, -50.0f, 50.0f);
-    params_float(reg, g, "streakSpeedMul", &p->streakSpeedMul, 1.0f, 0.0f, 4.0f);
+    params_float(reg, g, "streakDensity", &p->streaks.density, 1.0f, 0.0f, 1.0f);
+    params_float(reg, g, "streakLenMul", &p->streaks.lenMul, 1.0f, 0.1f, 5.0f);
+    params_float(reg, g, "streakWMin", &p->streaks.wMin, 0.03f, 0.005f, 0.3f);
+    params_float(reg, g, "streakWMax", &p->streaks.wMax, 0.08f, 0.005f, 0.3f);
+    params_float(reg, g, "streakIntensity", &p->streaks.intensity, 1.6f, 0.0f, 10.0f);
+    params_float(reg, g, "cometFrac", &p->streaks.cometFrac, 0.01f, 0.0f, 0.2f);
+    params_float(reg, g, "purpleFrac", &p->streaks.accentFrac, 0.15f, 0.0f, 1.0f);
+    params_float(reg, g, "helixFrac", &p->streaks.helixFrac, 0.2f, 0.0f, 1.0f);
+    params_float(reg, g, "helixRate", &p->streaks.helixRate, 0.05f, -0.3f, 0.3f);
+    params_float(reg, g, "streakZRange", &p->streaks.zRange, 160.0f, 40.0f, 400.0f);
+    params_float(reg, g, "streakZBehind", &p->streaks.zBehind, 12.0f, -50.0f, 50.0f);
+    params_float(reg, g, "streakSpeedMul", &p->streaks.speedMul, 1.0f, 0.0f, 4.0f);
+    p->streaks.colMain = (Color){ 0xD8, 0xF8, 0xFF, 255 };
+    p->streaks.colAccent = COL_PURPLE;
 
     g = "Debris";
     params_bool(reg, g, "showDebris", &p->showDebris, true);
@@ -528,36 +529,6 @@ static Vector3 rand_unit(Pcg32 *r)
     return (Vector3){ s * cosf(a), s * sinf(a), z };
 }
 
-static void build_cube(LineGeo *edges, LineGeo *faces, float h, LineAttr e, LineAttr f, float width)
-{
-    Vector3 v[8];
-    for (int i = 0; i < 8; i++) v[i] = (Vector3){ (i & 1) ? h : -h, (i & 2) ? h : -h, (i & 4) ? h : -h };
-    static const int E[12][2] = { {0,1},{2,3},{4,5},{6,7},{0,2},{1,3},{4,6},{5,7},{0,4},{1,5},{2,6},{3,7} };
-    for (int i = 0; i < 12; i++) lg_facing_segment(edges, v[E[i][0]], v[E[i][1]], width, width, e.intensity, e.intensity, e);
-    static const int F[6][4] = { {0,1,3,2},{4,6,7,5},{0,4,5,1},{2,3,7,6},{0,2,6,4},{1,5,7,3} };
-    static const float N[6][3] = { {0,0,-1},{0,0,1},{0,-1,0},{0,1,0},{-1,0,0},{1,0,0} };
-    for (int i = 0; i < 6; i++) {
-        LineAttr fa = f;
-        fa.anim = (float)i;
-        lg_fill_quad(faces, v[F[i][0]], v[F[i][1]], v[F[i][2]], v[F[i][3]], (Vector3){ N[i][0], N[i][1], N[i][2] }, fa);
-    }
-}
-
-static void build_octa(LineGeo *edges, LineGeo *faces, float h, LineAttr e, LineAttr f, float width)
-{
-    Vector3 v[6] = { { h, 0, 0 }, { -h, 0, 0 }, { 0, h, 0 }, { 0, -h, 0 }, { 0, 0, h }, { 0, 0, -h } };
-    static const int E[12][2] = { {0,2},{0,3},{0,4},{0,5},{1,2},{1,3},{1,4},{1,5},{2,4},{4,3},{3,5},{5,2} };
-    for (int i = 0; i < 12; i++) lg_facing_segment(edges, v[E[i][0]], v[E[i][1]], width, width, e.intensity, e.intensity, e);
-    static const int F[8][3] = { {0,2,4},{0,4,3},{0,3,5},{0,5,2},{1,4,2},{1,3,4},{1,5,3},{1,2,5} };
-    for (int i = 0; i < 8; i++) {
-        Vector3 a = v[F[i][0]], b = v[F[i][1]], c = v[F[i][2]];
-        Vector3 n = Vector3Normalize((Vector3){ a.x + b.x + c.x, a.y + b.y + c.y, a.z + b.z + c.z });
-        LineAttr fa = f;
-        fa.anim = (float)i;
-        lg_fill_tri(faces, a, b, c, n, fa);
-    }
-}
-
 static void build_debris(const VortexState *st, ChunkCpu *c, const PathSystem *path, uint64_t chunkSeed,
                          const ChunkArch *ca, int *objSlot)
 {
@@ -592,8 +563,8 @@ static void build_debris(const VortexState *st, ChunkCpu *c, const PathSystem *p
         LineAttr e = { COL_PALE, p->edgeIntensity * pcg32_range(&r, 0.8f, 1.2f), pcg32_float(&r), 0.0f, (float)g, 0.0f };
         LineAttr f = { COL_CYAN, p->faceIntensity, pcg32_float(&r), 0.0f, (float)g, 0.0f };
         float w = p->edgeWidth * (0.7f + 0.3f * size / p->debrisSizeMax);
-        if (octa) build_octa(&c->geo[B_EDGES], &c->geo[B_FACES], h, e, f, w);
-        else build_cube(&c->geo[B_EDGES], &c->geo[B_FACES], h, e, f, w);
+        if (octa) shape_octa(&c->geo[B_EDGES], &c->geo[B_FACES], h, e, f, w);
+        else shape_cube(&c->geo[B_EDGES], &c->geo[B_FACES], h, e, f, w);
         if (c->debrisCount < CHUNK_MAX_DEBRIS) {
             DebrisInfo *d = &c->debris[c->debrisCount++];
             d->center = ctr; d->radius = bound; d->s = s;
@@ -659,41 +630,21 @@ static void vortex_build_chunk(Environment *env, const PathSystem *path, int chu
 // ---------------------------------------------------------------------------
 // GPU side
 
-static void build_streak_mesh(VortexState *st)
-{
-    LineGeo *g = &st->streakGeo;
-    lg_clear(g);
-    for (int i = 0; i < STREAK_COUNT; i++) {
-        int b = lg_reserve(g, 4, 6);
-        Vector2 id = { (float)i, 0.0f };
-        Vector3 z = { 0 };
-        Vector4 t = { 0 };
-        lg_vertex(g, z, (Vector2){ 0, -1 }, id, z, t, WHITE);
-        lg_vertex(g, z, (Vector2){ 0, 1 }, id, z, t, WHITE);
-        lg_vertex(g, z, (Vector2){ 1, 1 }, id, z, t, WHITE);
-        lg_vertex(g, z, (Vector2){ 1, -1 }, id, z, t, WHITE);
-        lg_quad(g, b, 0, 1, 2, 3);
-    }
-    st->streakMesh = lg_upload_mesh(g, 0, false);
-    st->streakUploaded = true;
-}
-
 static void vortex_init(Environment *env, uint64_t worldSeed, ShaderLib *sl)
 {
     VortexState *st = (VortexState *)env->state;
     st->seed = worldSeed;
     st->sl = sl;
     init_archetypes(st);
+    streaks_init(&st->streaks, sl, STREAK_COUNT);
     if (sl) {
         st->shRing = sl_load(sl, "ring.vs", "ring.fs");
         st->shRibbon = sl_load(sl, "ribbon.vs", "ribbon.fs");
         st->shObject = sl_load(sl, "object.vs", "line_facing.fs");
         st->shFace = sl_load(sl, "face.vs", "face.fs");
-        st->shStreak = sl_load(sl, "streak.vs", "streak.fs");
         st->shCore = sl_load(sl, "fullscreen.vs", "core.fs");
         st->shBg = sl_load(sl, "fullscreen.vs", "background.fs");
         st->mat = LoadMaterialDefault();
-        build_streak_mesh(st);
     }
 }
 
@@ -774,48 +725,6 @@ static void vortex_draw_opaque(Environment *env, const FrameContext *ctx, const 
     (void)env; (void)ctx; (void)chunks; (void)n;
 }
 
-static void draw_streaks(VortexState *st, const FrameContext *ctx)
-{
-    const VortexParams *p = &st->p;
-    ShaderLib *sl = st->sl;
-    int sh = st->shStreak;
-    // Path frames along the streak volume so streaks follow the tunnel's curvature.
-    enum { PATH_N = 16 };
-    float pp[PATH_N][4], pb[PATH_N][4], pn[PATH_N][4];
-    double step = (double)p->streakZRange / (PATH_N - 1);
-    for (int i = 0; i < PATH_N; i++) {
-        PathSample q = path_sample(ctx->path, ctx->sShip - p->streakZBehind + step * i);
-        DVec3 o = dv_sub(q.pos, ctx->renderOrigin);
-        pp[i][0] = (float)o.x; pp[i][1] = (float)o.y; pp[i][2] = (float)o.z; pp[i][3] = (float)q.radius;
-        pb[i][0] = (float)q.B.x; pb[i][1] = (float)q.B.y; pb[i][2] = (float)q.B.z; pb[i][3] = 0.0f;
-        pn[i][0] = (float)q.N.x; pn[i][1] = (float)q.N.y; pn[i][2] = (float)q.N.z; pn[i][3] = 0.0f;
-    }
-    // Travel wrapped so quantized multipliers (k/8) stay seamless: period = zRange * 8 * 8.
-    double period = (double)p->streakZRange * 64.0;
-    float travel = (float)fmod(ctx->sShip, period);
-    float energy = 0.6f + 0.8f * ctx->intensity;
-    env_set_common_uniforms(sl, sh, ctx);
-    sl_vec4v(sl, sh, "uPathP", &pp[0][0], PATH_N);
-    sl_vec4v(sl, sh, "uPathB", &pb[0][0], PATH_N);
-    sl_vec4v(sl, sh, "uPathN", &pn[0][0], PATH_N);
-    sl_f1(sl, sh, "uPathStep", (float)step);
-    sl_f1(sl, sh, "uTravel", travel);
-    sl_f1(sl, sh, "uSpeed", ctx->speed * p->streakSpeedMul * (0.7f + 0.6f * ctx->intensity) * (1.0f + ctx->speedNorm));
-    sl_f1(sl, sh, "uZRange", p->streakZRange);
-    sl_f1(sl, sh, "uZBehind", p->streakZBehind);
-    sl_f1(sl, sh, "uDensity", p->streakDensity * (0.55f + 0.45f * ctx->intensity));
-    sl_f1(sl, sh, "uLenMul", p->streakLenMul);
-    sl_f2(sl, sh, "uWidth", p->streakWMin, p->streakWMax);
-    sl_f1(sl, sh, "uHelixFrac", p->helixFrac);
-    sl_f1(sl, sh, "uHelixRate", p->helixRate);
-    sl_f1(sl, sh, "uCometFrac", p->cometFrac);
-    sl_f1(sl, sh, "uPurpleFrac", p->purpleFrac);
-    sl_f1(sl, sh, "uStreakIntensity", p->streakIntensity * energy);
-    sl_v3(sl, sh, "uColWhite", ct_srgb_to_linear((Color){ 0xD8, 0xF8, 0xFF, 255 }));
-    sl_v3(sl, sh, "uColPurple", ct_srgb_to_linear(COL_PURPLE));
-    draw_mesh(st, ctx, sh, st->streakMesh, MatrixIdentity());
-}
-
 static void draw_core(VortexState *st, const FrameContext *ctx)
 {
     const VortexParams *p = &st->p;
@@ -894,16 +803,14 @@ static void vortex_draw_emissive(Environment *env, const FrameContext *ctx, cons
                 if (c->meshBatch[m] == batch) draw_mesh(st, ctx, sh, c->meshes[m], xf);
         }
     }
-    if (p->showStreaks) draw_streaks(st, ctx);
+    if (p->showStreaks) streaks_draw(&st->streaks, &p->streaks, ctx);
     if (p->showCore) draw_core(st, ctx);
 }
 
 static void vortex_unload(Environment *env)
 {
     VortexState *st = (VortexState *)env->state;
-    if (st->streakUploaded) lg_unload_mesh(st->streakMesh);
-    st->streakUploaded = false;
-    lg_free(&st->streakGeo);
+    streaks_unload(&st->streaks);
     if (st->sl) { st->mat.shader.id = rlGetShaderIdDefault(); UnloadMaterial(st->mat); }
     free(st);
     env->state = NULL;

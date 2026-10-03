@@ -11,14 +11,16 @@ groups (scaffold+core, render pipeline, environment, tooling+docs) rather than s
 commit per phase. Each phase's acceptance checks are recorded below.
 
 Debug renders live in `shots/` (git-ignored). Reproduce any of them with
-`./build/cybertunnel --shot S [--preset NAME] [--out FILE]`.
+`./build/cybertunnel --shot S [--preset NAME] [--out FILE]`. Shot mode runs on a fixed
+1/60 s step and a frame count (since Env #2 Phase A), so the same command produces a
+byte-identical PNG; that is what the refactor regression checks below rely on.
 
 ## Build / run
 
 ```
 cmake -S . -B build && cmake --build build -j
 ./build/cybertunnel_tests
-./build/cybertunnel [--seed N] [--w W --h H] [--vsync 0|1] [--fps N] [--env 0|1]
+./build/cybertunnel [--seed N] [--w W --h H] [--vsync 0|1] [--fps N] [--env 0|1|2]
                     [--bench SECONDS [--speed U]] [--shot S [--out FILE]] [--preset NAME]
                     [--write-preset NAME] [--list-params] [--hdr8] [--noship] [--ui] [--whiteout]
 ```
@@ -228,3 +230,35 @@ smoke-tested (10 switches while rendering, no crash).
 - Engine glow intensity is baked into the ship mesh at creation (`engineIntensity` changes
   need a restart).
 - Not measured here: the GTX 1660 / Iris Xe targets in §6 — only one machine was available.
+
+---
+
+# Environment #2 "Neon Grid City" (plan: `PLAN_ENV2_GRID_CITY.md`)
+
+## Phase A — Core generalisation (no visual change)
+
+- `PathStyle.floorDepth` / `ceilingHeight` (0 = none). `flight_step` clamps the vertical
+  offset to `[-floorDepth + FLIGHT_CLEARANCE, ceilingHeight - FLIGHT_CLEARANCE]` after the
+  existing radial limit (`FLIGHT_CLEARANCE = 0.6` covers wingtips at full bank).
+- `Environment.atmosphere` optional hook, called on the per-frame `Atmosphere` copy after the
+  core fills it.
+- Streaks extracted to `render/streaks.c` (`StreakParams` + `StreakSystem`); vortex keeps its
+  param names (`streakDensity`, `purpleFrac`, … — `purpleFrac` maps to `accentFrac`) so presets
+  load unchanged. Cube/octa builders moved to `render/shapes.c` (`shape_cube`, `shape_octa`).
+  Slab volume / fall tilt for rain are deliberately **not** added yet (Phase D).
+- `ENV_CITY = 2` / `CT_ENV_CITY` registered; `env_city.c` stub with the real path style
+  (lane half-width 9, yaw step 4°, pitch 0, twist 0, floor 2.2), fog to dark
+  (`fogToCore = 0`, 120–420), and lane-edge dashes on the floor plane. City params are prefixed
+  `city*`; the "City" group triggers a chunk rebuild in the panel.
+- `--shot` made reproducible (fixed step, see top of file).
+- **Accept:**
+  - Tests: 41 passed (35 existing + 6 new). The order-independence check became the helper
+    `build_order_independent()` and now also runs on the city. New: city path max |y| = 0 and
+    min N.y = 1.000000000 over 20,000 units; with full-down + sideways input for 6 s the lowest
+    ship y is −1.600 (floor −2.2 + clearance 0.6) while the ship still reaches the clamp.
+  - Pixel identity: 8 renders (vortex s=1200/3000/4200, seed 7, calm, intense, whiteout,
+    template) are byte-identical before and after the refactor.
+  - City stub: `--env 2 --bench 8 --speed 120`: avg 0.18 ms, max chunk build 0.007 ms.
+- Not checked: switching environments at runtime with `T` (no scripted key input in the
+  harness); the code path is unchanged apart from the extra environment.
+

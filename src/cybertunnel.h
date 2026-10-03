@@ -25,7 +25,7 @@ extern "C" {
 
 typedef struct CtTunnel CtTunnel;
 
-enum { CT_ENV_VORTEX = 0, CT_ENV_TEMPLATE = 1 };
+enum { CT_ENV_VORTEX = 0, CT_ENV_TEMPLATE = 1, CT_ENV_CITY = 2 };
 
 typedef struct CtConfig {
     uint64_t    seed;

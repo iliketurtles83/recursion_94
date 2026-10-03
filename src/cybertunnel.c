@@ -41,6 +41,7 @@ const char *ct_environment_name(int id)
     switch (id) {
     case ENV_VORTEX: return "Data Vortex";
     case ENV_TEMPLATE: return "Template";
+    case ENV_CITY: return "Neon Grid City";
     }
     return "?";
 }
@@ -275,6 +276,7 @@ CtTunnel *ct_create(const CtConfig *cfg)
 
     ct->envs[ENV_VORTEX] = env_vortex_create();
     ct->envs[ENV_TEMPLATE] = env_template_create();
+    ct->envs[ENV_CITY] = env_city_create();
     ct->envId = (cfg->environment >= 0 && cfg->environment < ENV_COUNT) ? cfg->environment : ENV_VORTEX;
     ct->env = &ct->envs[ct->envId];
     register_env_params(ct);
@@ -471,6 +473,7 @@ void ct_update(CtTunnel *ct, float dt)
     c->pixelScale = 2.0f * tanf(fov * 0.5f * DEG2RAD) / (float)h;
     c->atmo = ct->atmo;
     c->atmo.coreColor = (Vector3){ powf(ct->core.coreR, 2.2f), powf(ct->core.coreG, 2.2f), powf(ct->core.coreB, 2.2f) };
+    if (ct->env->atmosphere) ct->env->atmosphere(ct->env, &c->atmo);
     c->path = &ct->path;
     c->shaders = &ct->sl;
     c->stats = &ct->rstats;

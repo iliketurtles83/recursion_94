@@ -10,6 +10,7 @@
 
 #define FLIGHT_HZ        120.0
 #define FLIGHT_TRAIL_LEN 72      // 0.6 s at 120 Hz
+#define FLIGHT_CLEARANCE 0.6f    // min ship distance to PathStyle floor/ceiling (covers banked wings)
 
 typedef struct FlightInput {
     float steerX, steerY;    // -1..1 (right, up)

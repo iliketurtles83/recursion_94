@@ -13,7 +13,12 @@ typedef struct PathStyle {
     float baseRadius, radiusNoiseAmp, radiusNoiseScale;
     float maxYawStepDeg, maxPitchDeg, pitchSpring;
     float twistRateMax;      // roll rad/unit
-    bool  hasWalls;          // false for open environments (future grid city)
+    bool  hasWalls;          // false for open environments (grid city)
+    // Optional horizontal floor / ceiling relative to the centerline (0 = none). Only
+    // meaningful for level paths (maxPitchDeg = 0, twistRateMax = 0), where N is world up.
+    // The flight model keeps the ship between them; baseRadius stays the lateral limit.
+    float floorDepth;        // distance from centerline down to the floor
+    float ceilingHeight;     // distance from centerline up to the ceiling
 } PathStyle;
 
 typedef struct PathSample {

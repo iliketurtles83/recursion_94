@@ -19,7 +19,7 @@ typedef struct Cli {
 
 static void usage(void)
 {
-    printf("cybertunnel [--seed N] [--w W --h H] [--vsync 0|1] [--fps N] [--env 0|1]\n"
+    printf("cybertunnel [--seed N] [--w W --h H] [--vsync 0|1] [--fps N] [--env 0|1|2]\n"
            "            [--bench SECONDS [--speed U]] [--shot S [--out FILE]] [--preset NAME] [--write-preset NAME] [--list-params] [--hdr8] [--noship] [--ui] [--whiteout]\n");
 }
 
@@ -124,9 +124,12 @@ int main(int argc, char **argv)
     double maxHitch = 0.0;
     bool shotTaken = false, whiteoutFired = false, statsReset = false;
     int meshMin = 1 << 30, meshMax = 0;
+    int shotFrames = 0;
     while (!WindowShouldClose()) {
         float dt = GetFrameTime();
         double now = GetTime() - start;
+        // Shot mode runs on a fixed step and frame count so renders are reproducible.
+        if (cli.hasShot) { dt = 1.0f / 60.0f; now = shotFrames++ * (double)dt; }
 
         if (!bench && !cli.hasShot) {
             CtInput in = { 0 };

@@ -23,7 +23,7 @@
 #define SLIDER_W  170
 
 // Groups whose params change chunk content (rebuild chunks) or the path (full rebuild).
-static bool group_rebuilds(const char *g) { return !strcmp(g, "Rings") || !strcmp(g, "Ribbons") || !strcmp(g, "Debris") || !strcmp(g, "Pacing"); }
+static bool group_rebuilds(const char *g) { return !strcmp(g, "Rings") || !strcmp(g, "Ribbons") || !strcmp(g, "Debris") || !strcmp(g, "Pacing") || !strcmp(g, "City"); }
 static bool group_rebuilds_path(const char *g) { return !strcmp(g, "Path") || !strcmp(g, "Template"); }
 
 static void style_once(void)
