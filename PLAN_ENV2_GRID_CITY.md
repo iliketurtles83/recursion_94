@@ -1,6 +1,6 @@
 # Plan — Environment #2 "Neon Grid City"
 
-Status: Phases A–E done (see `NOTES.md`); Phase F open. Reference frames: `reference/t_0.5s.png`,
+Status: all phases (A–F) done; see `NOTES.md` for the per-phase reports and deviations. Reference frames: `reference/t_0.5s.png`,
 `reference/t_2.5s.png` and the first row and a half of `reference/contact_sheet.png` (0–3.5 s).
 
 ## 0. Why this one
@@ -132,6 +132,7 @@ Each phase ends with its checks passing, a commit, and a short `NOTES.md` sectio
 - **Accept**: towers and trails are visible in the floor as in t_0.5 (the purple smears under towers and the trail stripe under the ship). Toggles exist for off / ¼ / ½ resolution, and frame time is measured for each. Nothing from below the floor leaks into the reflection.
 
 ### Phase F — Pacing, params, presets, docs
+- *(Done — see NOTES.md Phase F.)*
 - Archetypes (driven by a Markov chain over runs, like the vortex):
   - **AVENUE**: two tidy rows lining the lane, the reference framing.
   - **DOWNTOWN**: dense and tall, glyph-heavy, towers close to the lane, high energy.

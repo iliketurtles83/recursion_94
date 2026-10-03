@@ -22,6 +22,24 @@ static float smooth01(float a, float b, float x)
     return t * t * (3.0f - 2.0f * t);
 }
 
+CityArch city_arch_neutral(void)
+{
+    return (CityArch){ 1.0f, 1.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0.5f };
+}
+
+CityArch city_arch_at(const CityArchBlend *b, double s)
+{
+    if (!b) return city_arch_neutral();
+    float t = b->len > 0.0 ? (float)((s - b->s0) / b->len) : 1.0f;
+    t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+    t = t * t * (3.0f - 2.0f * t);
+    CityArch r;
+    const float *pa = &b->prev.densityNear, *pb = &b->cur.densityNear;
+    float *pr = &r.densityNear;
+    for (int i = 0; i < (int)(sizeof(CityArch) / sizeof(float)); i++) pr[i] = pa[i] + (pb[i] - pa[i]) * t;
+    return r;
+}
+
 double city_towers_reach(const CityTowerParams *p)
 {
     // A cell within bandMax of the chunk's path piece has its nearest path point within
@@ -96,8 +114,8 @@ static double poly_rect_dist(const Poly *pl, double x0, double z0, double x1, do
     return best;
 }
 
-int city_towers_plan(const CityTowerParams *p, uint64_t seed, const PathSystem *path, int chunkIndex,
-                     TowerDesc *out, int maxTowers, CellClaim *claims, int maxClaims, int *claimCount)
+int city_towers_plan(const CityTowerParams *p, const CityArchBlend *blend, uint64_t seed, const PathSystem *path,
+                     int chunkIndex, TowerDesc *out, int maxTowers, CellClaim *claims, int maxClaims, int *claimCount)
 {
     static Poly pl;   // large; builds run on one thread
     double s0 = chunkIndex * CHUNK_LEN, s1 = s0 + CHUNK_LEN;
@@ -130,7 +148,6 @@ int city_towers_plan(const CityTowerParams *p, uint64_t seed, const PathSystem *
     int iz0 = (int)floor((minz - pad) / L), iz1 = (int)floor((maxz + pad) / L);
 
     uint64_t envSeed = ct_hash64_2(seed, ((uint64_t)ENV_CITY << 8) | F_TOWERS);
-    float inner = p->laneHalfWidth + p->clearance;
     int n = 0, nc = 0;
     for (int iz = iz0; iz <= iz1; iz++) {
         for (int ix = ix0; ix <= ix1; ix++) {
@@ -141,8 +158,11 @@ int city_towers_plan(const CityTowerParams *p, uint64_t seed, const PathSystem *
 
             int towerIdx = -1;
             Pcg32 r = pcg32_seed(ct_hash64_3(envSeed, (uint64_t)(int64_t)ix, (uint64_t)(int64_t)iz));
-            float far = smooth01(inner, p->bandMax, (float)d);
-            float dens = p->densityNear + (p->densityFar - p->densityNear) * far;
+            CityArch a = city_arch_at(blend, sOwn);
+            float inner = p->laneHalfWidth + p->clearance + fmaxf(a.clearanceAdd, 0.0f);
+            float far = smooth01(inner, fmaxf(p->bandMax, inner + 1.0f), (float)d);
+            float dn = p->densityNear * a.densityNear, df = p->densityFar * a.densityFar;
+            float dens = dn + (df - dn) * far;
             if (pcg32_chance(&r, dens) && n < maxTowers) {
                 TowerDesc *t = &out[n];
                 int lc = p->latticeCells;
@@ -158,8 +178,8 @@ int city_towers_plan(const CityTowerParams *p, uint64_t seed, const PathSystem *
                 t->x1[0] = (gx + fw) * p->cell;
                 t->z0[0] = gz * p->cell;
                 t->z1[0] = (gz + fd) * p->cell;
-                float H = p->heightMin + pcg32_float(&r) * (p->heightMax - p->heightMin) + p->heightFar * far;
-                if (pcg32_chance(&r, p->landmarkChance)) H *= p->landmarkMul;
+                float H = (p->heightMin + pcg32_float(&r) * (p->heightMax - p->heightMin)) * a.height + p->heightFar * a.heightFar * far;
+                if (pcg32_chance(&r, p->landmarkChance * a.landmark)) H *= p->landmarkMul;
                 int tiers = 1;
                 if (pcg32_chance(&r, p->setbackChance)) tiers = pcg32_chance(&r, 0.35f) ? 3 : 2;
                 float frac[CITY_MAX_TIERS] = { 1.0f, 1.0f, 1.0f };
@@ -191,6 +211,8 @@ int city_towers_plan(const CityTowerParams *p, uint64_t seed, const PathSystem *
                     t->iz = iz;
                     t->sOwner = sOwn;
                     t->dist = (float)d;
+                    t->traceMul = a.traces;
+                    t->glyphMul = a.glyphs;
                     towerIdx = n++;
                 }
             }

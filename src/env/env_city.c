@@ -3,7 +3,8 @@
 //
 // Phases done: A (path style: level, no twist, floor below the centerline; atmosphere),
 // B (grid floor, sky), C (tower placement and bodies, city_towers.c), D (circuit traces
-// and code-text panels, city_decor.c; light rain; floating props) and E (floor reflection).
+// and code-text panels, city_decor.c; light rain; floating props), E (floor reflection) and
+// F (pacing archetypes AVENUE / DOWNTOWN / OPEN / PLAZA).
 #include "env_common.h"
 #include "city_towers.h"
 #include "city_decor.h"
@@ -24,7 +25,27 @@ enum { U_OBJ_A = 0, U_OBJ_B = 16, U_OBJ_C = 32 };
 #define MAX_PROPS   8
 #define RAIN_COUNT  1200
 
-enum { F_PROPS = 3 };   // city feature sub-streams (towers 1, traces 2)
+enum { F_PROPS = 3, F_PACING = 4 };   // city feature sub-streams (towers 1, traces 2)
+
+// Pacing archetypes: a hash-driven Markov chain over runs of chunks, as in the vortex.
+enum { CA_AVENUE, CA_DOWNTOWN, CA_OPEN, CA_PLAZA, CA_COUNT, CA_DEFAULT = CA_COUNT };
+static const char *CA_NAMES[CA_COUNT + 1] = { "AVENUE", "DOWNTOWN", "OPEN", "PLAZA", "DEFAULT" };
+//                                densN  densF  clear  height hFar  landm traces glyphs props energy
+static const CityArch CA_TABLE[CA_COUNT + 1] = {
+    [CA_AVENUE]   = { 1.60f, 0.80f,  0.0f, 1.00f, 0.8f, 0.6f, 1.00f, 1.10f, 0.7f, 0.45f },   // two tidy rows lining the lane
+    [CA_DOWNTOWN] = { 1.50f, 2.00f,  0.0f, 1.35f, 1.5f, 2.5f, 1.30f, 1.60f, 1.0f, 0.85f },   // dense, tall, glyph-heavy
+    [CA_OPEN]     = { 0.30f, 0.70f,  8.0f, 0.55f, 0.5f, 0.5f, 0.70f, 0.60f, 0.7f, 0.25f },   // sparse and low, long grid vistas
+    [CA_PLAZA]    = { 0.00f, 1.20f, 26.0f, 0.90f, 1.0f, 1.0f, 1.00f, 1.00f, 2.0f, 0.35f },   // open square, props, a breather
+    [CA_DEFAULT]  = { 1.00f, 1.00f,  0.0f, 1.00f, 1.0f, 1.0f, 1.00f, 1.00f, 1.0f, 0.50f },
+};
+static const int CA_RUN_MIN[CA_COUNT] = { 4, 3, 3, 2 };
+static const int CA_RUN_MAX[CA_COUNT] = { 9, 6, 6, 3 };
+static const float CA_TRANSITION[CA_COUNT][CA_COUNT] = {
+    { 0.00f, 0.45f, 0.30f, 0.25f },
+    { 0.45f, 0.00f, 0.20f, 0.35f },
+    { 0.55f, 0.30f, 0.00f, 0.15f },
+    { 0.50f, 0.35f, 0.15f, 0.00f },
+};
 
 typedef struct CityParams {
     PathStyle path;
@@ -42,6 +63,7 @@ typedef struct CityParams {
     int   propsMax;
     float propSizeMin, propSizeMax, propHeightMax, propEdgeIntensity, propFaceIntensity;
     bool  showProps;
+    bool  pacing;
     float fogStart, fogEnd;          // fog for chunk content (towers etc.)
     float hazeWidth, hazeGlow, dust; // sky
     bool  showFloor, showSky;
@@ -162,8 +184,8 @@ static void city_register(Environment *env, ParamRegistry *reg)
     g = "Rain";
     StreakParams *rn = &p->rain;
     params_bool(reg, g, "showRain", &p->showRain, true);
-    params_float(reg, g, "rainDensity", &rn->density, 0.5f, 0.0f, 1.0f);
-    params_float(reg, g, "rainLenMul", &rn->lenMul, 4.0f, 0.1f, 10.0f);
+    params_float(reg, g, "rainDensity", &rn->density, 0.3f, 0.0f, 1.0f);
+    params_float(reg, g, "rainLenMul", &rn->lenMul, 2.8f, 0.1f, 10.0f);
     params_float(reg, g, "rainWMin", &rn->wMin, 0.05f, 0.005f, 0.5f);
     params_float(reg, g, "rainWMax", &rn->wMax, 0.15f, 0.005f, 0.5f);
     params_float(reg, g, "rainIntensity", &rn->intensity, 2.6f, 0.0f, 10.0f);
@@ -173,6 +195,8 @@ static void city_register(Environment *env, ParamRegistry *reg)
     params_float(reg, g, "rainYMin", &p->rainYMin, 0.8f, 0.0f, 50.0f);
     params_float(reg, g, "rainYMax", &p->rainYMax, 25.0f, 0.0f, 100.0f);
     params_float(reg, g, "rainFallTilt", &rn->fallTilt, 0.12f, 0.0f, 1.0f);
+    params_float(reg, g, "rainCenterGap", &rn->slabGap, 12.0f, 0.0f, 100.0f);
+    params_float(reg, g, "rainCenterFrac", &rn->slabGapFrac, 0.05f, 0.0f, 1.0f);
     params_float(reg, g, "rainSpeedMul", &rn->speedMul, 1.0f, 0.0f, 4.0f);
     rn->zBehind = 12.0f;
     rn->volume = 1;
@@ -187,6 +211,9 @@ static void city_register(Environment *env, ParamRegistry *reg)
     params_float(reg, g, "propHeightMax", &p->propHeightMax, 4.0f, 0.5f, 30.0f);
     params_float(reg, g, "propEdgeIntensity", &p->propEdgeIntensity, 2.2f, 0.0f, 10.0f);
     params_float(reg, g, "propFaceIntensity", &p->propFaceIntensity, 0.25f, 0.0f, 3.0f);
+
+    g = "Pacing";
+    params_bool(reg, g, "cityPacing", &p->pacing, true);
 
     g = "City";
     params_bool(reg, g, "showSky", &p->showSky, true);
@@ -229,17 +256,44 @@ static CityTowerParams tower_params(const CityState *st, const PathSystem *path)
 
 static void city_reseed(Environment *env, uint64_t seed) { ((CityState *)env->state)->seed = seed; }
 
+static int city_archetype_of_chunk(const CityState *st, int k)
+{
+    if (!st->p.pacing) return CA_DEFAULT;
+    if (k < 0) k = 0;
+    uint64_t base = ct_hash64_3(st->seed, ENV_CITY, F_PACING);
+    int a = CA_AVENUE, start = 0;   // every flight starts on an avenue (the reference opening)
+    for (int r = 0;; r++) {
+        Pcg32 rng = pcg32_seed(ct_hash64_2(base, (uint64_t)r));
+        if (r > 0) a = pcg32_weighted(&rng, CA_TRANSITION[a], CA_COUNT);
+        int len = pcg32_int(&rng, CA_RUN_MIN[a], CA_RUN_MAX[a]);
+        if (k < start + len) return a;
+        start += len;
+    }
+}
+
+// Blend for chunk k: the previous chunk's archetype fades into this one across chunk k.
+static CityArchBlend city_blend(const CityState *st, int k)
+{
+    CityArchBlend b;
+    b.prev = CA_TABLE[city_archetype_of_chunk(st, k - 1)];
+    b.cur = CA_TABLE[city_archetype_of_chunk(st, k)];
+    b.s0 = k * CHUNK_LEN;
+    b.len = CHUNK_LEN;
+    return b;
+}
+
 static void set_u(ChunkCpu *c, int slot, Vector3 v, float w)
 {
     c->uniforms[slot][0] = v.x; c->uniforms[slot][1] = v.y; c->uniforms[slot][2] = v.z; c->uniforms[slot][3] = w;
 }
 
 // Small slowly turning wireframe props floating low between the lane edge and the towers.
-static void build_props(const CityState *st, const PathSystem *path, int chunkIndex, ChunkCpu *c)
+static void build_props(const CityState *st, const PathSystem *path, int chunkIndex, int propsMax, ChunkCpu *c)
 {
     const CityParams *p = &st->p;
     Pcg32 r = pcg32_seed(ct_hash64_3(st->seed, ((uint64_t)ENV_CITY << 8) | F_PROPS, (uint64_t)(int64_t)chunkIndex));
-    int count = pcg32_int(&r, 0, p->propsMax);
+    if (propsMax > MAX_PROPS) propsMax = MAX_PROPS;
+    int count = pcg32_int(&r, 0, propsMax);
     float lane = path->style.baseRadius, gapEnd = lane + p->towers.clearance;
     for (int g = 0; g < count && g < MAX_PROPS; g++) {
         double s = c->s0 + pcg32_float(&r) * CHUNK_LEN;
@@ -272,18 +326,25 @@ static void city_build_chunk(Environment *env, const PathSystem *path, int chunk
 {
     CityState *st = (CityState *)env->state;
     CityTowerParams tp = tower_params(st, path);
-    int n = city_towers_plan(&tp, st->seed, path, chunkIndex, st->towers, CITY_MAX_TOWERS, NULL, 0, NULL);
+    CityArchBlend blend = city_blend(st, chunkIndex);
+    out->archetype = city_archetype_of_chunk(st, chunkIndex);
+    int n = city_towers_plan(&tp, &blend, st->seed, path, chunkIndex, st->towers, CITY_MAX_TOWERS, NULL, 0, NULL);
     city_towers_build(st->towers, n, out->origin, &out->geo[CB_BODY], &out->geo[CB_EDGES], st->p.edgeIntensity, st->p.edgeWidth);
     CityDecorParams dp = st->p.decor;
     dp.inner = tp.laneHalfWidth + tp.clearance;
     dp.bandMax = tp.bandMax;
     city_decor_build(&dp, st->towers, n, path, out->origin, &out->geo[CB_TRACES], &out->geo[CB_GLYPHS]);
-    build_props(st, path, chunkIndex, out);
+    build_props(st, path, chunkIndex, (int)lroundf((float)st->p.propsMax * blend.cur.props), out);
 }
 
 static void city_upload(Environment *env, ChunkCpu *in, ChunkGpu *out) { chunk_upload_default(in, out); }
 static void city_release(Environment *env, ChunkGpu *gpu) { chunk_release_default(gpu); }
-static float city_energy(const Environment *env, const PathSystem *path, double s) { return 0.4f; }
+static float city_energy(const Environment *env, const PathSystem *path, double s)
+{
+    const CityState *st = (const CityState *)env->state;
+    CityArchBlend b = city_blend(st, chunk_index_at(s));
+    return city_arch_at(&b, s).energy;
+}
 
 // Open space: fog to the dark sky instead of toward a core.
 static void city_atmosphere(const Environment *env, Atmosphere *atmo)
@@ -433,7 +494,10 @@ static void city_draw_emissive(Environment *env, const FrameContext *ctx, const 
     }
 }
 
-static const char *city_label(const Environment *env, int archetype) { return "CITY"; }
+static const char *city_label(const Environment *env, int archetype)
+{
+    return (archetype >= 0 && archetype <= CA_COUNT) ? CA_NAMES[archetype] : "?";
+}
 
 static void city_unload(Environment *env)
 {

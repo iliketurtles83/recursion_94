@@ -136,6 +136,23 @@ F12 screenshot request, R reseed, P pause, W whiteout, T switch environment, 1�
 `[`/`]` base speed ±5, `-`/`=` boost speed ±5).
 A game simply never calls it, nor `ct_debug_draw`.
 
+## 10b. Available environments
+
+Select with `CtConfig.environment` / `ct_set_environment(ct, id)` (harness: `--env N`, `T`).
+Environment params exist only while that environment is active, so load an environment's
+preset after switching to it (`--env 2 --preset city`).
+
+| Id | Name | What it is | Preset |
+|---|---|---|---|
+| `CT_ENV_VORTEX` (0) | Data Vortex | Curving tunnel of segmented neon rings, spiral ribbons, speed streaks, tumbling debris, blazing core. Pacing CALM / GATES / DENSE / CORRIDOR | `default`, `calm`, `intense` |
+| `CT_ENV_TEMPLATE` (1) | Template | Skeleton to copy for new environments | – |
+| `CT_ENV_CITY` (2) | Neon Grid City | Open flight low over an infinite reflective grid floor between monolith towers with circuit traces and code text, light rain, floating props. Level path weaving around the grid axes; ship kept above the floor. Pacing AVENUE / DOWNTOWN / OPEN / PLAZA | `city` |
+
+Both full environments follow the same treadmill model: the path is fixed and the player
+moves within the lane around it (`steerLimit` × lane radius; the city also clamps above its
+floor). `ct_debris_in_range` returns the vortex debris and the city's floating props; city
+towers never come closer than lane + `towerClearance` to the path, so they need no collision.
+
 ## 11. Adding an environment
 
 1. Copy `src/env/env_template.c` to `src/env/env_<name>.c`. Rename the functions and the factory
@@ -364,4 +381,4 @@ unknown keys are skipped, and loading first resets everything to defaults).
 | Pacing | `pacing` | bool | on | | |
 
 The template environment adds `tplRadius`, `tplYawStepDeg`, `tplMarkerIntensity` (group Template) while it is active.
-The city environment (Env #2, in progress) adds, while it is active: `cityLaneHalfWidth`, `cityYawStepDeg`, `cityFloorDepth`, `cityYawSpring` (group Path); `showFloor`, `gridCell`, `gridLineWidth`, `gridHaloWidth`, `gridIntensity`, `gridHalo`, `gridNodeBoost`, `gridWhiteCore`, `floorFogStart`, `floorFogEnd`, `floorSheen`, `gridFilter`, `gridNodeSize`, `floorReflect`, `floorReflectR0` (group Floor); `showSky`, `cityFogStart`, `cityFogEnd`, `hazeWidth`, `hazeGlow`, `skyDust` (group City); `showTowers`, `towerLatticeCells`, `towerClearance`, `towerBandMax`, `towerDensityNear`, `towerDensityFar`, `towerHeightMin`, `towerHeightMax`, `towerHeightFar`, `landmarkChance`, `landmarkMul`, `towerFootMin`, `towerFootMax`, `setbackChance`, `towerEdgeIntensity`, `towerEdgeWidth`, `towerBrightness`, `towerRim`, `towerUnderglow`, `panelW`, `panelH`, `seamDark`, `recessed` (group Towers); `showTraces`, `showGlyphs`, `tracePitch`, `traceWidth`, `traceIntensity`, `traceBuses`, `traceFar`, `traceStop`, `tracePulse`, `tracePulseSpeed`, `tracePulseAmount`, `viaRadius`, `glyphStripChance`, `glyphBlockChance`, `glyphIntensity`, `glyphScroll`, `decorOffset` (group Decor); `showRain`, `rainDensity`, `rainLenMul`, `rainWMin`, `rainWMax`, `rainIntensity`, `rainCometFrac`, `rainZRange`, `rainHalfWidth`, `rainYMin`, `rainYMax`, `rainFallTilt`, `rainSpeedMul` (group Rain); `showProps`, `propsMax`, `propSizeMin`, `propSizeMax`, `propHeightMax`, `propEdgeIntensity`, `propFaceIntensity` (group Props). The core adds `rebaseDist` (group Sim, default 1024).
+The city environment adds, while it is active: `cityLaneHalfWidth`, `cityYawStepDeg`, `cityFloorDepth`, `cityYawSpring` (group Path); `showFloor`, `gridCell`, `gridLineWidth`, `gridHaloWidth`, `gridIntensity`, `gridHalo`, `gridNodeBoost`, `gridWhiteCore`, `floorFogStart`, `floorFogEnd`, `floorSheen`, `gridFilter`, `gridNodeSize`, `floorReflect`, `floorReflectR0` (group Floor); `showSky`, `cityFogStart`, `cityFogEnd`, `hazeWidth`, `hazeGlow`, `skyDust` (group City); `showTowers`, `towerLatticeCells`, `towerClearance`, `towerBandMax`, `towerDensityNear`, `towerDensityFar`, `towerHeightMin`, `towerHeightMax`, `towerHeightFar`, `landmarkChance`, `landmarkMul`, `towerFootMin`, `towerFootMax`, `setbackChance`, `towerEdgeIntensity`, `towerEdgeWidth`, `towerBrightness`, `towerRim`, `towerUnderglow`, `panelW`, `panelH`, `seamDark`, `recessed` (group Towers); `showTraces`, `showGlyphs`, `tracePitch`, `traceWidth`, `traceIntensity`, `traceBuses`, `traceFar`, `traceStop`, `tracePulse`, `tracePulseSpeed`, `tracePulseAmount`, `viaRadius`, `glyphStripChance`, `glyphBlockChance`, `glyphIntensity`, `glyphScroll`, `decorOffset` (group Decor); `showRain`, `rainDensity`, `rainLenMul`, `rainWMin`, `rainWMax`, `rainIntensity`, `rainCometFrac`, `rainZRange`, `rainHalfWidth`, `rainYMin`, `rainYMax`, `rainFallTilt`, `rainCenterGap`, `rainCenterFrac`, `rainSpeedMul` (group Rain); `showProps`, `propsMax`, `propSizeMin`, `propSizeMax`, `propHeightMax`, `propEdgeIntensity`, `propFaceIntensity` (group Props); `cityPacing` (group Pacing). The core adds `rebaseDist` (group Sim, default 1024).

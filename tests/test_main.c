@@ -409,7 +409,7 @@ static void test_city_towers(void)
         int nc = 0;
         path_ensure(&p, k * CHUNK_LEN - 100.0 - reach, (k + 1) * CHUNK_LEN + 100.0 + reach);
         clock_t c0 = clock();
-        int n = city_towers_plan(&tp, 23, &p, k, towers, CITY_MAX_TOWERS, chunkClaims, 4096, &nc);
+        int n = city_towers_plan(&tp, NULL, 23, &p, k, towers, CITY_MAX_TOWERS, chunkClaims, 4096, &nc);
         lg_clear(&body); lg_clear(&edges);
         PathSample o = path_sample(&p, k * CHUNK_LEN);
         city_towers_build(towers, n, o.pos, &body, &edges, 0.9f, 0.03f);
@@ -507,6 +507,7 @@ static void test_city_decor(void)
     static ChunkCpu c;
     enum { N = 200 };
     int maxVerts = 0, traceVerts = 0, glyphQuads = 0, props = 0, propsOk = 1;
+    int arch[N], seen[8] = { 0 };
     double worstMs = 0.0;
     for (int k = 0; k < N; k++) {
         ensure_for_chunk(&p, &env, k);
@@ -515,6 +516,8 @@ static void test_city_decor(void)
         env.buildChunk(&env, &p, k, &c);
         double ms = (double)(clock() - c0) * 1000.0 / CLOCKS_PER_SEC;
         if (ms > worstMs) worstMs = ms;
+        arch[k] = c.archetype;
+        if (c.archetype >= 0 && c.archetype < 8) seen[c.archetype]++;
         int v = 0;
         for (int b = 0; b < CHUNK_BATCHES; b++) v += c.geo[b].vcount;
         if (v > maxVerts) maxVerts = v;
@@ -535,6 +538,23 @@ static void test_city_decor(void)
     CHECK(maxVerts <= 60000, "chunk vertex budget (%d <= 60000)", maxVerts);
     CHECK(worstMs < 3.0, "full city chunk build < 3 ms (%.2f ms)", worstMs);
     CHECK(propsOk, "props between lane edge and towers, above the floor");
+
+    // Pacing: starts on an avenue, every archetype appears, runs within their bounds
+    // (AVENUE 4-9, DOWNTOWN 3-6, OPEN 3-6, PLAZA 2-3 chunks; the last run may be cut off).
+    static const int rmin[4] = { 4, 3, 3, 2 }, rmax[4] = { 9, 6, 6, 3 };
+    int runsOk = 1, runs = 0;
+    for (int k = 0; k < N;) {
+        int e = k;
+        while (e < N && arch[e] == arch[k]) e++;
+        int len = e - k, a = arch[k];
+        if (a < 0 || a > 3 || len > rmax[a] || (e < N && len < rmin[a])) runsOk = 0;
+        runs++;
+        k = e;
+    }
+    printf("  city pacing: %d runs over %d chunks; AVENUE %d DOWNTOWN %d OPEN %d PLAZA %d chunks\n", runs, N, seen[0], seen[1], seen[2], seen[3]);
+    CHECK(arch[0] == 0, "city flight starts on an AVENUE");
+    CHECK(seen[0] && seen[1] && seen[2] && seen[3], "all four city archetypes appear");
+    CHECK(runsOk, "city archetype runs within their length bounds");
     for (int b = 0; b < CHUNK_BATCHES; b++) lg_free(&c.geo[b]);
     path_free(&p);
     env.unload(&env);

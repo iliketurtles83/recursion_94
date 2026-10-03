@@ -140,6 +140,7 @@ int main(int argc, char **argv)
     bool shotTaken = false, whiteoutFired = false, statsReset = false;
     int meshMin = 1 << 30, meshMax = 0;
     int shotFrames = 0;
+    double prevStreamMs = 0.0;
     while (!WindowShouldClose()) {
         float dt = GetFrameTime();
         double now = GetTime() - start;
@@ -181,6 +182,11 @@ int main(int argc, char **argv)
             CtStats s;
             ct_get_stats(ct, &s);
             if (dt * 1000.0 > maxHitch) maxHitch = dt * 1000.0;
+            // Hitch log: dt is the previous frame's duration, so report both frames' work.
+            if (dt * 1000.0f > 20.0f)
+                printf("bench: hitch %.1f ms at t=%.1f s, s=%.0f; prev frame stream %.2f ms; this frame builds %d uploads %d stream %.2f ms update %.2f scene %.2f\n",
+                       dt * 1000.0f, now, s.sShip, prevStreamMs, s.buildsThisFrame, s.uploadsThisFrame, s.lastStreamFrameMs, s.msUpdate, s.msScene);
+            prevStreamMs = s.lastStreamFrameMs;
             if (s.gpuMeshes < meshMin) meshMin = s.gpuMeshes;
             if (s.gpuMeshes > meshMax) meshMax = s.gpuMeshes;
         }

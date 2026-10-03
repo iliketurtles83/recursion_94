@@ -448,3 +448,71 @@ The regression renders were re-baselined (they are taken at base speed).
     (budget 150); speed 120 for 60 s: 0.56 ms avg, p99 0.73 ms.
   - Tests 57 passed; vortex regression set byte-identical (`reflectiveFloor` is off there).
 
+## Phase F — Pacing, presets, docs
+
+- Archetypes (hash-driven Markov chain over runs of chunks, same scheme as the vortex;
+  every flight starts on an AVENUE, the reference opening). Each is a `CityArch` of
+  multipliers/offsets on the base params:
+
+  | Archetype | Run (chunks) | Character | Energy |
+  |---|---|---|---|
+  | AVENUE | 4–9 | two tidy rows lining the lane (near density ×1.6, far ×0.8) | 0.45 |
+  | DOWNTOWN | 3–6 | dense and tall (far density ×2, heights ×1.35, far heights ×1.5, landmarks ×2.5), more traces and glyph panels | 0.85 |
+  | OPEN | 3–6 | sparse and low (near ×0.3, heights ×0.55), towers start 8 units further out | 0.25 |
+  | PLAZA | 2–3 | no towers near the lane (+26 clearance), props ×2 | 0.35 |
+
+- Order independence across archetype boundaries: a tower's parameters are blended by the
+  cell's owner point s* across the first chunk of a new archetype (`city_arch_at`), and only the
+  owning chunk builds the cell, so a cell's look depends on (seed, params, s*) alone. The
+  archetype never moves a tower closer than the base clearance (`clearanceAdd ≥ 0`), so the lane
+  guarantees hold. The tower lattice and `bandMax` stay global (they define ownership).
+- Decor follows the tower's archetype (`TowerDesc.traceMul`, `glyphMul`); props scale per chunk;
+  `energyAt` drives the global intensity (grid brightness, rain speed and density).
+- `cityPacing = 0` uses the base parameters everywhere. Overlay shows the archetype name.
+- `presets/city.ini`: full snapshot of the tuned city (written with `--env 2 --write-preset city`,
+  like `default.ini` for the vortex). Load after selecting the city: `--env 2 --preset city`.
+- `INTEGRATION.md`: new §10b "Available environments"; city params complete.
+- `screenshots/city_archetypes.png`: AVENUE (s=40), DOWNTOWN (300), OPEN (1400), PLAZA (4230), seed 1.
+- **Accept:**
+  - Tests: 60 passed. Pacing over 200 chunks: 47 runs, AVENUE 91 / DOWNTOWN 49 / OPEN 26 / PLAZA 34
+    chunks, all runs within bounds, starts on AVENUE. Env-level build order independence (200
+    chunks) holds with pacing. Heaviest chunk (DOWNTOWN) 51k vertices (budget 60k); worst full
+    build in the test 1.7 ms.
+  - Environment switching at runtime (smoke program through the public API, real window): 10
+    switches city ↔ template ↔ vortex including jumps back (path regenerated from 0) and to
+    s = 52,000, 900 rendered frames, no errors; city 111–121 draw calls, vortex 62–68.
+  - 10-minute bench (`--env 2 --bench 600 --speed 120`, 1280×720, autopilot, final s = 72,084):
+    avg 0.41 ms, p99 0.58 ms, max frame 14.6 ms; max streaming per frame 3.72 ms (target < 4 ms);
+    max GL coordinate 1418 (< 2048); GPU meshes 40–60 (bounded); 114 draw calls.
+  - One earlier run had a single 107 ms frame. The bench is deterministic, so I added hitch logging
+    (`bench: hitch …` for any frame > 20 ms, with that frame's and the previous frame's streaming
+    work) and re-ran the identical flight twice: worst frames 8.9 ms and 14.6 ms, no hitch logged.
+    The spike was outside the module (driver/compositor), like the 17.9 ms one in the vortex bench.
+  - **Over budget:** max chunk build in the game runs is 3.2–3.4 ms vs the brief's 3 ms. The same
+    chunks built headless (seed 1, 2000 chunks) take p50 0.48 / p99 0.93 ms, max 0.9 ms warm, so
+    the in-game peaks are the build thread being descheduled while the driver works, not the work
+    itself. Pre-reserving the chunk buffers (to rule out realloc growth) did not change the peak
+    and was reverted. Streaming per frame stays within its 4 ms target. If it matters for the
+    game: build on a worker thread (buildChunk is already pure CPU), or split decor into its own
+    budgeted step.
+
+## Light rain retune (user feedback)
+
+The rain was too heavy: it should only give the feel of passing through, with almost none in
+the middle where enemies will be, and shorter lines. `rainDensity` 0.5 → 0.3, `rainLenMul` 4 →
+2.8, and the slab now has a mostly empty centre band: `rainCenterGap` (half width 12, a bit wider
+than the lane) with only `rainCenterFrac` (5 %) of the streaks inside it; the rest spawn over the
+tower sides. New `StreakParams.slabGap/slabGapFrac` (`uSlabGap` in `streak.vs`, slab branch only;
+vortex renders byte-identical). `screenshots/city_rain_before_after.png`. Boost still stretches
+the streaks with speed.
+
+## Environment #2 summary
+
+The Neon Grid City is complete per `PLAN_ENV2_GRID_CITY.md`: infinite filtered grid floor with
+planar reflection, world-aligned towers with circuit traces and code text, light rain, props,
+four pacing archetypes, `presets/city.ini`. Core additions made for it are generic (floor/ceiling
+clamp, yaw spring, path reach, atmosphere hook, reflection pass, shared streaks/shapes/grid floor)
+and are documented in `INTEGRATION.md`; they are what Env #3 (server canyon, same grid floor)
+will build on. Open: per-environment camera framing and environment transitions, both waiting on
+the transition design.
+

@@ -22,6 +22,7 @@ typedef struct StreakParams {
     int   volume;
     float slabHalfWidth, slabYMin, slabYMax;   // path frame (B right, N up), relative to the centerline
     float fallTilt;              // slab: streaks start higher the further ahead (falling rain)
+    float slabGap, slabGapFrac;  // slab: half width of a mostly empty centre band, fraction of streaks in it (1 = no gap)
 } StreakParams;
 
 typedef struct StreakSystem {

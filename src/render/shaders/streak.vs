@@ -26,6 +26,7 @@ uniform vec3  uColWhite, uColPurple;
 uniform float uVolume;      // 0 cylinder, 1 slab
 uniform vec3  uSlab;        // half width, y min, y max (path frame, N = up)
 uniform float uFallTilt;    // slab: rise per unit of distance ahead (falling rain)
+uniform vec2  uSlabGap;     // slab: half width of the mostly empty centre band, fraction of streaks allowed in it
 #include "common.glsl"
 out vec2 fUV;
 out vec3 fColor;
@@ -61,7 +62,11 @@ void main()
     vec3 p, dir;
     if (uVolume > 0.5) {
         // Higher the further ahead, so streaks descend as they approach: falling rain.
-        float sx = mix(-uSlab.x, uSlab.x, h2);
+        // Keep the band over the lane (where the action is) nearly clear: most streaks
+        // go to the sides, only uSlabGap.y of them into the centre.
+        float side = h2 < 0.5 ? -1.0 : 1.0, u = fract(h2 * 2.0);
+        float gap = min(uSlabGap.x, uSlab.x);
+        float sx = h6 < uSlabGap.y ? mix(-gap, gap, u) : side * mix(gap, uSlab.x, u);
         float sy = mix(uSlab.y, uSlab.z, h3) + uFallTilt * max(zz, 0.0);
         p = P.xyz + B * sx + N * sy;
         dir = normalize(normalize(uPathP[i0 + 1].xyz - uPathP[i0].xyz) + N * uFallTilt);

@@ -33,6 +33,27 @@ typedef struct CityTowerParams {
     float floorY;           // world y of the floor
 } CityTowerParams;
 
+// Pacing archetype: multipliers/offsets on the base parameters. Blended per cell by the
+// cell's owner point s* across the first chunk of a new archetype, so a cell's parameters
+// depend only on (seed, params, s*) and placement stays order-independent.
+typedef struct CityArch {
+    float densityNear, densityFar;   // x base densities
+    float clearanceAdd;              // >= 0, added to the lane clearance (never closer than base)
+    float height, heightFar;         // x base height range, x heightFar
+    float landmark;                  // x landmarkChance
+    float traces, glyphs;            // x decor bus density, x glyph panel chances
+    float props;                     // x propsMax
+    float energy;                    // pacing energy 0..1
+} CityArch;
+
+typedef struct CityArchBlend {
+    CityArch prev, cur;
+    double   s0, len;                // blend prev -> cur over [s0, s0 + len]
+} CityArchBlend;
+
+CityArch city_arch_neutral(void);
+CityArch city_arch_at(const CityArchBlend *b, double s);
+
 typedef struct TowerDesc {
     int32_t  ix, iz;        // lattice cell
     double   sOwner;        // nearest path point to the cell centre
@@ -42,6 +63,7 @@ typedef struct TowerDesc {
     float    yTop[CITY_MAX_TIERS];   // world y of each tier's top; tier 0 starts at baseY
     float    baseY;
     uint32_t hash;
+    float    traceMul, glyphMul;   // from the archetype at sOwner
 } TowerDesc;
 
 // Every cell a chunk claimed, occupied or not (debug / tests).
@@ -54,9 +76,9 @@ typedef struct CellClaim {
 
 // Path arc length a chunk build samples beyond [s0, s1].
 double city_towers_reach(const CityTowerParams *p);
-// Towers owned by chunk `chunkIndex` (covering [s0, s1)). claims may be NULL.
-int city_towers_plan(const CityTowerParams *p, uint64_t seed, const PathSystem *path, int chunkIndex,
-                     TowerDesc *out, int maxTowers, CellClaim *claims, int maxClaims, int *claimCount);
+// Towers owned by chunk `chunkIndex` (covering [s0, s1)). blend and claims may be NULL.
+int city_towers_plan(const CityTowerParams *p, const CityArchBlend *blend, uint64_t seed, const PathSystem *path,
+                     int chunkIndex, TowerDesc *out, int maxTowers, CellClaim *claims, int maxClaims, int *claimCount);
 // Opaque bodies into `body` and outline edges into `edges`, relative to `origin`.
 void city_towers_build(const TowerDesc *t, int n, DVec3 origin, LineGeo *body, LineGeo *edges,
                        float edgeIntensity, float edgeWidth);
