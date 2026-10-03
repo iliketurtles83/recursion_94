@@ -23,6 +23,9 @@ typedef struct PostSettings {
     float vignette;
     float grain;
     float saturation;
+    // Planar floor reflection (environments with a floor): 0 off, 1 quarter, 2 half resolution.
+    int   reflectRes;
+    float reflectBlur;           // vertical blur radius (texels of the reflection target)
 } PostSettings;
 
 typedef struct HdrTarget {
@@ -40,6 +43,9 @@ typedef struct Pipeline {
     HdrTarget  scene;
     HdrTarget  down[PIPE_MAX_MIPS], up[PIPE_MAX_MIPS];
     int        mipCount;         // allocated levels
+    int        shReflBlur;
+    HdrTarget  refl, reflTmp, reflOut;   // mirrored scene (with depth), blur ping-pong
+    int        reflDiv;          // allocated resolution divisor, 0 = none
     int        w, h;
     bool       hdr16;
     bool       quarterAllocated;
@@ -64,5 +70,11 @@ void pipe_post(Pipeline *p, const PostSettings *s, RenderTexture2D *dst, int out
 // Draws a fullscreen quad in NDC (shader must use fullscreen.vs conventions).
 void pipe_fullscreen_quad(void);
 RenderTexture2D pipe_scene_rt(const Pipeline *p);
+
+// Planar reflection: render the mirrored scene into a 1/div resolution target (allocated on
+// demand), then blur it vertically. The result is sampled by the floor at its own screen uv.
+void      pipe_begin_reflection(Pipeline *p, int div, Matrix view, Matrix proj);
+void      pipe_end_reflection(Pipeline *p);
+Texture2D pipe_blur_reflection(Pipeline *p, float radius);
 
 #endif

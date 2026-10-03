@@ -45,6 +45,13 @@ typedef struct FrameContext {
     float    pixelScale;     // world size of one pixel at distance 1
     Vector2  vanishingUV;    // 0..1, y up
     Atmosphere atmo;
+    // Planar floor reflection. During the reflection pass reflectionPass is true, view is
+    // mirrored about the floor and camera is the mirrored camera: environments draw their
+    // normal content but skip the floor itself and the sky. In the main pass hasReflection
+    // says whether `reflection` (blurred, sample at the pixel's screen uv) is valid.
+    bool       reflectionPass;
+    bool       hasReflection;
+    Texture2D  reflection;
     const PathSystem *path;
     struct ShaderLib *shaders;
     RenderStats *stats;
@@ -58,6 +65,8 @@ typedef struct Environment {
     // which chunk owns a world-space cell. The core keeps the path generated that far around
     // the chunk window. 0 for environments that only sample inside the chunk.
     double      pathReach;
+    // Request a planar reflection of the scene in the floor (needs PathStyle.floorDepth > 0).
+    bool        reflectiveFloor;
     PathStyle (*pathStyle)(const struct Environment *);
     void (*init)(struct Environment *, uint64_t worldSeed, struct ShaderLib *shaders);
     void (*registerParams)(struct Environment *, ParamRegistry *reg);

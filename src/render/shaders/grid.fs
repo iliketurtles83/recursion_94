@@ -10,11 +10,24 @@ uniform float uFloorY;        // render space
 uniform vec2  uGridOffset;    // world grid phase of render-space origin (xz)
 uniform float uCell;
 uniform float uFilter;        // 0 = debug: no footprint filtering
+uniform float uNodeSize;      // intersection pad half size (cells)
+uniform vec2  uRefl;          // reflection strength, Fresnel R0
+uniform sampler2D uReflection;   // mirrored scene, blurred; same screen uv as this pixel
 uniform vec2  uLine;          // core half width, halo width (in cells)
 uniform vec4  uLineI;         // core HDR, halo rel., node boost, white core
 uniform vec4  uFloorFog;      // fog start, fog end, horizon glow, sheen
 uniform vec3  uLineColor, uFloorColor, uHorizonColor;   // linear
 #include "common.glsl"
+
+// Coverage of a box of half width hw around the nearest line, averaged over the footprint w
+// (widened to >= half a pixel with its energy kept, mean coverage once cells are sub-pixel).
+float box_cov(float d, float hw, float w)
+{
+    float dw = max(hw, w * 0.5);
+    float aa = w * 0.75;
+    float c = (1.0 - smoothstep(dw - aa, dw + aa, d)) * (hw / dw);
+    return mix(c, 2.0 * hw, clamp(w * 2.0 - 1.0, 0.0, 1.0));
+}
 
 // One grid axis. u: coordinate in cells; w: pixel footprint in cells.
 // Returns (core coverage, halo), both averaged over the footprint, so lines whose
@@ -54,7 +67,9 @@ void main()
     vec2 ax = grid_axis(g.x, w.x), az = grid_axis(g.y, w.y);
     float core = ax.x + az.x - ax.x * az.x;
     float halo = ax.y + az.y;
-    float node = ax.x * az.x;
+    // Square pads where lines cross.
+    float dx = abs(fract(g.x + 0.5) - 0.5), dz = abs(fract(g.y + 0.5) - 0.5);
+    float node = box_cov(dx, uNodeSize, w.x) * box_cov(dz, uNodeSize, w.y);
 
     float energy = 0.85 + 0.3 * uIntensity;
     vec3 coreCol = mix(uLineColor, vec3(1.0), uLineI.w);
@@ -64,6 +79,10 @@ void main()
     float graze = pow(1.0 - clamp(-dir.y, 0.0, 1.0), 6.0);
     vec3 horizon = uHorizonColor * uFloorFog.z;
     vec3 col = uFloorColor + lines + horizon * graze * uFloorFog.w;
+    if (uRefl.x > 0.0) {
+        float fres = uRefl.y + (1.0 - uRefl.y) * pow(1.0 - clamp(-dir.y, 0.0, 1.0), 5.0);
+        col += texture(uReflection, fUV).rgb * uRefl.x * fres;
+    }
     col = mix(col, horizon, smoothstep(uFloorFog.x, uFloorFog.y, t));
     finalColor = vec4(col, 1.0);
 }

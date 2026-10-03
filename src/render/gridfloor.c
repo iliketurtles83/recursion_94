@@ -43,6 +43,10 @@ void gridfloor_draw(GridFloor *g, const GridFloorParams *p, const FrameContext *
     sl_f2(sl, sh, "uGridOffset", off.x, off.y);
     sl_f1(sl, sh, "uCell", p->cell);
     sl_f1(sl, sh, "uFilter", p->filter ? 1.0f : 0.0f);
+    sl_f1(sl, sh, "uNodeSize", p->nodeSize / p->cell);
+    float refl = ctx->hasReflection ? p->reflectStrength : 0.0f;
+    sl_f2(sl, sh, "uRefl", refl, p->reflectR0);
+    if (ctx->hasReflection) sl_tex(sl, sh, "uReflection", ctx->reflection);
     sl_f2(sl, sh, "uLine", p->lineWidth / p->cell, p->haloWidth / p->cell);
     sl_f4(sl, sh, "uLineI", p->lineIntensity, p->haloIntensity, p->nodeBoost, p->whiteCore);
     sl_f4(sl, sh, "uFloorFog", p->fogStart, p->fogEnd, p->horizonGlow, p->sheen);

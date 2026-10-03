@@ -1,6 +1,6 @@
 # Plan — Environment #2 "Neon Grid City"
 
-Status: Phases A–D done (see `NOTES.md`); Phases E–F open. Reference frames: `reference/t_0.5s.png`,
+Status: Phases A–E done (see `NOTES.md`); Phase F open. Reference frames: `reference/t_0.5s.png`,
 `reference/t_2.5s.png` and the first row and a half of `reference/contact_sheet.png` (0–3.5 s).
 
 ## 0. Why this one
@@ -127,6 +127,7 @@ Each phase ends with its checks passing, a commit, and a short `NOTES.md` sectio
 - **Accept**: side-by-side screenshots against t_0.5 and t_2.5. Vertices per chunk and draw calls are recorded in the overlay and stay within the budget in §6 of the brief (< 150 draw calls, CPU < 2 ms).
 
 ### Phase E — Floor reflection
+- *(Done — see NOTES.md Phase E.)*
 - Mirror pass in the core, blur, Fresnel mix in `grid.fs`, ship trails included.
 - **Accept**: towers and trails are visible in the floor as in t_0.5 (the purple smears under towers and the trail stripe under the ship). Toggles exist for off / ¼ / ½ resolution, and frame time is measured for each. Nothing from below the floor leaks into the reflection.
 

@@ -413,3 +413,38 @@ now it ramps with `speedNorm` (0 at base, 1 at boost): `zoomBlur` is the strengt
 `screenshots/zoomblur_base_vs_boost.png` (left base, right boost; city top, vortex bottom).
 The regression renders were re-baselined (they are taken at base speed).
 
+## Phase E — Floor reflection
+
+- Extra reference frames pulled from `video.mp4` with ffmpeg (`reference/t_1.0s.png`,
+  `t_2.0s.png`): the floor is a glossy dark navy; reflections are soft, vertically smeared
+  purple/pink streaks under the code strips and traces, faint rain dashes, and a bright cyan
+  stripe under the ship from the engine trails. Grid lines are not reflected (they are on the
+  surface); line crossings have small bright square pads.
+- Core (`render_reflection` in `cybertunnel.c`): when the environment sets
+  `Environment.reflectiveFloor`, `PathStyle.floorDepth > 0` and `reflectRes > 0`, the scene is
+  rendered a second time with `view' = R·view`, R = mirror about the floor plane in render space.
+  A floor point projects to the same pixel in both passes, so the floor samples the reflection
+  at its own screen uv. The pass draws the env's opaque + emissive content and the ship (hull,
+  edges, trails) into a ½- or ¼-resolution RGBA16F target with depth (towers occlude what is
+  behind them), using a FrameContext copy with `reflectionPass = true` and the mirrored camera
+  (billboards, fog and fades use it). Envs skip their floor and sky in that pass. Mirroring flips
+  winding; culling is already off during the scene.
+- Blur: two vertical 9-tap gaussian passes (`reflect_blur.fs`, the second twice as wide):
+  wet-floor streaks that stay sharp horizontally.
+- `grid.fs`: adds `reflection × floorReflect × Fresnel` (R0 = 0.3 looking down, 1 at grazing)
+  before the distance fog; new square crossing pads (`gridNodeSize`, filtered like the lines).
+  Floor base colour slightly bluer (`#030B14`).
+- No clip plane: nothing in the city sits below the floor (rain ≥ 0.8, props ≥ 0.4, ship ≥ 0.6
+  above it). An environment with geometry below its floor would need one.
+- Reflection pass skips the city's dim tower outlines and faint prop faces (invisible after the
+  blur): 140 → 122 draw calls.
+- Tuning against t_1.0/t_2.0/t_2.5: `floorReflect` 1.3, `floorReflectR0` 0.3, `reflectBlur` 2.5,
+  `gridNodeSize` 0.12, `gridNodeBoost` 2.0. `screenshots/compare_city_reflect_t1.0.png`,
+  `compare_city_reflect_t2.5.png`; geometry check with exaggerated, unblurred reflection and dim
+  grid: `city_reflection_debug.png` (towers mirror at their bases, mirrored ship below the ship).
+- **Accept:**
+  - Cost at 1080p (speed 40, 30 s, before the batch skip): off 0.42 ms, ¼ res 0.50 ms,
+    ½ res 0.54 ms average. With the skip, ½ res (default): 0.53 ms avg, 122 draw calls
+    (budget 150); speed 120 for 60 s: 0.56 ms avg, p99 0.73 ms.
+  - Tests 57 passed; vortex regression set byte-identical (`reflectiveFloor` is off there).
+

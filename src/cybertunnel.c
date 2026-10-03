@@ -202,30 +202,30 @@ static void draw_mesh(CtTunnel *ct, int sh, Mesh m, Matrix xf)
     ct->rstats.vertices += m.vertexCount;
 }
 
-static void draw_ship_opaque(CtTunnel *ct)
+static void draw_ship_opaque(CtTunnel *ct, const FrameContext *ctx)
 {
     const FlightView *v = &ct->view;
     Matrix xf = basis_matrix(dv_to_v3(v->shipRight), dv_to_v3(v->shipUp), dv_to_v3(v->shipFwd), dv_to_v3(dv_sub(v->shipPos, ct->renderOrigin)));
-    sl_v3(&ct->sl, ct->shShip, "uCamPos", ct->ctx.camera.position);
+    sl_v3(&ct->sl, ct->shShip, "uCamPos", ctx->camera.position);
     sl_f3(&ct->sl, ct->shShip, "uRimColor", 0.25f, 0.85f, 1.0f);
     sl_v3(&ct->sl, ct->shShip, "uFillDir", Vector3Negate(dv_to_v3(v->shipFwd)));
     draw_mesh(ct, ct->shShip, ct->shipHull, xf);
 }
 
-static void draw_ship_emissive(CtTunnel *ct)
+// update_trail_mesh() must have run this frame.
+static void draw_ship_emissive(CtTunnel *ct, const FrameContext *ctx)
 {
     const FlightView *v = &ct->view;
     ShaderLib *sl = &ct->sl;
     int sh = ct->shLine;
     Matrix xf = basis_matrix(dv_to_v3(v->shipRight), dv_to_v3(v->shipUp), dv_to_v3(v->shipFwd), dv_to_v3(dv_sub(v->shipPos, ct->renderOrigin)));
-    env_set_common_uniforms(sl, sh, &ct->ctx);
+    env_set_common_uniforms(sl, sh, ctx);
     sl_f1(sl, sh, "uFlicker", 0.0f);
     sl_f1(sl, sh, "uEdgeMix", 0.0f);
     // The ship is always close: disable distance fades.
     sl_f4(sl, sh, "uFade", 1e6f, 2e6f, 0.0f, 0.001f);
     sl_f1(sl, sh, "uChunkFade", 1.0f);
     draw_mesh(ct, sh, ct->shipEdges, xf);
-    update_trail_mesh(ct);
     Vector3 mag = ct_srgb_to_linear((Color){ 0xFF, 0x4F, 0xD8, 255 });
     sl_v3(sl, sh, "uEdgeColor", mag);
     sl_f1(sl, sh, "uEdgeMix", 1.0f);
@@ -538,6 +538,38 @@ static void draw_path_debug(CtTunnel *ct)
     rlDrawRenderBatchActive();
 }
 
+// Planar floor reflection: the scene mirrored about the floor plane (view' = R * view, so a
+// floor point projects to the same pixel in both passes), opaque + emissive content and the
+// ship, then a vertical blur. The floor shader samples the result at its screen uv.
+static void render_reflection(CtTunnel *ct, const ChunkGpu *const *vis, int nvis, bool ship)
+{
+    FrameContext *c = &ct->ctx;
+    c->hasReflection = false;
+    c->reflectionPass = false;
+    int res = ct->post.reflectRes;
+    if (res <= 0 || !ct->env->reflectiveFloor || ct->path.style.floorDepth <= 0.0f) return;
+    double floorY = path_sample(&ct->path, c->sShip).pos.y - ct->path.style.floorDepth;
+    float h = (float)(floorY - ct->renderOrigin.y);
+    Matrix R = MatrixMultiply(MatrixMultiply(MatrixTranslate(0.0f, -h, 0.0f), MatrixScale(1.0f, -1.0f, 1.0f)), MatrixTranslate(0.0f, h, 0.0f));
+    FrameContext rc = *c;
+    rc.reflectionPass = true;
+    rc.view = MatrixMultiply(R, c->view);
+    rc.camera.position.y = 2.0f * h - c->camera.position.y;
+    rc.camera.target.y = 2.0f * h - c->camera.target.y;
+    rc.camera.up.y = -c->camera.up.y;
+    pipe_begin_reflection(&ct->pipe, res == 1 ? 4 : 2, rc.view, rc.proj);
+    if (ct->env->drawOpaque) ct->env->drawOpaque(ct->env, &rc, vis, nvis);
+    if (ship) draw_ship_opaque(ct, &rc);
+    pipe_set_emissive(true);
+    if (ct->env->drawEmissive) ct->env->drawEmissive(ct->env, &rc, vis, nvis);
+    if (ship) draw_ship_emissive(ct, &rc);
+    pipe_set_emissive(false);
+    pipe_end_reflection(&ct->pipe);
+    c->reflection = pipe_blur_reflection(&ct->pipe, ct->post.reflectBlur);
+    c->hasReflection = true;
+    ct->rstats.drawCalls += 2;
+}
+
 void ct_render(CtTunnel *ct, const RenderTexture2D *target, int width, int height)
 {
     if (width != ct->pipe.w || height != ct->pipe.h) pipe_resize(&ct->pipe, width, height, ct->post.bloomQuarterRes);
@@ -552,14 +584,17 @@ void ct_render(CtTunnel *ct, const RenderTexture2D *target, int width, int heigh
     int nvis;
     const ChunkGpu *const *vis = chunks_visible(&ct->chunks, &nvis);
 
+    bool ship = ct->cfg.drawShip && ct->core.showShip;
+    if (ship) update_trail_mesh(ct);
+    render_reflection(ct, vis, nvis, ship);
+
     pipe_begin_scene(&ct->pipe, c->view, c->proj, (Color){ 3, 6, 12, 255 });
     if (ct->env->drawBackground) ct->env->drawBackground(ct->env, c);
     if (ct->env->drawOpaque) ct->env->drawOpaque(ct->env, c, vis, nvis);
-    bool ship = ct->cfg.drawShip && ct->core.showShip;
-    if (ship) draw_ship_opaque(ct);
+    if (ship) draw_ship_opaque(ct, c);
     pipe_set_emissive(true);
     if (ct->env->drawEmissive) ct->env->drawEmissive(ct->env, c, vis, nvis);
-    if (ship) draw_ship_emissive(ct);
+    if (ship) draw_ship_emissive(ct, c);
     if (ct->core.showPathDebug) draw_path_debug(ct);
     pipe_set_emissive(false);
     pipe_end_scene(&ct->pipe);

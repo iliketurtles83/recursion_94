@@ -30,6 +30,8 @@ void post_register_params(PostSettings *s, ParamRegistry *reg)
     params_float(reg, g, "vignette", &s->vignette, 0.55f, 0.0f, 1.5f);
     params_bool(reg, g, "grainOn", &s->grainOn, true);
     params_float(reg, g, "grain", &s->grain, 0.025f, 0.0f, 0.2f);
+    params_int(reg, g, "reflectRes", &s->reflectRes, 2, 0, 2);
+    params_float(reg, g, "reflectBlur", &s->reflectBlur, 2.5f, 0.0f, 6.0f);
 }
 
 static bool make_target(HdrTarget *t, int w, int h, bool hdr16, bool withDepth)
@@ -95,8 +97,17 @@ static void alloc_targets(Pipeline *p, bool quarter)
     p->quarterAllocated = quarter;
 }
 
+static void free_reflection(Pipeline *p)
+{
+    free_target(&p->refl);
+    free_target(&p->reflTmp);
+    free_target(&p->reflOut);
+    p->reflDiv = 0;
+}
+
 static void free_targets(Pipeline *p)
 {
+    free_reflection(p);
     free_target(&p->scene);
     for (int i = 0; i < PIPE_MAX_MIPS; i++) { free_target(&p->down[i]); free_target(&p->up[i]); }
     p->mipCount = 0;
@@ -112,6 +123,7 @@ bool pipe_init(Pipeline *p, ShaderLib *sl, int w, int h, bool hdr16, bool quarte
     p->shDown = sl_load(sl, "fullscreen.vs", "bloom_down.fs");
     p->shUp = sl_load(sl, "fullscreen.vs", "bloom_up.fs");
     p->shComposite = sl_load(sl, "fullscreen.vs", "composite.fs");
+    p->shReflBlur = sl_load(sl, "fullscreen.vs", "reflect_blur.fs");
     alloc_targets(p, quarterBloom);
     return p->scene.fbo != 0;
 }
@@ -138,10 +150,9 @@ void pipe_fullscreen_quad(void)
     rlEnd();
 }
 
-void pipe_begin_scene(Pipeline *p, Matrix view, Matrix proj, Color clear)
+static void begin_target(HdrTarget *t, Matrix view, Matrix proj, Color clear)
 {
-    double t0 = GetTime();
-    BeginTextureMode(as_rt(&p->scene));
+    BeginTextureMode(as_rt(t));
     ClearBackground(clear);
     rlDrawRenderBatchActive();
     rlMatrixMode(RL_PROJECTION);
@@ -154,17 +165,9 @@ void pipe_begin_scene(Pipeline *p, Matrix view, Matrix proj, Color clear)
     rlEnableDepthTest();
     rlEnableDepthMask();
     rlDisableBackfaceCulling();
-    p->ms.scene = t0;   // finished in pipe_end_scene
 }
 
-void pipe_set_emissive(bool on)
-{
-    rlDrawRenderBatchActive();
-    if (on) { rlSetBlendMode(BLEND_ADDITIVE); rlDisableDepthMask(); }
-    else { rlSetBlendMode(BLEND_ALPHA); rlEnableDepthMask(); }
-}
-
-void pipe_end_scene(Pipeline *p)
+static void end_target(void)
 {
     rlDrawRenderBatchActive();
     rlSetBlendMode(BLEND_ALPHA);
@@ -176,8 +179,42 @@ void pipe_end_scene(Pipeline *p)
     rlMatrixMode(RL_MODELVIEW);
     rlLoadIdentity();
     EndTextureMode();
+}
+
+void pipe_begin_scene(Pipeline *p, Matrix view, Matrix proj, Color clear)
+{
+    p->ms.scene = GetTime();   // finished in pipe_end_scene
+    begin_target(&p->scene, view, proj, clear);
+}
+
+void pipe_set_emissive(bool on)
+{
+    rlDrawRenderBatchActive();
+    if (on) { rlSetBlendMode(BLEND_ADDITIVE); rlDisableDepthMask(); }
+    else { rlSetBlendMode(BLEND_ALPHA); rlEnableDepthMask(); }
+}
+
+void pipe_end_scene(Pipeline *p)
+{
+    end_target();
     p->ms.scene = (GetTime() - p->ms.scene) * 1000.0;
 }
+
+void pipe_begin_reflection(Pipeline *p, int div, Matrix view, Matrix proj)
+{
+    if (div < 1) div = 1;
+    if (p->reflDiv != div) {
+        free_reflection(p);
+        int w = p->w / div, h = p->h / div;
+        make_target(&p->refl, w, h, p->hdr16, true);
+        make_target(&p->reflTmp, w, h, p->hdr16, false);
+        make_target(&p->reflOut, w, h, p->hdr16, false);
+        p->reflDiv = div;
+    }
+    begin_target(&p->refl, view, proj, BLACK);
+}
+
+void pipe_end_reflection(Pipeline *p) { end_target(); }
 
 static void pass(Pipeline *p, int sh, HdrTarget *dst, Texture2D src)
 {
@@ -189,6 +226,19 @@ static void pass(Pipeline *p, int sh, HdrTarget *dst, Texture2D src)
     EndShaderMode();
     EndTextureMode();
     p->drawCalls++;
+}
+
+Texture2D pipe_blur_reflection(Pipeline *p, float radius)
+{
+    // Two vertical passes (the second twice as wide): wet-floor streaks, sharp horizontally.
+    ShaderLib *sl = p->sl;
+    int sh = p->shReflBlur;
+    float th = 1.0f / (float)p->refl.h;
+    sl_f2(sl, sh, "uStep", 0.0f, th * radius);
+    pass(p, sh, &p->reflTmp, p->refl.color);
+    sl_f2(sl, sh, "uStep", 0.0f, th * radius * 2.0f);
+    pass(p, sh, &p->reflOut, p->reflTmp.color);
+    return p->reflOut.color;
 }
 
 void pipe_post(Pipeline *p, const PostSettings *s, RenderTexture2D *dst, int outW, int outH,

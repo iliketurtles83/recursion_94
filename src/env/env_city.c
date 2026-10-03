@@ -2,8 +2,8 @@
 // between circuit-traced monolith towers. See PLAN_ENV2_GRID_CITY.md.
 //
 // Phases done: A (path style: level, no twist, floor below the centerline; atmosphere),
-// B (grid floor, sky), C (tower placement and bodies, city_towers.c) and D (circuit traces
-// and code-text panels, city_decor.c; light rain; floating props).
+// B (grid floor, sky), C (tower placement and bodies, city_towers.c), D (circuit traces
+// and code-text panels, city_decor.c; light rain; floating props) and E (floor reflection).
 #include "env_common.h"
 #include "city_towers.h"
 #include "city_decor.h"
@@ -59,7 +59,7 @@ typedef struct CityState {
 } CityState;
 
 static const Color COL_CYAN    = { 0x4F, 0xEA, 0xF5, 255 };
-static const Color COL_FLOOR   = { 0x02, 0x06, 0x0A, 255 };
+static const Color COL_FLOOR   = { 0x03, 0x0B, 0x14, 255 };
 static const Color COL_HORIZON = { 0x0B, 0x2A, 0x3A, 255 };
 static const Color COL_ZENITH  = { 0x02, 0x03, 0x08, 255 };
 static const Color COL_PINK    = { 0xFF, 0x4F, 0xD8, 255 };
@@ -100,12 +100,15 @@ static void city_register(Environment *env, ParamRegistry *reg)
     params_float(reg, g, "gridHaloWidth", &f->haloWidth, 0.07f, 0.0f, 1.0f);
     params_float(reg, g, "gridIntensity", &f->lineIntensity, 2.2f, 0.0f, 10.0f);
     params_float(reg, g, "gridHalo", &f->haloIntensity, 0.35f, 0.0f, 3.0f);
-    params_float(reg, g, "gridNodeBoost", &f->nodeBoost, 1.5f, 0.0f, 10.0f);
+    params_float(reg, g, "gridNodeBoost", &f->nodeBoost, 2.0f, 0.0f, 10.0f);
     params_float(reg, g, "gridWhiteCore", &f->whiteCore, 0.25f, 0.0f, 1.0f);
     params_float(reg, g, "floorFogStart", &f->fogStart, 40.0f, 0.0f, 1000.0f);
     params_float(reg, g, "floorFogEnd", &f->fogEnd, 450.0f, 1.0f, 1500.0f);
     params_float(reg, g, "floorSheen", &f->sheen, 0.3f, 0.0f, 3.0f);
     params_bool(reg, g, "gridFilter", &f->filter, true);
+    params_float(reg, g, "gridNodeSize", &f->nodeSize, 0.12f, 0.0f, 1.0f);
+    params_float(reg, g, "floorReflect", &f->reflectStrength, 1.3f, 0.0f, 3.0f);
+    params_float(reg, g, "floorReflectR0", &f->reflectR0, 0.3f, 0.0f, 1.0f);
     f->lineColor = COL_CYAN;
     f->floorColor = COL_FLOOR;
     f->horizonColor = COL_HORIZON;
@@ -376,7 +379,7 @@ static void city_draw_opaque(Environment *env, const FrameContext *ctx, const Ch
 {
     CityState *st = (CityState *)env->state;
     if (st->p.showTowers) draw_towers(st, ctx, chunks, n);
-    if (!st->p.showFloor) return;
+    if (!st->p.showFloor || ctx->reflectionPass) return;
     // The floor fogs into exactly the sky's horizon colour.
     GridFloorParams fp = st->p.floor;
     fp.horizonGlow = st->p.hazeGlow;
@@ -393,13 +396,18 @@ static void city_draw_emissive(Environment *env, const FrameContext *ctx, const 
     env_set_common_uniforms(sl, sh, ctx);
     sl_f1(sl, sh, "uEdgeMix", 0.0f);
     sl_f1(sl, sh, "uFlicker", 0.0f);
-    if (p->showTowers) draw_batch(st, ctx, sh, chunks, n, CB_EDGES);
+    // The blurred reflection cannot show the dim tower outlines or the faint prop faces:
+    // skip them there (saves ~2 draw calls per chunk).
+    bool refl = ctx->reflectionPass;
+    if (p->showTowers && !refl) draw_batch(st, ctx, sh, chunks, n, CB_EDGES);
     if (p->showProps) {
         sl_f1(sl, sh, "uFlicker", 0.25f);
         draw_batch(st, ctx, sh, chunks, n, CB_PROP_EDGES);
-        env_set_common_uniforms(sl, st->shFace, ctx);
-        sl_f1(sl, st->shFace, "uDataRate", 1.2f);
-        draw_batch(st, ctx, st->shFace, chunks, n, CB_PROP_FACES);
+        if (!refl) {
+            env_set_common_uniforms(sl, st->shFace, ctx);
+            sl_f1(sl, st->shFace, "uDataRate", 1.2f);
+            draw_batch(st, ctx, st->shFace, chunks, n, CB_PROP_FACES);
+        }
     }
     if (p->showTowers && p->showGlyphs) {
         int g = st->shGlyph;
@@ -444,6 +452,7 @@ Environment env_city_create(void)
     e.id = ENV_CITY;
     e.state = calloc(1, sizeof(CityState));
     e.pathReach = 2.2 * 300.0 + 8.0;   // city_towers_reach() at the largest towerBandMax
+    e.reflectiveFloor = true;
     e.pathStyle = city_path_style;
     e.init = city_init;
     e.registerParams = city_register;

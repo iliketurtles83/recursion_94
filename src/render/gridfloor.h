@@ -22,12 +22,15 @@ typedef struct GridFloorParams {
     float haloWidth;         // gaussian halo width (world units)
     float lineIntensity;     // HDR of the line core
     float haloIntensity;     // HDR of the halo relative to the core colour
-    float nodeBoost;         // extra brightness where lines cross
+    float nodeBoost;         // brightness of the square pads where lines cross
+    float nodeSize;          // pad half size (world units)
     float whiteCore;         // 0..1 how white-hot the core gets
     float fogStart, fogEnd;  // distance fade toward horizonColor
     float horizonGlow;       // HDR multiplier of horizonColor
     float sheen;             // grazing-angle sheen toward the horizon colour (fake gloss)
     bool  filter;            // debug: false = naive point-sampled lines (shows the aliasing)
+    float reflectStrength;   // planar reflection (ctx->reflection) weight
+    float reflectR0;         // Fresnel reflectance looking straight down (1 at grazing)
     Color lineColor, floorColor, horizonColor;   // sRGB
 } GridFloorParams;
 
