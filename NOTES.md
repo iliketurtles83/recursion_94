@@ -619,3 +619,38 @@ Plan: `PLAN_ENV3_SERVER_CORRIDOR.md`. Reference frames `reference/t_4.0s` … `t
   - Bench 720p speed 120, 30 s: avg 0.31 ms, p99 0.45 ms, 98 draw calls; 1080p speed 40:
     avg 0.49 ms, 102 draw calls. Max chunk build 0.9 ms.
   - Regression set byte-identical.
+
+## Phase D — Overhead beams and sky lattice
+
+- `env/corridor_beams.c/.h`: beams on a 16-unit world lattice, owned through `lattice_place`
+  (band 70). Lines (rows along x, columns along z) are selected by their own hash (1 in 3) and
+  carry their width (6–10), thickness (2–3) and height level, so every cell of a line agrees.
+  Hashed per-cell gaps (25 %) break them. Beams running along the lane are kept out from above
+  it (`corBeamLaneKeep` 8 from the path, else they roof the corridor); beams crossing it frame
+  the sky. A segment gets an end cap only where the next cell on its line has no segment, which
+  each chunk evaluates the same way, so beams join across chunk boundaries. Rows use even height
+  levels and columns odd ones, so crossing beams never share a face plane. Geometry: underside,
+  both sides, caps (no top, never seen).
+- `beam.fs` (on `tower.vs`): dark body with procedural cyan circuitry: segmented runs along the
+  beam on a 0.5 lattice, sparser cross runs, vias at segment ends, data pulses; dark margins
+  along the long edges. u is the world coordinate along the beam (mod 4096, computed in double),
+  so the pattern continues across cells. Fades toward a reduced mean when the lattice nears
+  pixel size (the true mean on grazing faces read as flat teal paint, as with the rain).
+  Kept fully procedural: no CPU-routed traces were needed.
+- Sky lattice: `gridfloor_draw_ceiling` (new ceiling mode, `skygrid.fs`, loaded on first use): a
+  plane 90 above the floor, cell 8, 30 % of cell edges lit as thin faint white lines, faded out
+  over 100–300, filtered (sub-pixel segments converge to the mean); drawn additively in the
+  emissive pass with `gl_FragDepth`, so pillars and beams occlude it.
+- **User feedback:** the lattice sits *above* the server towers with space in between, not cutting
+  through them. Pillars are now 14–20 high (back rows the same) and beams 24–29, so there is
+  always a gap of at least 4 between pillar tops and beam undersides; the outlines' top runs now
+  show. Beams stay above the ship's ceiling (16.2 above the floor).
+- `screenshots/compare_corridor_d.png` (reference t_5.0 / t_5.25 left, s = 700 / 100 right),
+  `corridor_d.png`.
+- **Accept:**
+  - Tests: 85 passed. 200 chunks: 2265 beam segments, no cell owned twice, every end capped
+    exactly when the neighbouring cell on its line has no segment (3112 joins, 1118 caps, 0
+    wrong), no along-lane beam above the lane, lowest underside 24 (> 16.2), plan 0.09 ms.
+  - Bench 720p speed 120, 30 s: avg 0.30 ms, p99 0.43 ms, 119 draw calls, 15.7k vertices;
+    1080p speed 40: avg 0.50 ms, 123 draw calls. Max chunk build 1.2 ms.
+  - Regression set byte-identical.

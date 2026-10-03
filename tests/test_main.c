@@ -9,6 +9,7 @@
 #include "render/gridfloor.h"
 #include "env/city_towers.h"
 #include "env/corridor_pillars.h"
+#include "env/corridor_beams.h"
 #include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -807,6 +808,107 @@ static void test_corridor_decor(void)
     env.unload(&env);
 }
 
+typedef struct BeamKey { int32_t ix, iz, dir; int cap0, cap1; } BeamKey;
+static int bkey_cmp(const void *a, const void *b)
+{
+    const BeamKey *x = (const BeamKey *)a, *y = (const BeamKey *)b;
+    if (x->dir != y->dir) return x->dir < y->dir ? -1 : 1;
+    if (x->ix != y->ix) return x->ix < y->ix ? -1 : 1;
+    if (x->iz != y->iz) return x->iz < y->iz ? -1 : 1;
+    return 0;
+}
+static int cell_cmp(const void *a, const void *b)
+{
+    const int32_t *x = (const int32_t *)a, *y = (const int32_t *)b;
+    if (x[0] != y[0]) return x[0] < y[0] ? -1 : 1;
+    if (x[1] != y[1]) return x[1] < y[1] ? -1 : 1;
+    return 0;
+}
+
+// Corridor beams: cells owned once; a segment end is capped exactly when the next cell on its
+// line has no segment (built by whichever chunk owns it), so beams join across chunks.
+static void test_corridor_beams(void)
+{
+    Environment env = env_corridor_create();
+    ParamRegistry reg;
+    params_clear(&reg);
+    env.registerParams(&env, &reg);
+    PathStyle st = env.pathStyle(&env);
+    BeamParams bp = { 0 };
+    bp.cell = params_get(params_find(&reg, "corBeamCell"));
+    bp.bandMax = params_get(params_find(&reg, "corBeamBandMax"));
+    bp.chance = params_get(params_find(&reg, "corBeamChance"));
+    bp.gapChance = params_get(params_find(&reg, "corBeamGap"));
+    bp.widthMin = params_get(params_find(&reg, "corBeamWidthMin"));
+    bp.widthMax = params_get(params_find(&reg, "corBeamWidthMax"));
+    bp.thickMin = params_get(params_find(&reg, "corBeamThickMin"));
+    bp.thickMax = params_get(params_find(&reg, "corBeamThickMax"));
+    bp.heightMin = params_get(params_find(&reg, "corBeamHeight"));
+    bp.levels = (int)params_get(params_find(&reg, "corBeamLevels"));
+    bp.laneKeep = params_get(params_find(&reg, "corBeamLaneKeep"));
+    bp.floorY = -st.floorDepth;
+    bp.density = 1.0f;
+    double reach = beams_reach(&bp);
+    enum { N = 200, MAXB = 40000, MAXC = 40000 };
+    static BeamDesc beams[COR_MAX_BEAMS];
+    static BeamKey keys[MAXB];
+    static int32_t cells[MAXC][2], chunkCells[2048][2];
+    int nk = 0, ncells = 0, overLane = 0;
+    double worstMs = 0.0, minUnder = 1e9;
+    PathSystem p;
+    path_init(&p, 41, st);
+    for (int k = 0; k < N; k++) {
+        path_ensure(&p, k * CHUNK_LEN - 100.0 - reach, (k + 1) * CHUNK_LEN + 100.0 + reach);
+        int nc = 0;
+        clock_t c0 = clock();
+        int n = beams_plan(&bp, 41, &p, k, beams, COR_MAX_BEAMS, chunkCells, 2048, &nc);
+        double ms = (double)(clock() - c0) * 1000.0 / CLOCKS_PER_SEC;
+        if (ms > worstMs) worstMs = ms;
+        for (int i = 0; i < nc && ncells < MAXC; i++) { cells[ncells][0] = chunkCells[i][0]; cells[ncells][1] = chunkCells[i][1]; ncells++; }
+        for (int i = 0; i < n && nk < MAXB; i++) {
+            keys[nk++] = (BeamKey){ beams[i].ix, beams[i].iz, beams[i].dir, beams[i].cap0, beams[i].cap1 };
+            if (beams[i].yBottom - (-st.floorDepth) < minUnder) minUnder = beams[i].yBottom - (-st.floorDepth);
+            // Along-lane beams never roof the lane.
+            PathSample q = path_sample(&p, beams[i].sOwner);
+            int laneZ = fabs(q.T.z) >= fabs(q.T.x);
+            if ((beams[i].dir == 1) == laneZ) {
+                double off = beams[i].dir == 1 ? fabs(beams[i].c - q.pos.x) : fabs(beams[i].c - q.pos.z);
+                if (off - beams[i].width * 0.5 < bp.laneKeep - 1e-6) overLane++;
+            }
+        }
+    }
+    qsort(cells, (size_t)ncells, sizeof(cells[0]), cell_cmp);
+    int dupCells = 0;
+    for (int i = 1; i < ncells; i++) if (!cell_cmp(cells[i - 1], cells[i])) dupCells++;
+    qsort(keys, (size_t)nk, sizeof(BeamKey), bkey_cmp);
+    int dupSeg = 0, badJoin = 0, joins = 0, caps = 0;
+    for (int i = 1; i < nk; i++) if (!bkey_cmp(&keys[i - 1], &keys[i])) dupSeg++;
+    for (int i = 0; i < nk; i++) {
+        const BeamKey *b = &keys[i];
+        for (int e = 0; e < 2; e++) {
+            int d = e ? 1 : -1;
+            BeamKey nb = { b->ix + (b->dir == 0 ? d : 0), b->iz + (b->dir == 1 ? d : 0), b->dir, 0, 0 };
+            int32_t nc[2] = { nb.ix, nb.iz };
+            // Only judge neighbours whose cell was claimed (inside the streamed range).
+            if (!bsearch(nc, cells, (size_t)ncells, sizeof(cells[0]), cell_cmp)) continue;
+            int exists = bsearch(&nb, keys, (size_t)nk, sizeof(BeamKey), bkey_cmp) != NULL;
+            int cap = e ? b->cap1 : b->cap0;
+            if (cap == exists) badJoin++;
+            if (exists) joins++; else caps++;
+        }
+    }
+    printf("  corridor beams: %d segments in %d cells over %d chunks, %d joins, %d caps; worst plan %.2f ms; lowest underside %.1f above the floor (ship ceiling %.1f)\n",
+           nk, ncells, N, joins, caps, worstMs, minUnder, st.ceilingHeight + st.floorDepth);
+    CHECK(nk > N, "beam segments placed (%d)", nk);
+    CHECK(dupCells == 0 && dupSeg == 0, "beam cells owned once (%d / %d duplicates)", dupCells, dupSeg);
+    CHECK(badJoin == 0 && joins > 0, "beams continue across cells and chunks; caps only at real ends (%d wrong)", badJoin);
+    CHECK(overLane == 0, "no along-lane beam above the lane (%d)", overLane);
+    CHECK(minUnder > st.ceilingHeight + st.floorDepth, "beams above the ship's ceiling (%.1f)", minUnder);
+    CHECK(worstMs < 3.0, "beam plan < 3 ms (%.2f)", worstMs);
+    path_free(&p);
+    env.unload(&env);
+}
+
 static void test_params(void)
 {
     ParamRegistry reg;
@@ -841,6 +943,7 @@ int main(void)
     test_corridor();
     test_corridor_pillars();
     test_corridor_decor();
+    test_corridor_beams();
     test_params();
     printf("%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

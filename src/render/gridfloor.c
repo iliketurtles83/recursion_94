@@ -8,6 +8,7 @@ void gridfloor_init(GridFloor *g, ShaderLib *sl)
 {
     g->sl = sl;
     if (sl) g->sh = sl_load(sl, "fullscreen.vs", "grid.fs");
+    g->shCeiling = -1;
 }
 
 Vector2 gridfloor_offset(DVec3 renderOrigin, float cell)
@@ -53,6 +54,40 @@ void gridfloor_draw(GridFloor *g, const GridFloorParams *p, const FrameContext *
     sl_v3(sl, sh, "uLineColor", ct_srgb_to_linear(p->lineColor));
     sl_v3(sl, sh, "uFloorColor", ct_srgb_to_linear(p->floorColor));
     sl_v3(sl, sh, "uHorizonColor", ct_srgb_to_linear(p->horizonColor));
+    pipe_fullscreen_quad();
+    EndShaderMode();
+    ctx->stats->drawCalls++;
+}
+
+void gridfloor_draw_ceiling(GridFloor *g, const GridFloorParams *p, const FrameContext *ctx, double planeY, float sparse)
+{
+    if (!g->sl) return;
+    ShaderLib *sl = g->sl;
+    if (g->shCeiling < 0) g->shCeiling = sl_load(sl, "fullscreen.vs", "skygrid.fs");   // only environments that use it load it
+    int sh = g->shCeiling;
+    Camera3D cam = ctx->camera;
+    Vector3 fwd = Vector3Normalize(Vector3Subtract(cam.target, cam.position));
+    Vector3 right = Vector3Normalize(Vector3CrossProduct(fwd, cam.up));
+    Vector3 up = Vector3CrossProduct(right, fwd);
+    Vector2 off = gridfloor_offset(ctx->renderOrigin, p->cell);
+
+    rlDrawRenderBatchActive();
+    BeginShaderMode(sl_shader(sl, sh));
+    env_set_common_uniforms(sl, sh, ctx);
+    sl_f1(sl, sh, "uAspect", (float)ctx->width / (float)ctx->height);
+    sl_v3(sl, sh, "uCamRight", right);
+    sl_v3(sl, sh, "uCamUp", up);
+    sl_v3(sl, sh, "uCamFwd", fwd);
+    sl_f1(sl, sh, "uTanHalf", tanf(ctx->fovy * 0.5f * DEG2RAD));
+    sl_f2(sl, sh, "uClip", ctx->zNear, ctx->zFar);
+    sl_f1(sl, sh, "uFloorY", (float)(planeY - ctx->renderOrigin.y));
+    sl_f2(sl, sh, "uGridOffset", off.x, off.y);
+    sl_f1(sl, sh, "uCell", p->cell);
+    sl_f1(sl, sh, "uSparse", sparse);
+    sl_f2(sl, sh, "uLine", p->lineWidth / p->cell, 0.0f);
+    sl_f4(sl, sh, "uLineI", p->lineIntensity, 0.0f, 0.0f, 0.0f);
+    sl_f4(sl, sh, "uFloorFog", p->fogStart, p->fogEnd, 0.0f, 0.0f);
+    sl_v3(sl, sh, "uLineColor", ct_srgb_to_linear(p->lineColor));
     pipe_fullscreen_quad();
     EndShaderMode();
     ctx->stats->drawCalls++;

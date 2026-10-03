@@ -36,12 +36,16 @@ typedef struct GridFloorParams {
 
 typedef struct GridFloor {
     struct ShaderLib *sl;
-    int sh;
+    int sh, shCeiling;
 } GridFloor;
 
 #define GRIDFLOOR_PERIOD_CELLS 1024.0   // offset wraps after this many cells
 
 void    gridfloor_init(GridFloor *g, struct ShaderLib *sl);
+// Ceiling mode: a sparse lattice on the plane y = planeY above the camera (skygrid.fs). Uses
+// cell, lineWidth, lineIntensity, lineColor and fogStart/fogEnd (as a distance fade); `sparse`
+// is the fraction of cell edges drawn. Call from drawEmissive (additive; depth-tested).
+void    gridfloor_draw_ceiling(GridFloor *g, const GridFloorParams *p, const struct FrameContext *ctx, double planeY, float sparse);
 // floorY: world-space height of the plane.
 void    gridfloor_draw(GridFloor *g, const GridFloorParams *p, const struct FrameContext *ctx, double floorY);
 // Render origin xz reduced modulo GRIDFLOOR_PERIOD_CELLS * cell (world grid phase of render-space 0).

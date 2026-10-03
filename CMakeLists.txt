@@ -46,6 +46,7 @@ set(CT_MODULE_SRC
   src/env/env_city.c
   src/env/env_corridor.c
   src/env/corridor_pillars.c
+  src/env/corridor_beams.c
   src/env/city_towers.c
   src/env/lattice_place.c
   src/env/city_decor.c

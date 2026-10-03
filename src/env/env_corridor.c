@@ -4,11 +4,12 @@
 //
 // Phases done: A (path style: level, no twist, floor and ceiling, strong yaw spring; grid
 // floor, sky, reflection), B (pillar placement and stepped bodies, corridor_pillars.c),
-// C (code rain, stepped outlines and floor kerbs).
+// C (code rain, stepped outlines and floor kerbs), D (overhead beams, corridor_beams.c; sky lattice).
 #include "env_common.h"
 #include "core/rng.h"
 #include "core/pacing.h"
 #include "corridor_pillars.h"
+#include "corridor_beams.h"
 #include "render/gridfloor.h"
 #include "render/rmath.h"
 #include "render/pipeline.h"
@@ -16,9 +17,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { KB_BODY = 0, KB_RAIN, KB_OUTLINE, KB_KERB };   // chunk batches
+enum { KB_BODY = 0, KB_RAIN, KB_OUTLINE, KB_KERB, KB_BEAM };   // chunk batches
 
 #define PILLAR_BAND_LIMIT 150.0f   // largest corPillarBandMax (sets pathReach)
+#define BEAM_BAND_LIMIT   120.0f   // largest corBeamBandMax
 
 typedef struct CorridorParams {
     PathStyle path;
@@ -27,6 +29,11 @@ typedef struct CorridorParams {
     PillarDecorParams decor;
     bool  showPillars, showRain, showOutlines;
     float outlineReflect;
+    BeamParams beams;
+    bool  showBeams, showSkyGrid;
+    float beamBrightness, traceIntensity, tracePitch, traceRuns, traceCross, pulseSpeed, pulseAmount;
+    GridFloorParams skyGrid;
+    float skyGridHeight, skyGridSparse;
     float rainPitch, rainEmpty, rainSpeedMin, rainSpeedMax, rainFill, rainHead, rainTrail, rainFlicker;
     float bodyBrightness, rimIntensity, underglow, panelW, panelH, seamDark, recessed;
     float fogStart, fogEnd;          // fog for chunk content
@@ -41,7 +48,8 @@ typedef struct CorridorState {
     int            shSky;
     Material       mat;
     GridFloor      floor;
-    int            shBody, shRain, shTrace, shLines;
+    int            shBody, shRain, shTrace, shLines, shBeam;
+    BeamDesc       beams[COR_MAX_BEAMS];
     PillarDesc     pillars[COR_MAX_PILLARS];   // build scratch (builds are single-threaded)
 } CorridorState;
 
@@ -112,9 +120,9 @@ static void cor_register(Environment *env, ParamRegistry *reg)
     params_float(reg, g, "corPillarWidthMax", &pp->widthMax, 9.0f, 2.0f, 12.0f);
     params_float(reg, g, "corPillarDepthMin", &pp->depthMin, 6.0f, 1.0f, 12.0f);
     params_float(reg, g, "corPillarDepthMax", &pp->depthMax, 10.0f, 1.0f, 12.0f);
-    params_float(reg, g, "corPillarHeightMin", &pp->heightMin, 30.0f, 4.0f, 120.0f);
-    params_float(reg, g, "corPillarHeightMax", &pp->heightMax, 45.0f, 4.0f, 160.0f);
-    params_float(reg, g, "corBackHeightMul", &pp->backHeightMul, 1.4f, 0.2f, 4.0f);
+    params_float(reg, g, "corPillarHeightMin", &pp->heightMin, 14.0f, 4.0f, 120.0f);
+    params_float(reg, g, "corPillarHeightMax", &pp->heightMax, 20.0f, 4.0f, 160.0f);
+    params_float(reg, g, "corBackHeightMul", &pp->backHeightMul, 1.0f, 0.2f, 4.0f);
     params_int(reg, g, "corStepsMin", &pp->stepsMin, 1, 0, 3);
     params_int(reg, g, "corStepsMax", &pp->stepsMax, 3, 0, 3);
     params_float(reg, g, "corStepMin", &pp->stepMin, 1.5f, 0.5f, 4.0f);
@@ -155,6 +163,37 @@ static void cor_register(Environment *env, ParamRegistry *reg)
     params_float(reg, g, "corRainTrail", &p->rainTrail, 3.0f, 0.1f, 20.0f);
     params_float(reg, g, "corRainFlicker", &p->rainFlicker, 0.03f, 0.0f, 1.0f);
 
+    g = "Beams";
+    BeamParams *bp = &p->beams;
+    params_bool(reg, g, "corShowBeams", &p->showBeams, true);
+    params_float(reg, g, "corBeamCell", &bp->cell, 16.0f, 8.0f, 40.0f);
+    params_float(reg, g, "corBeamBandMax", &bp->bandMax, 70.0f, 10.0f, BEAM_BAND_LIMIT);
+    params_float(reg, g, "corBeamChance", &bp->chance, 0.33f, 0.0f, 1.0f);
+    params_float(reg, g, "corBeamGap", &bp->gapChance, 0.25f, 0.0f, 1.0f);
+    params_float(reg, g, "corBeamWidthMin", &bp->widthMin, 6.0f, 1.0f, 14.0f);
+    params_float(reg, g, "corBeamWidthMax", &bp->widthMax, 10.0f, 1.0f, 14.0f);
+    params_float(reg, g, "corBeamThickMin", &bp->thickMin, 2.0f, 0.5f, 8.0f);
+    params_float(reg, g, "corBeamThickMax", &bp->thickMax, 3.0f, 0.5f, 8.0f);
+    params_float(reg, g, "corBeamHeight", &bp->heightMin, 24.0f, 10.0f, 60.0f);
+    params_int(reg, g, "corBeamLevels", &bp->levels, 3, 1, 8);
+    params_float(reg, g, "corBeamLaneKeep", &bp->laneKeep, 8.0f, 0.0f, 40.0f);
+    params_float(reg, g, "corBeamBrightness", &p->beamBrightness, 2.2f, 0.0f, 8.0f);
+    params_float(reg, g, "corBeamTraceIntensity", &p->traceIntensity, 2.4f, 0.0f, 10.0f);
+    params_float(reg, g, "corBeamTracePitch", &p->tracePitch, 0.5f, 0.1f, 2.0f);
+    params_float(reg, g, "corBeamTraceRuns", &p->traceRuns, 0.75f, 0.0f, 1.0f);
+    params_float(reg, g, "corBeamTraceCross", &p->traceCross, 0.4f, 0.0f, 1.0f);
+    params_float(reg, g, "corBeamPulseSpeed", &p->pulseSpeed, 6.0f, 0.0f, 40.0f);
+    params_float(reg, g, "corBeamPulseAmount", &p->pulseAmount, 2.0f, 0.0f, 10.0f);
+    params_bool(reg, g, "corShowSkyGrid", &p->showSkyGrid, true);
+    params_float(reg, g, "corSkyGridHeight", &p->skyGridHeight, 90.0f, 30.0f, 400.0f);
+    params_float(reg, g, "corSkyGridCell", &p->skyGrid.cell, 8.0f, 1.0f, 40.0f);
+    params_float(reg, g, "corSkyGridSparse", &p->skyGridSparse, 0.3f, 0.0f, 1.0f);
+    params_float(reg, g, "corSkyGridWidth", &p->skyGrid.lineWidth, 0.05f, 0.005f, 1.0f);
+    params_float(reg, g, "corSkyGridIntensity", &p->skyGrid.lineIntensity, 1.0f, 0.0f, 5.0f);
+    params_float(reg, g, "corSkyGridFadeStart", &p->skyGrid.fogStart, 100.0f, 0.0f, 1000.0f);
+    params_float(reg, g, "corSkyGridFadeEnd", &p->skyGrid.fogEnd, 300.0f, 1.0f, 1500.0f);
+    p->skyGrid.lineColor = (Color){ 0xDC, 0xF2, 0xFF, 255 };
+
     g = "Corridor";
     params_bool(reg, g, "corShowSky", &p->showSky, true);
     params_float(reg, g, "corFogStart", &p->fogStart, 80.0f, 0.0f, 600.0f);
@@ -176,6 +215,7 @@ static void cor_init(Environment *env, uint64_t seed, ShaderLib *sl)
         st->shRain = sl_load(sl, "glyph.vs", "coderain.fs");
         st->shTrace = sl_load(sl, "trace.vs", "outline.fs");
         st->shLines = sl_load(sl, "object.vs", "line_facing.fs");
+        st->shBeam = sl_load(sl, "tower.vs", "beam.fs");
         st->mat = LoadMaterialDefault();
     }
 }
@@ -202,6 +242,11 @@ static void cor_build_chunk(Environment *env, const PathSystem *path, int chunkI
     PillarDecorParams dp = st->p.decor;
     dp.floorY = pp.floorY;
     pillars_build_decor(&dp, st->pillars, n, out->origin, &out->geo[KB_RAIN], &out->geo[KB_OUTLINE], &out->geo[KB_KERB]);
+    BeamParams bp = st->p.beams;
+    bp.floorY = pp.floorY;
+    bp.density = 1.0f;
+    int nb = beams_plan(&bp, st->seed, path, chunkIndex, st->beams, COR_MAX_BEAMS, NULL, 0, NULL);
+    beams_build(st->beams, nb, out->origin, &out->geo[KB_BEAM]);
 }
 static void cor_upload(Environment *env, ChunkCpu *in, ChunkGpu *out) { chunk_upload_default(in, out); }
 static void cor_release(Environment *env, ChunkGpu *gpu) { chunk_release_default(gpu); }
@@ -292,10 +337,28 @@ static void draw_pillars(CorridorState *st, const FrameContext *ctx, const Chunk
     draw_batch(st, ctx, sh, chunks, n, KB_BODY);
 }
 
+static void draw_beams(CorridorState *st, const FrameContext *ctx, const ChunkGpu *const *chunks, int n)
+{
+    const CorridorParams *p = &st->p;
+    ShaderLib *sl = st->sl;
+    int sh = st->shBeam;
+    env_set_common_uniforms(sl, sh, ctx);
+    sl_v3(sl, sh, "uBody", Vector3Scale(ct_srgb_to_linear((Color){ 0x10, 0x16, 0x20, 255 }), p->beamBrightness));
+    sl_v3(sl, sh, "uTraceColor", ct_srgb_to_linear(COL_CYAN));
+    sl_f4(sl, sh, "uTrace", p->tracePitch, p->traceIntensity, p->traceRuns, p->traceCross);
+    sl_f2(sl, sh, "uPulse", p->pulseSpeed, p->pulseAmount);
+    sl_f2(sl, sh, "uFogRange", p->fogStart, p->fogEnd);
+    sl_v3(sl, sh, "uZenith", ct_srgb_to_linear(COL_ZENITH));
+    sl_v3(sl, sh, "uHorizon", ct_srgb_to_linear(COL_HORIZON));
+    sl_f2(sl, sh, "uHaze", p->hazeWidth, p->hazeGlow);
+    draw_batch(st, ctx, sh, chunks, n, KB_BEAM);
+}
+
 static void cor_draw_opaque(Environment *env, const FrameContext *ctx, const ChunkGpu *const *chunks, int n)
 {
     CorridorState *st = (CorridorState *)env->state;
     if (st->p.showPillars) draw_pillars(st, ctx, chunks, n);
+    if (st->p.showBeams) draw_beams(st, ctx, chunks, n);
     if (!st->p.showFloor || ctx->reflectionPass) return;
     GridFloorParams fp = st->p.floor;
     fp.horizonGlow = st->p.hazeGlow;
@@ -311,6 +374,10 @@ static void cor_draw_emissive(Environment *env, const FrameContext *ctx, const C
     CorridorState *st = (CorridorState *)env->state;
     const CorridorParams *p = &st->p;
     ShaderLib *sl = st->sl;
+    if (p->showSkyGrid && !ctx->reflectionPass) {
+        double floorY = path_sample(ctx->path, ctx->sShip).pos.y - ctx->path->style.floorDepth;
+        gridfloor_draw_ceiling(&st->floor, &p->skyGrid, ctx, floorY + p->skyGridHeight, p->skyGridSparse);
+    }
     if (p->showPillars && p->showRain) {
         int sh = st->shRain;
         env_set_common_uniforms(sl, sh, ctx);
@@ -351,7 +418,7 @@ Environment env_corridor_create(void)
     e.name = "Server Corridor";
     e.id = ENV_CORRIDOR;
     e.state = calloc(1, sizeof(CorridorState));
-    e.pathReach = 2.2 * (PILLAR_BAND_LIMIT + 10.0 * 4.0) + 4.0;   // pillars_reach() at the largest band and lattice
+    e.pathReach = 2.2 * (PILLAR_BAND_LIMIT + 10.0 * 4.0) + 4.0;   // pillars_reach() at the largest band and lattice (> beams_reach())
     e.reflectiveFloor = true;
     e.pathStyle = cor_path_style;
     e.init = cor_init;
