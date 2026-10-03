@@ -1,7 +1,7 @@
 # Plan — Environment #3 "Server Corridor"
 
 Status: built (Phases A–F, see NOTES.md); CRYSTAL archetype left out (decided 2026-10-03, §6). Reference frames: `reference/t_4.5s.png` … `reference/t_7.25s.png`
-(every 0.25 s, extracted from `video.mp4`), with `t_5.0s`, `t_6.0s`, `t_6.5s` and `t_7.0s` as the key frames.
+(every 0.25 s, extracted from `reference/video.mp4`), with `t_5.0s`, `t_6.0s`, `t_6.5s` and `t_7.0s` as the key frames.
 
 ## 0. Scope
 

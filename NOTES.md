@@ -415,7 +415,7 @@ The regression renders were re-baselined (they are taken at base speed).
 
 ## Phase E — Floor reflection
 
-- Extra reference frames pulled from `video.mp4` with ffmpeg (`reference/t_1.0s.png`,
+- Extra reference frames pulled from `reference/video.mp4` with ffmpeg (`reference/t_1.0s.png`,
   `t_2.0s.png`): the floor is a glossy dark navy; reflections are soft, vertically smeared
   purple/pink streaks under the code strips and traces, faint rain dashes, and a bright cyan
   stripe under the ship from the engine trails. Grid lines are not reflected (they are on the
