@@ -131,14 +131,14 @@ void ct_debug_overlay(CtTunnel *ct, int width, int height)
     CtStats s;
     ct_get_stats(ct, &s);
     int x = width - 300, y = 10, lh = 16;
-    DrawRectangle(x - 8, y - 6, 300, lh * 14 + 12, (Color){ 0, 0, 0, 150 });
+    DrawRectangle(x - 8, y - 6, 300, lh * 15 + 12, (Color){ 0, 0, 0, 150 });
     Color c = (Color){ 180, 240, 255, 255 };
     DrawText(TextFormat("FPS %d   frame %.2f ms", GetFPS(), s.frameMs), x, y, 10, c); y += lh;
     DrawText(TextFormat("cpu: update %.2f  scene %.2f  bloom %.2f  comp %.2f", s.msUpdate, s.msScene, s.msBloom, s.msComposite), x, y, 10, c); y += lh;
     DrawText(TextFormat("chunks %d  build %d  upload %d  meshes %d", s.activeChunks, s.buildsThisFrame, s.uploadsThisFrame, s.gpuMeshes), x, y, 10, c); y += lh;
     DrawText(TextFormat("chunk build last %.2f ms  max %.2f ms", s.lastChunkBuildMs, s.maxChunkBuildMs), x, y, 10, c); y += lh;
     DrawText(TextFormat("verts %d   draw calls %d", s.vertices, s.drawCalls), x, y, 10, c); y += lh;
-    DrawText(TextFormat("s %.1f   speed %.1f", s.sShip, s.speed), x, y, 10, c); y += lh;
+    DrawText(TextFormat("s %.1f   speed %.1f  (base %.0f / boost %.0f)", s.sShip, s.speed, ct->fp.baseSpeed, ct->fp.boostSpeed), x, y, 10, c); y += lh;
     DrawText(TextFormat("origin %.0f %.0f %.0f", s.renderOrigin[0], s.renderOrigin[1], s.renderOrigin[2]), x, y, 10, c); y += lh;
     DrawText(TextFormat("max GL coord %.1f", s.maxRenderCoord), x, y, 10, c); y += lh;
     DrawText(TextFormat("intensity %.2f  archetype %s", s.intensity, s.chunkLabel ? s.chunkLabel : ""), x, y, 10, c); y += lh;
@@ -146,5 +146,6 @@ void ct_debug_overlay(CtTunnel *ct, int width, int height)
     DrawText(TextFormat("shader reloads %d", ct->sl.reloadCount), x, y, 10, c); y += lh;
     DrawText("F1 panel F2 freecam F3 overlay F12 shot", x, y, 10, (Color){ 120, 170, 190, 255 }); y += lh;
     DrawText("arrows steer  Shift boost  Q/E roll  T env", x, y, 10, (Color){ 120, 170, 190, 255 }); y += lh;
-    DrawText("R reseed  P pause  W whiteout  1-9 layers", x, y, 10, (Color){ 120, 170, 190, 255 });
+    DrawText("R reseed  P pause  W whiteout  1-9 layers", x, y, 10, (Color){ 120, 170, 190, 255 }); y += lh;
+    DrawText("[ ] base speed  - = boost speed", x, y, 10, (Color){ 120, 170, 190, 255 });
 }

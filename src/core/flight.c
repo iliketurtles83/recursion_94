@@ -8,8 +8,8 @@
 void flight_register_params(FlightParams *p, ParamRegistry *reg)
 {
     const char *g = "Flight";
-    params_float(reg, g, "baseSpeed", &p->baseSpeed, 40.0f, 0.0f, 300.0f);
-    params_float(reg, g, "boostSpeed", &p->boostSpeed, 80.0f, 0.0f, 400.0f);
+    params_float(reg, g, "baseSpeed", &p->baseSpeed, 25.0f, 0.0f, 300.0f);
+    params_float(reg, g, "boostSpeed", &p->boostSpeed, 40.0f, 0.0f, 400.0f);
     params_float(reg, g, "speedResponse", &p->speedResponse, 2.5f, 0.1f, 20.0f);
     params_float(reg, g, "steerLimit", &p->steerLimit, 0.55f, 0.0f, 0.9f);
     params_float(reg, g, "steerAccel", &p->steerAccel, 60.0f, 1.0f, 300.0f);

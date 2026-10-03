@@ -740,6 +740,11 @@ void ct_debug_handle_input(CtTunnel *ct)
                                      "showCore", "showBackground", "showShip", "showPathDebug" };
     for (int i = 0; i < 9; i++) if (IsKeyPressed(KEY_ONE + i)) toggle_param(ct, LAYERS[i]);
     if (IsKeyPressed(KEY_T)) ct_set_environment(ct, (ct->envId + 1) % ENV_COUNT);
+    // Speed tuning: [ ] base speed, - = boost speed (steps of 5).
+    int db = (IsKeyPressed(KEY_RIGHT_BRACKET) - IsKeyPressed(KEY_LEFT_BRACKET)) * 5;
+    int dB = (IsKeyPressed(KEY_EQUAL) - IsKeyPressed(KEY_MINUS)) * 5;
+    if (db) ct_param_set(ct, "baseSpeed", ct->fp.baseSpeed + (float)db);
+    if (dB) ct_param_set(ct, "boostSpeed", ct->fp.boostSpeed + (float)dB);
 }
 
 bool ct_debug_wants_screenshot(CtTunnel *ct)

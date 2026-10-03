@@ -132,7 +132,8 @@ regardless of build order or frame timing (tested in `cybertunnel_tests`).
 ## 10. Disabling debug features
 
 `ct_debug_handle_input` reads raylib keyboard state (F1 panel, F2 free camera, F3 overlay,
-F12 screenshot request, R reseed, P pause, W whiteout, T switch environment, 1–9 layer toggles).
+F12 screenshot request, R reseed, P pause, W whiteout, T switch environment, 1–9 layer toggles,
+`[`/`]` base speed ±5, `-`/`=` boost speed ±5).
 A game simply never calls it, nor `ct_debug_draw`.
 
 ## 11. Adding an environment
@@ -208,8 +209,8 @@ unknown keys are skipped, and loading first resets everything to defaults).
 | Sim | `engineIntensity` | float | 10 | 0 | 40 |
 | Sim | `trailIntensity` | float | 2.2 | 0 | 20 |
 | Sim | `trailWidth` | float | 0.035 | 0.005 | 0.5 |
-| Flight | `baseSpeed` | float | 40 | 0 | 300 |
-| Flight | `boostSpeed` | float | 80 | 0 | 400 |
+| Flight | `baseSpeed` | float | 25 | 0 | 300 |
+| Flight | `boostSpeed` | float | 40 | 0 | 400 |
 | Flight | `speedResponse` | float | 2.5 | 0.1 | 20 |
 | Flight | `steerLimit` | float | 0.55 | 0 | 0.9 |
 | Flight | `steerAccel` | float | 60 | 1 | 300 |

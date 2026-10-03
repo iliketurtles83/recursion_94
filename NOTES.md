@@ -27,7 +27,7 @@ cmake -S . -B build && cmake --build build -j
 ```
 
 Keys: arrows steer, Shift/Space boost, Q/E barrel roll, F1 panel, F2 free camera (WASD +
-mouse), F3 overlay, F12 screenshot (`shots/vortex_seed{seed}_s{s}.png`), R reseed, P pause,
+mouse), F3 overlay, F12 screenshot (`shots/vortex_seed{seed}_s{s}.png`), R reseed, P pause, [ ] base speed, - = boost speed,
 W whiteout, T switch environment, 1–9 layer toggles (rings, ribbons, streaks, debris, holo,
 core, background, ship, path debug).
 
@@ -349,4 +349,15 @@ designed (one idea: the vortex itself as the transition).
     streaming per frame 1.24 ms (budget 4 ms).
   - Bench (60 s, 1080p, speed 120): avg 0.64 ms, p99 0.77 ms, 37 draw calls, 13k vertices.
   - Tests: 53 passed. Vortex regression set byte-identical.
+
+## Speed change (user request, after Phase C)
+
+The overall flying speed was faster than wanted: the old base speed (40) is now the boost speed,
+and the base is 25 (`baseSpeed` 25, `boostSpeed` 40; presets: calm 18/30, intense 40/70,
+`default.ini` 25/40). Live tuning keys: `[` / `]` base speed ±5, `-` / `=` boost speed ±5; the
+overlay shows both. Things that scale with absolute speed and may want retuning once a speed
+is chosen: streak length (`streakLenMul`, streaks stretch with speed), and pacing runs, which
+are measured in chunks, so at 25 u/s an archetype run lasts ~1.6× longer than before. Zoom blur
+and the boost FOV are relative to base/boost and are unaffected. The vortex regression renders
+were re-baselined after this change.
 
