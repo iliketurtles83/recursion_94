@@ -18,6 +18,10 @@ typedef struct StreakParams {
     float cometFrac, accentFrac, helixFrac, helixRate;
     float zRange, zBehind, speedMul;
     Color colMain, colAccent;    // sRGB
+    // Volume: 0 = cylinder of the path radius (tunnels), 1 = slab above a floor (open spaces).
+    int   volume;
+    float slabHalfWidth, slabYMin, slabYMax;   // path frame (B right, N up), relative to the centerline
+    float fallTilt;              // slab: streaks start higher the further ahead (falling rain)
 } StreakParams;
 
 typedef struct StreakSystem {

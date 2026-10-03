@@ -44,6 +44,7 @@ set(CT_MODULE_SRC
   src/env/env_template.c
   src/env/env_city.c
   src/env/city_towers.c
+  src/env/city_decor.c
   src/render/streaks.c
   src/render/shapes.c
   src/render/gridfloor.c

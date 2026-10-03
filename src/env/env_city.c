@@ -2,18 +2,29 @@
 // between circuit-traced monolith towers. See PLAN_ENV2_GRID_CITY.md.
 //
 // Phases done: A (path style: level, no twist, floor below the centerline; atmosphere),
-// B (grid floor, sky) and C (tower placement and bodies, city_towers.c).
+// B (grid floor, sky), C (tower placement and bodies, city_towers.c) and D (circuit traces
+// and code-text panels, city_decor.c; light rain; floating props).
 #include "env_common.h"
 #include "city_towers.h"
+#include "city_decor.h"
 #include "core/rng.h"
 #include "render/gridfloor.h"
+#include "render/shapes.h"
+#include "render/streaks.h"
 #include "render/rmath.h"
 #include "render/pipeline.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
-enum { CB_BODY = 0, CB_EDGES };   // chunk batches
+enum { CB_BODY = 0, CB_EDGES, CB_TRACES, CB_GLYPHS, CB_PROP_EDGES, CB_PROP_FACES };   // chunk batches
+
+// Per-chunk uniform layout for props (same convention as the vortex debris: object.vs / face.vs).
+enum { U_OBJ_A = 0, U_OBJ_B = 16, U_OBJ_C = 32 };
+#define MAX_PROPS   8
+#define RAIN_COUNT  1200
+
+enum { F_PROPS = 3 };   // city feature sub-streams (towers 1, traces 2)
 
 typedef struct CityParams {
     PathStyle path;
@@ -22,6 +33,15 @@ typedef struct CityParams {
     float edgeIntensity, edgeWidth;
     float bodyBrightness, rimIntensity, underglow, panelW, panelH, seamDark, recessed;
     bool  showTowers;
+    CityDecorParams decor;
+    bool  showTraces, showGlyphs;
+    float pulseSpeed, pulseAmount;
+    StreakParams rain;
+    float rainYMin, rainYMax;        // above the floor
+    bool  showRain;
+    int   propsMax;
+    float propSizeMin, propSizeMax, propHeightMax, propEdgeIntensity, propFaceIntensity;
+    bool  showProps;
     float fogStart, fogEnd;          // fog for chunk content (towers etc.)
     float hazeWidth, hazeGlow, dust; // sky
     bool  showFloor, showSky;
@@ -31,9 +51,10 @@ typedef struct CityState {
     uint64_t   seed;
     CityParams p;
     ShaderLib *sl;
-    int        shSky, shTower, shLines;
+    int        shSky, shTower, shLines, shTrace, shGlyph, shFace;
     Material   mat;
     GridFloor  floor;
+    StreakSystem rain;
     TowerDesc  towers[CITY_MAX_TOWERS];   // build scratch (builds are single-threaded)
 } CityState;
 
@@ -41,6 +62,9 @@ static const Color COL_CYAN    = { 0x4F, 0xEA, 0xF5, 255 };
 static const Color COL_FLOOR   = { 0x02, 0x06, 0x0A, 255 };
 static const Color COL_HORIZON = { 0x0B, 0x2A, 0x3A, 255 };
 static const Color COL_ZENITH  = { 0x02, 0x03, 0x08, 255 };
+static const Color COL_PINK    = { 0xFF, 0x4F, 0xD8, 255 };
+static const Color COL_VIOLET  = { 0xB0, 0x6C, 0xFF, 255 };
+static const Color COL_PALE    = { 0xA8, 0xEE, 0xFF, 255 };
 
 static PathStyle city_path_style(const Environment *env)
 {
@@ -112,6 +136,55 @@ static void city_register(Environment *env, ParamRegistry *reg)
     params_float(reg, g, "seamDark", &p->seamDark, 0.6f, 0.0f, 1.0f);
     params_float(reg, g, "recessed", &p->recessed, 0.15f, 0.0f, 1.0f);
 
+    g = "Decor";
+    CityDecorParams *d = &p->decor;
+    params_bool(reg, g, "showTraces", &p->showTraces, true);
+    params_bool(reg, g, "showGlyphs", &p->showGlyphs, true);
+    params_float(reg, g, "tracePitch", &d->tracePitch, 0.55f, 0.2f, 2.0f);
+    params_float(reg, g, "traceWidth", &d->traceWidth, 0.045f, 0.005f, 0.3f);
+    params_float(reg, g, "traceIntensity", &d->traceIntensity, 1.8f, 0.0f, 10.0f);
+    params_float(reg, g, "traceBuses", &d->traceBuses, 2.2f, 0.0f, 6.0f);
+    params_float(reg, g, "traceFar", &d->traceFar, 0.35f, 0.0f, 1.0f);
+    params_float(reg, g, "traceStop", &d->traceStop, 0.1f, 0.0f, 1.0f);
+    params_float(reg, g, "tracePulse", &d->tracePulse, 0.08f, 0.0f, 1.0f);
+    params_float(reg, g, "tracePulseSpeed", &p->pulseSpeed, 6.0f, 0.0f, 40.0f);
+    params_float(reg, g, "tracePulseAmount", &p->pulseAmount, 2.5f, 0.0f, 10.0f);
+    params_float(reg, g, "viaRadius", &d->viaRadius, 0.11f, 0.02f, 0.5f);
+    params_float(reg, g, "glyphStripChance", &d->glyphStripChance, 0.55f, 0.0f, 1.0f);
+    params_float(reg, g, "glyphBlockChance", &d->glyphBlockChance, 0.25f, 0.0f, 1.0f);
+    params_float(reg, g, "glyphIntensity", &d->glyphIntensity, 1.2f, 0.0f, 10.0f);
+    params_float(reg, g, "glyphScroll", &d->glyphScroll, 0.6f, 0.0f, 10.0f);
+    params_float(reg, g, "decorOffset", &d->faceOffset, 0.08f, 0.01f, 0.5f);
+
+    g = "Rain";
+    StreakParams *rn = &p->rain;
+    params_bool(reg, g, "showRain", &p->showRain, true);
+    params_float(reg, g, "rainDensity", &rn->density, 0.5f, 0.0f, 1.0f);
+    params_float(reg, g, "rainLenMul", &rn->lenMul, 4.0f, 0.1f, 10.0f);
+    params_float(reg, g, "rainWMin", &rn->wMin, 0.05f, 0.005f, 0.5f);
+    params_float(reg, g, "rainWMax", &rn->wMax, 0.15f, 0.005f, 0.5f);
+    params_float(reg, g, "rainIntensity", &rn->intensity, 2.6f, 0.0f, 10.0f);
+    params_float(reg, g, "rainCometFrac", &rn->cometFrac, 0.05f, 0.0f, 0.5f);
+    params_float(reg, g, "rainZRange", &rn->zRange, 170.0f, 40.0f, 400.0f);
+    params_float(reg, g, "rainHalfWidth", &rn->slabHalfWidth, 45.0f, 5.0f, 200.0f);
+    params_float(reg, g, "rainYMin", &p->rainYMin, 0.8f, 0.0f, 50.0f);
+    params_float(reg, g, "rainYMax", &p->rainYMax, 25.0f, 0.0f, 100.0f);
+    params_float(reg, g, "rainFallTilt", &rn->fallTilt, 0.12f, 0.0f, 1.0f);
+    params_float(reg, g, "rainSpeedMul", &rn->speedMul, 1.0f, 0.0f, 4.0f);
+    rn->zBehind = 12.0f;
+    rn->volume = 1;
+    rn->colMain = (Color){ 0x8A, 0xF2, 0xFF, 255 };
+    rn->colAccent = COL_VIOLET;
+
+    g = "Props";
+    params_bool(reg, g, "showProps", &p->showProps, true);
+    params_int(reg, g, "propsMax", &p->propsMax, 3, 0, MAX_PROPS);
+    params_float(reg, g, "propSizeMin", &p->propSizeMin, 0.4f, 0.1f, 4.0f);
+    params_float(reg, g, "propSizeMax", &p->propSizeMax, 1.2f, 0.1f, 4.0f);
+    params_float(reg, g, "propHeightMax", &p->propHeightMax, 4.0f, 0.5f, 30.0f);
+    params_float(reg, g, "propEdgeIntensity", &p->propEdgeIntensity, 2.2f, 0.0f, 10.0f);
+    params_float(reg, g, "propFaceIntensity", &p->propFaceIntensity, 0.25f, 0.0f, 3.0f);
+
     g = "City";
     params_bool(reg, g, "showSky", &p->showSky, true);
     params_float(reg, g, "cityFogStart", &p->fogStart, 120.0f, 0.0f, 600.0f);
@@ -133,8 +206,12 @@ static void city_init(Environment *env, uint64_t seed, ShaderLib *sl)
         st->shSky = sl_load(sl, "fullscreen.vs", "sky.fs");
         st->shTower = sl_load(sl, "tower.vs", "tower.fs");
         st->shLines = sl_load(sl, "object.vs", "line_facing.fs");
+        st->shTrace = sl_load(sl, "trace.vs", "trace.fs");
+        st->shGlyph = sl_load(sl, "glyph.vs", "glyph.fs");
+        st->shFace = sl_load(sl, "face.vs", "face.fs");
         st->mat = LoadMaterialDefault();
     }
+    streaks_init(&st->rain, sl, RAIN_COUNT);
 }
 
 // Tower params that follow other settings (floor grid, lane, floor height).
@@ -149,12 +226,56 @@ static CityTowerParams tower_params(const CityState *st, const PathSystem *path)
 
 static void city_reseed(Environment *env, uint64_t seed) { ((CityState *)env->state)->seed = seed; }
 
+static void set_u(ChunkCpu *c, int slot, Vector3 v, float w)
+{
+    c->uniforms[slot][0] = v.x; c->uniforms[slot][1] = v.y; c->uniforms[slot][2] = v.z; c->uniforms[slot][3] = w;
+}
+
+// Small slowly turning wireframe props floating low between the lane edge and the towers.
+static void build_props(const CityState *st, const PathSystem *path, int chunkIndex, ChunkCpu *c)
+{
+    const CityParams *p = &st->p;
+    Pcg32 r = pcg32_seed(ct_hash64_3(st->seed, ((uint64_t)ENV_CITY << 8) | F_PROPS, (uint64_t)(int64_t)chunkIndex));
+    int count = pcg32_int(&r, 0, p->propsMax);
+    float lane = path->style.baseRadius, gapEnd = lane + p->towers.clearance;
+    for (int g = 0; g < count && g < MAX_PROPS; g++) {
+        double s = c->s0 + pcg32_float(&r) * CHUNK_LEN;
+        PathSample ps = path_sample(path, s);
+        float size = pcg32_range(&r, p->propSizeMin, p->propSizeMax);
+        float h = size * 0.5f, bound = h * 1.7320508f;
+        float side = pcg32_chance(&r, 0.5f) ? 1.0f : -1.0f;
+        float lat = pcg32_range(&r, lane + 0.5f + bound, fmaxf(gapEnd - bound, lane + 0.5f + bound));
+        float y = pcg32_range(&r, 0.4f + bound, fmaxf(p->propHeightMax, 0.4f + bound)) - path->style.floorDepth;
+        DVec3 ctr = dv_add(ps.pos, dv_add(dv_scale(ps.B, side * lat), dv_scale(ps.N, y)));
+        Vector3 axis = Vector3Normalize((Vector3){ pcg32_range(&r, -1, 1), pcg32_range(&r, 0.3f, 1), pcg32_range(&r, -1, 1) });
+        set_u(c, U_OBJ_A + g, env_local(ctr, c->origin), size);
+        set_u(c, U_OBJ_B + g, axis, pcg32_range(&r, 0.15f, 0.6f) * (pcg32_chance(&r, 0.5f) ? 1.0f : -1.0f));
+        set_u(c, U_OBJ_C + g, (Vector3){ pcg32_float(&r) * 6.2831853f, 0, 0 }, 0.0f);
+        LineAttr e = { COL_PALE, p->propEdgeIntensity, pcg32_float(&r), 0.0f, (float)g, 0.0f };
+        LineAttr f = { COL_CYAN, p->propFaceIntensity, pcg32_float(&r), 0.0f, (float)g, 0.0f };
+        float w = 0.035f;
+        float kind = pcg32_float(&r);
+        if (kind < 0.5f) shape_cube(&c->geo[CB_PROP_EDGES], &c->geo[CB_PROP_FACES], h, e, f, w);
+        else if (kind < 0.75f) shape_octa(&c->geo[CB_PROP_EDGES], &c->geo[CB_PROP_FACES], h * 1.3f, e, f, w);
+        else shape_sphere(&c->geo[CB_PROP_EDGES], h * 1.2f, e, w);
+        if (c->debrisCount < CHUNK_MAX_DEBRIS) {
+            DebrisInfo *d = &c->debris[c->debrisCount++];
+            d->center = ctr; d->radius = bound; d->s = s;
+        }
+    }
+}
+
 static void city_build_chunk(Environment *env, const PathSystem *path, int chunkIndex, ChunkCpu *out)
 {
     CityState *st = (CityState *)env->state;
     CityTowerParams tp = tower_params(st, path);
     int n = city_towers_plan(&tp, st->seed, path, chunkIndex, st->towers, CITY_MAX_TOWERS, NULL, 0, NULL);
     city_towers_build(st->towers, n, out->origin, &out->geo[CB_BODY], &out->geo[CB_EDGES], st->p.edgeIntensity, st->p.edgeWidth);
+    CityDecorParams dp = st->p.decor;
+    dp.inner = tp.laneHalfWidth + tp.clearance;
+    dp.bandMax = tp.bandMax;
+    city_decor_build(&dp, st->towers, n, path, out->origin, &out->geo[CB_TRACES], &out->geo[CB_GLYPHS]);
+    build_props(st, path, chunkIndex, out);
 }
 
 static void city_upload(Environment *env, ChunkCpu *in, ChunkGpu *out) { chunk_upload_default(in, out); }
@@ -218,7 +339,12 @@ static void draw_batch(CityState *st, const FrameContext *ctx, int sh, const Chu
         Matrix xf = env_chunk_transform(c, ctx->renderOrigin);
         for (int m = 0; m < c->meshCount; m++) {
             if (c->meshBatch[m] != batch) continue;
-            if (batch == CB_EDGES) sl_f1(st->sl, sh, "uChunkFade", env_chunk_fade(c, ctx->time));
+            if (batch != CB_BODY) sl_f1(st->sl, sh, "uChunkFade", env_chunk_fade(c, ctx->time));
+            if (batch == CB_PROP_EDGES || batch == CB_PROP_FACES) {
+                sl_vec4v(st->sl, sh, "uObjA", c->uniforms[U_OBJ_A], 16);
+                sl_vec4v(st->sl, sh, "uObjB", c->uniforms[U_OBJ_B], 16);
+                sl_vec4v(st->sl, sh, "uObjC", c->uniforms[U_OBJ_C], 16);
+            }
             DrawMesh(c->meshes[m], st->mat, xf);
             ctx->stats->drawCalls++;
             ctx->stats->vertices += c->meshes[m].vertexCount;
@@ -261,13 +387,42 @@ static void city_draw_opaque(Environment *env, const FrameContext *ctx, const Ch
 static void city_draw_emissive(Environment *env, const FrameContext *ctx, const ChunkGpu *const *chunks, int n)
 {
     CityState *st = (CityState *)env->state;
-    if (!st->p.showTowers) return;
+    const CityParams *p = &st->p;
     ShaderLib *sl = st->sl;
     int sh = st->shLines;
     env_set_common_uniforms(sl, sh, ctx);
     sl_f1(sl, sh, "uEdgeMix", 0.0f);
     sl_f1(sl, sh, "uFlicker", 0.0f);
-    draw_batch(st, ctx, sh, chunks, n, CB_EDGES);
+    if (p->showTowers) draw_batch(st, ctx, sh, chunks, n, CB_EDGES);
+    if (p->showProps) {
+        sl_f1(sl, sh, "uFlicker", 0.25f);
+        draw_batch(st, ctx, sh, chunks, n, CB_PROP_EDGES);
+        env_set_common_uniforms(sl, st->shFace, ctx);
+        sl_f1(sl, st->shFace, "uDataRate", 1.2f);
+        draw_batch(st, ctx, st->shFace, chunks, n, CB_PROP_FACES);
+    }
+    if (p->showTowers && p->showGlyphs) {
+        int g = st->shGlyph;
+        env_set_common_uniforms(sl, g, ctx);
+        sl_v3(sl, g, "uPink", ct_srgb_to_linear(COL_PINK));
+        sl_v3(sl, g, "uViolet", ct_srgb_to_linear(COL_VIOLET));
+        sl_v3(sl, g, "uCyan", ct_srgb_to_linear(COL_PALE));
+        draw_batch(st, ctx, g, chunks, n, CB_GLYPHS);
+    }
+    if (p->showTowers && p->showTraces) {
+        int t = st->shTrace;
+        env_set_common_uniforms(sl, t, ctx);
+        sl_f1(sl, t, "uPulseSpeed", p->pulseSpeed);
+        sl_f1(sl, t, "uPulseAmount", p->pulseAmount);
+        draw_batch(st, ctx, t, chunks, n, CB_TRACES);
+    }
+    if (p->showRain) {
+        StreakParams rp = p->rain;
+        float fd = ctx->path->style.floorDepth;
+        rp.slabYMin = p->rainYMin - fd;
+        rp.slabYMax = p->rainYMax - fd;
+        streaks_draw(&st->rain, &rp, ctx);
+    }
 }
 
 static const char *city_label(const Environment *env, int archetype) { return "CITY"; }
@@ -275,6 +430,7 @@ static const char *city_label(const Environment *env, int archetype) { return "C
 static void city_unload(Environment *env)
 {
     CityState *st = (CityState *)env->state;
+    streaks_unload(&st->rain);
     if (st->sl) { st->mat.shader.id = rlGetShaderIdDefault(); UnloadMaterial(st->mat); }
     free(env->state);
     env->state = NULL;

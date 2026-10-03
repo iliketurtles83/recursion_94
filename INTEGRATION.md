@@ -176,9 +176,10 @@ A game simply never calls it, nor `ct_debug_draw`.
      Use `env_chunk_transform(chunk, ctx->renderOrigin)` as the model matrix and
      `env_set_common_uniforms()` for the shared fog/fade/time uniforms (`shaders/common.glsl`).
      Count draw calls in `ctx->stats`.
-   - Shared building blocks: `render/streaks.h` (GPU speed streaks along the path; keep a
+   - Shared building blocks: `render/streaks.h` (GPU speed streaks along the path, in a
+     cylinder or, with `volume = 1`, a slab above a floor with optional fall slant; keep a
      `StreakParams` in your params and register its fields under your own names) and
-     `render/shapes.h` (wireframe cube / octahedron with data faces) and
+     `render/shapes.h` (wireframe cube / octahedron with data faces, wire sphere) and
      `render/gridfloor.h` (infinite filtered neon grid floor; call from `drawOpaque`, it writes
      depth from `ctx->zNear/zFar`).
 5. Test: `./cybertunnel --env <id>` or press `T` at runtime; add a determinism case to
@@ -356,4 +357,4 @@ unknown keys are skipped, and loading first resets everything to defaults).
 | Pacing | `pacing` | bool | on | | |
 
 The template environment adds `tplRadius`, `tplYawStepDeg`, `tplMarkerIntensity` (group Template) while it is active.
-The city environment (Env #2, in progress) adds, while it is active: `cityLaneHalfWidth`, `cityYawStepDeg`, `cityFloorDepth`, `cityYawSpring` (group Path); `showFloor`, `gridCell`, `gridLineWidth`, `gridHaloWidth`, `gridIntensity`, `gridHalo`, `gridNodeBoost`, `gridWhiteCore`, `floorFogStart`, `floorFogEnd`, `floorSheen`, `gridFilter` (group Floor); `showSky`, `cityFogStart`, `cityFogEnd`, `hazeWidth`, `hazeGlow`, `skyDust` (group City); `showTowers`, `towerLatticeCells`, `towerClearance`, `towerBandMax`, `towerDensityNear`, `towerDensityFar`, `towerHeightMin`, `towerHeightMax`, `towerHeightFar`, `landmarkChance`, `landmarkMul`, `towerFootMin`, `towerFootMax`, `setbackChance`, `towerEdgeIntensity`, `towerEdgeWidth`, `towerBrightness`, `towerRim`, `towerUnderglow`, `panelW`, `panelH`, `seamDark`, `recessed` (group Towers). The core adds `rebaseDist` (group Sim, default 1024).
+The city environment (Env #2, in progress) adds, while it is active: `cityLaneHalfWidth`, `cityYawStepDeg`, `cityFloorDepth`, `cityYawSpring` (group Path); `showFloor`, `gridCell`, `gridLineWidth`, `gridHaloWidth`, `gridIntensity`, `gridHalo`, `gridNodeBoost`, `gridWhiteCore`, `floorFogStart`, `floorFogEnd`, `floorSheen`, `gridFilter` (group Floor); `showSky`, `cityFogStart`, `cityFogEnd`, `hazeWidth`, `hazeGlow`, `skyDust` (group City); `showTowers`, `towerLatticeCells`, `towerClearance`, `towerBandMax`, `towerDensityNear`, `towerDensityFar`, `towerHeightMin`, `towerHeightMax`, `towerHeightFar`, `landmarkChance`, `landmarkMul`, `towerFootMin`, `towerFootMax`, `setbackChance`, `towerEdgeIntensity`, `towerEdgeWidth`, `towerBrightness`, `towerRim`, `towerUnderglow`, `panelW`, `panelH`, `seamDark`, `recessed` (group Towers); `showTraces`, `showGlyphs`, `tracePitch`, `traceWidth`, `traceIntensity`, `traceBuses`, `traceFar`, `traceStop`, `tracePulse`, `tracePulseSpeed`, `tracePulseAmount`, `viaRadius`, `glyphStripChance`, `glyphBlockChance`, `glyphIntensity`, `glyphScroll`, `decorOffset` (group Decor); `showRain`, `rainDensity`, `rainLenMul`, `rainWMin`, `rainWMax`, `rainIntensity`, `rainCometFrac`, `rainZRange`, `rainHalfWidth`, `rainYMin`, `rainYMax`, `rainFallTilt`, `rainSpeedMul` (group Rain); `showProps`, `propsMax`, `propSizeMin`, `propSizeMax`, `propHeightMax`, `propEdgeIntensity`, `propFaceIntensity` (group Props). The core adds `rebaseDist` (group Sim, default 1024).

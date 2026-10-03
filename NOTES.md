@@ -361,3 +361,43 @@ are measured in chunks, so at 25 u/s an archetype run lasts ~1.6× longer than b
 and the boost FOV are relative to base/boost and are unaffected. The vortex regression renders
 were re-baselined after this change.
 
+## Phase D — Circuit traces, code panels, rain, props
+
+- `env/city_decor.c` (pure CPU, seeded from the tower hash): each face is classified against
+  the path at the tower's owner point. Faces toward the approaching camera get dense trace buses;
+  faces toward the lane get a glyph panel (2-column strip by the front edge 55 %, block 25 %) and
+  sparser traces around it; faces turned away get nothing.
+- Trace routing: a square lattice per face (pitch 0.55) with a 64-bit-per-row occupancy bitmap.
+  A bus of 2–4 traces climbs in runs of 3–14 rows and jogs 1–3 columns at 45° as one, always
+  keeping one free column to anything else, so buses never cross or touch. Traces drop out one by
+  one (staggered endings) and end in a via; buses starting mid-face start at vias. Stubs under
+  5 rows are dropped (they read as pale blocks). Glyph panels reserve their cells first.
+  Density falls to 35 % at bandMax (LOD). Strips sit 0.08 off the face: below that, depth
+  precision near the fog distance (≈ d²/(near·2²⁴) = 0.05 at 300 units) causes z-fighting.
+- `trace.vs/fs`: planar strips with min-pixel widening (energy kept), the neon line profile,
+  and data pulses running upward on ~45 % of traces.
+- `glyph.vs/fs`: code text. Rows of dash "words" with hashed lengths, indents and blank lines,
+  pink/violet (strips) or pink/pale-cyan/violet (blocks), slow upward scroll, row flicker,
+  and a fade to average brightness once rows or characters shrink toward a pixel.
+- Rain: `StreakParams.volume = 1` (slab ±45 across, 0.8–25 above the floor) plus `fallTilt`:
+  streaks start higher the further ahead, so they descend as they approach. The cylinder branch
+  in `streak.vs` is untouched (vortex renders byte-identical). 1200 streaks, density 0.5, long
+  (`rainLenMul` 4), wide, 5 % comets.
+- Props: 0–3 per chunk, slowly turning cubes, octahedra and wire spheres (new `shape_sphere`)
+  between the lane edge and the towers, 0.4–4 above the floor; same object/face shaders and
+  per-chunk uniform layout as the vortex debris; registered as collision debris.
+- Tuning: first pass had solid hot-pink strips on distant towers and a starfield of rain at the
+  vanishing point; glyph intensity 2.0 → 1.2, fixed 2-column strips, rain density 1 → 0.5,
+  half width 70 → 45, z range 220 → 170.
+  (`screenshots/compare_city_decor_t0.5.png`, `compare_city_decor_t2.5.png`,
+  `city_decor_closeup_1080p.png`)
+- **Accept:**
+  - Tests: 57 passed. Over 200 full city chunks: max 40,558 vertices per chunk (budget 60k),
+    on average 8k trace vertices and 13 glyph panels per chunk, 325 props all between lane edge
+    and towers and above the floor, worst full chunk build 1.56 ms. Env-level order
+    independence (200 chunks) still holds with decor.
+  - Bench 1080p, speed 120, 60 s: avg 0.69 ms, p99 0.83 ms, 76 draw calls, ~100k vertices;
+    max chunk build 2.55 ms, max streaming per frame 2.96 ms (budgets 3 / 4 ms: within, but the
+    build is the closest to its budget; first candidate for optimisation if content grows).
+  - Vortex regression set byte-identical.
+

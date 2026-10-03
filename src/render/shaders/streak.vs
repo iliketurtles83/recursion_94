@@ -1,6 +1,7 @@
 #version 330
 // GPU-only speed streaks. One static mesh of quads; everything is derived from the
-// per-streak id. Streaks live in a (slightly bent) cylinder around the path at the ship.
+// per-streak id. Streaks live in a cylinder around the path (uVolume 0, tunnels) or in a
+// slab above the floor (uVolume 1, open environments), following the path's curves.
 in vec3 vertexPosition;
 in vec2 vertexTexCoord;     // u: 0 = near end, 1 = far end; v: side
 in vec2 vertexTexCoord2;    // streak id, unused
@@ -22,6 +23,9 @@ uniform float uHelixFrac, uHelixRate;
 uniform float uCometFrac, uPurpleFrac;
 uniform float uStreakIntensity;
 uniform vec3  uColWhite, uColPurple;
+uniform float uVolume;      // 0 cylinder, 1 slab
+uniform vec3  uSlab;        // half width, y min, y max (path frame, N = up)
+uniform float uFallTilt;    // slab: rise per unit of distance ahead (falling rain)
 #include "common.glsl"
 out vec2 fUV;
 out vec3 fColor;
@@ -54,9 +58,18 @@ void main()
     vec4 P = mix(uPathP[i0], uPathP[i0 + 1], f);
     vec3 B = normalize(mix(uPathB[i0].xyz, uPathB[i0 + 1].xyz, f));
     vec3 N = normalize(mix(uPathN[i0].xyz, uPathN[i0 + 1].xyz, f));
-    float r = P.w * rf;
-    vec3 p = P.xyz + B * (cos(theta) * r) + N * (sin(theta) * r);
-    vec3 dir = normalize(uPathP[i0 + 1].xyz - uPathP[i0].xyz);
+    vec3 p, dir;
+    if (uVolume > 0.5) {
+        // Higher the further ahead, so streaks descend as they approach: falling rain.
+        float sx = mix(-uSlab.x, uSlab.x, h2);
+        float sy = mix(uSlab.y, uSlab.z, h3) + uFallTilt * max(zz, 0.0);
+        p = P.xyz + B * sx + N * sy;
+        dir = normalize(normalize(uPathP[i0 + 1].xyz - uPathP[i0].xyz) + N * uFallTilt);
+    } else {
+        float r = P.w * rf;
+        p = P.xyz + B * (cos(theta) * r) + N * (sin(theta) * r);
+        dir = normalize(uPathP[i0 + 1].xyz - uPathP[i0].xyz);
+    }
     vec3 toCam = normalize(uCamPos - p);
     vec3 side = normalize(cross(dir, toCam) + vec3(1e-5));
     float dist = length(uCamPos - p);

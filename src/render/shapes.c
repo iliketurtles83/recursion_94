@@ -1,5 +1,6 @@
 #include "shapes.h"
 #include "raymath.h"
+#include <math.h>
 
 void shape_cube(LineGeo *edges, LineGeo *faces, float h, LineAttr e, LineAttr f, float width)
 {
@@ -28,5 +29,19 @@ void shape_octa(LineGeo *edges, LineGeo *faces, float h, LineAttr e, LineAttr f,
         LineAttr fa = f;
         fa.anim = (float)i;
         lg_fill_tri(faces, a, b, c, n, fa);
+    }
+}
+
+void shape_sphere(LineGeo *edges, float r, LineAttr e, float width)
+{
+    const int segs = 20;
+    for (int ring = 0; ring < 3; ring++) {
+        Vector3 prev = { 0 };
+        for (int i = 0; i <= segs; i++) {
+            float a = 6.2831853f * (float)i / (float)segs, x = cosf(a) * r, y = sinf(a) * r;
+            Vector3 q = ring == 0 ? (Vector3){ x, y, 0 } : ring == 1 ? (Vector3){ 0, x, y } : (Vector3){ x, 0, y };
+            if (i > 0) lg_facing_segment(edges, prev, q, width, width, e.intensity, e.intensity, e);
+            prev = q;
+        }
     }
 }

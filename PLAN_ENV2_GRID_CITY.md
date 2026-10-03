@@ -1,6 +1,6 @@
 # Plan — Environment #2 "Neon Grid City"
 
-Status: Phases A–C done (see `NOTES.md`); Phases D–F open. Reference frames: `reference/t_0.5s.png`,
+Status: Phases A–D done (see `NOTES.md`); Phases E–F open. Reference frames: `reference/t_0.5s.png`,
 `reference/t_2.5s.png` and the first row and a half of `reference/contact_sheet.png` (0–3.5 s).
 
 ## 0. Why this one
@@ -42,7 +42,7 @@ Things in the core that assume a tunnel and need small changes:
 | Steering limit is symmetric `steerLimit · R` | `flight.c:130` | Add `PathStyle.floorDepth` (distance from centerline down to the floor, 0 = none) and `PathStyle.ceiling`. Flight clamps `y ≥ −floorDepth + shipClearance` when a floor exists. R now means the lane half-width |
 | Atmosphere (fog toward core color, far fade) comes only from core params | `cybertunnel.c:~472` | Add an optional `Environment.atmosphere(env, Atmosphere*)` hook so the city can fog to near-black and turn off fog-to-core |
 | Streaks, background and core are private to `env_vortex.c` | `env_vortex.c:662, 741, 777, 819` | Move streaks into a shared `render/streaks.c` with a volume shape (see Phase C). Background and core stay per-env |
-| No planar reflections | pipeline | Add an optional core-driven reflection pass (Phase D), enabled when `floorDepth > 0` and the env implements `drawReflected` |
+| No planar reflections | pipeline | Add an optional core-driven reflection pass (Phase E), enabled when `floorDepth > 0` and the env implements `drawReflected` |
 | Debris builders (cube, octa) are `static` in vortex | `env_vortex.c:531–560` | Move them into `render/shapes.c` so they can be shared |
 
 Path style for the city: `maxPitchDeg = 0`, `twistRateMax = 0`, `radiusNoiseAmp = 0`, `maxYawStepDeg ≈ 4`, `baseRadius` (lane half-width) about 9, and `floorDepth ≈ 2.2`. With zero pitch, every control point has y = 0, so the spline stays exactly in the y = 0 plane. Rotation-minimizing frames on a planar curve keep `N` equal to world up, which means the camera never rolls with the path and the floor stays horizontal. A test will check this (Phase A).
@@ -122,6 +122,7 @@ Each phase ends with its checks passing, a commit, and a short `NOTES.md` sectio
 - **Accept (tests)**: building chunks 0..200 in order and in shuffled order gives identical hashes. **No lattice cell is claimed by two chunks**, and none inside the band is claimed by zero chunks. No tower intersects the lane (distance check against path samples). Chunk build time stays below 3 ms.
 
 ### Phase D — Traces, glyph panels, rain
+- *(Done — see NOTES.md Phase D.)*
 - Trace router, vias, glyph shader, rain through `streaks.c` in slab mode, small floating props from `shapes.c`.
 - **Accept**: side-by-side screenshots against t_0.5 and t_2.5. Vertices per chunk and draw calls are recorded in the overlay and stay within the budget in §6 of the brief (< 150 draw calls, CPU < 2 ms).
 

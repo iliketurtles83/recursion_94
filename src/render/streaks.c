@@ -72,6 +72,9 @@ void streaks_draw(StreakSystem *s, const StreakParams *p, const FrameContext *ct
     sl_f1(sl, sh, "uStreakIntensity", p->intensity * energy);
     sl_v3(sl, sh, "uColWhite", ct_srgb_to_linear(p->colMain));
     sl_v3(sl, sh, "uColPurple", ct_srgb_to_linear(p->colAccent));
+    sl_f1(sl, sh, "uVolume", (float)p->volume);
+    sl_f3(sl, sh, "uSlab", p->slabHalfWidth, p->slabYMin, p->slabYMax);
+    sl_f1(sl, sh, "uFallTilt", p->fallTilt);
     s->mat.shader = sl_shader(sl, sh);
     DrawMesh(s->mesh, s->mat, MatrixIdentity());
     ctx->stats->drawCalls++;

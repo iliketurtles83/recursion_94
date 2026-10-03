@@ -491,6 +491,55 @@ static void test_city_towers(void)
     env.unload(&env);
 }
 
+// Full city chunks (towers + traces + glyphs + props): vertex budget, build time, props
+// float between the lane edge and the towers.
+static void test_city_decor(void)
+{
+    Environment env = env_city_create();
+    ParamRegistry reg;
+    params_clear(&reg);
+    env.registerParams(&env, &reg);
+    env.init(&env, 31, NULL);
+    PathStyle st = env.pathStyle(&env);
+    float lane = st.baseRadius, gapEnd = lane + params_get(params_find(&reg, "towerClearance"));
+    PathSystem p;
+    path_init(&p, 31, st);
+    static ChunkCpu c;
+    enum { N = 200 };
+    int maxVerts = 0, traceVerts = 0, glyphQuads = 0, props = 0, propsOk = 1;
+    double worstMs = 0.0;
+    for (int k = 0; k < N; k++) {
+        ensure_for_chunk(&p, &env, k);
+        clock_t c0 = clock();
+        chunk_cpu_begin(&c, &p, k);
+        env.buildChunk(&env, &p, k, &c);
+        double ms = (double)(clock() - c0) * 1000.0 / CLOCKS_PER_SEC;
+        if (ms > worstMs) worstMs = ms;
+        int v = 0;
+        for (int b = 0; b < CHUNK_BATCHES; b++) v += c.geo[b].vcount;
+        if (v > maxVerts) maxVerts = v;
+        traceVerts += c.geo[2].vcount;
+        glyphQuads += c.geo[3].vcount / 4;
+        for (int i = 0; i < c.debrisCount; i++) {
+            const DebrisInfo *d = &c.debris[i];
+            PathSample ps = path_sample(&p, d->s);
+            DVec3 rel = dv_sub(d->center, ps.pos);
+            double lat = fabs(dv_dot(rel, ps.B)), up = dv_dot(rel, ps.N) + st.floorDepth;
+            if (lat - d->radius < lane - 1e-3 || lat + d->radius > gapEnd + 1e-3 || up - d->radius < 0.4 - 1e-3) propsOk = 0;
+            props++;
+        }
+    }
+    printf("  city chunks: max %d verts/chunk, avg %d trace verts and %d glyph panels per chunk, %d props; worst full build %.2f ms\n",
+           maxVerts, traceVerts / N, glyphQuads / N, props, worstMs);
+    CHECK(traceVerts > 0 && glyphQuads > 0 && props > 0, "decor and props generated");
+    CHECK(maxVerts <= 60000, "chunk vertex budget (%d <= 60000)", maxVerts);
+    CHECK(worstMs < 3.0, "full city chunk build < 3 ms (%.2f ms)", worstMs);
+    CHECK(propsOk, "props between lane edge and towers, above the floor");
+    for (int b = 0; b < CHUNK_BATCHES; b++) lg_free(&c.geo[b]);
+    path_free(&p);
+    env.unload(&env);
+}
+
 static void test_params(void)
 {
     ParamRegistry reg;
@@ -521,6 +570,7 @@ int main(void)
     test_flight_framerate();
     test_city();
     test_city_towers();
+    test_city_decor();
     test_params();
     printf("%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
