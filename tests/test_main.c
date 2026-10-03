@@ -8,6 +8,7 @@
 #include "env/env.h"
 #include "render/gridfloor.h"
 #include "env/city_towers.h"
+#include "env/corridor_pillars.h"
 #include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -595,6 +596,164 @@ static void test_corridor(void)
     env.unload(&env);
 }
 
+static int pclaim_cmp(const void *a, const void *b)
+{
+    const PillarClaim *x = (const PillarClaim *)a, *y = (const PillarClaim *)b;
+    if (x->ix != y->ix) return x->ix < y->ix ? -1 : 1;
+    if (x->iz != y->iz) return x->iz < y->iz ? -1 : 1;
+    return 0;
+}
+
+// Corridor pillars: every lattice cell near the path has exactly one owner, no pillar enters
+// the lane + clearance, merged pairs never overlap a neighbour, builds stay inside the budget.
+static void test_corridor_pillars(void)
+{
+    Environment env = env_corridor_create();
+    ParamRegistry reg;
+    params_clear(&reg);
+    env.registerParams(&env, &reg);
+    env.init(&env, 29, NULL);
+    PathStyle st = env.pathStyle(&env);
+    PillarParams pp = { 0 };
+    pp.cell = params_get(params_find(&reg, "corGridCell"));
+    pp.latticeCells = (int)params_get(params_find(&reg, "corPillarLatticeCells"));
+    pp.laneHalfWidth = st.baseRadius;
+    pp.clearance = params_get(params_find(&reg, "corPillarClearance"));
+    pp.wallBand = params_get(params_find(&reg, "corWallBand"));
+    pp.bandMax = params_get(params_find(&reg, "corPillarBandMax"));
+    pp.wallDensity = params_get(params_find(&reg, "corWallDensity"));
+    pp.backDensity = params_get(params_find(&reg, "corBackDensity"));
+    pp.backRamp = params_get(params_find(&reg, "corBackRamp"));
+    pp.mergeChance = params_get(params_find(&reg, "corMergeChance"));
+    pp.widthMin = params_get(params_find(&reg, "corPillarWidthMin"));
+    pp.widthMax = params_get(params_find(&reg, "corPillarWidthMax"));
+    pp.depthMin = params_get(params_find(&reg, "corPillarDepthMin"));
+    pp.depthMax = params_get(params_find(&reg, "corPillarDepthMax"));
+    pp.heightMin = params_get(params_find(&reg, "corPillarHeightMin"));
+    pp.heightMax = params_get(params_find(&reg, "corPillarHeightMax"));
+    pp.backHeightMul = params_get(params_find(&reg, "corBackHeightMul"));
+    pp.stepsMin = (int)params_get(params_find(&reg, "corStepsMin"));
+    pp.stepsMax = (int)params_get(params_find(&reg, "corStepsMax"));
+    pp.stepMin = params_get(params_find(&reg, "corStepMin"));
+    pp.stepMax = params_get(params_find(&reg, "corStepMax"));
+    pp.slackMax = params_get(params_find(&reg, "corWallSlack"));
+    pp.outlineChance = params_get(params_find(&reg, "corOutlineChance"));
+    pp.floorY = -st.floorDepth;
+    double reach = pillars_reach(&pp);
+
+    enum { N = 200, MAXC = 200000, MAXP = 40000 };
+    PathSystem p;
+    path_init(&p, 29, st);
+    static PillarClaim all[MAXC], chunkClaims[8192];
+    static PillarDesc pillars[COR_MAX_PILLARS], allP[MAXP];
+    static LineGeo body;
+    int nAll = 0, nP = 0, nWall = 0, nMerged = 0, nOutline = 0, ownerOk = 1, laneOk = 1, stepped = 0;
+    double worstMs = 0.0, minGap = 1e9;
+    float inner = pp.laneHalfWidth + pp.clearance;
+    double L = pp.latticeCells * (double)pp.cell;
+    for (int k = 0; k < N; k++) {
+        int nc = 0;
+        path_ensure(&p, k * CHUNK_LEN - 100.0 - reach, (k + 1) * CHUNK_LEN + 100.0 + reach);
+        clock_t c0 = clock();
+        int n = pillars_plan(&pp, NULL, 29, &p, k, pillars, COR_MAX_PILLARS, chunkClaims, 8192, &nc);
+        lg_clear(&body);
+        pillars_build(pillars, n, path_sample(&p, k * CHUNK_LEN).pos, &body);
+        double ms = (double)(clock() - c0) * 1000.0 / CLOCKS_PER_SEC;
+        if (ms > worstMs) worstMs = ms;
+        for (int i = 0; i < nc && nAll < MAXC; i++) {
+            if (chunk_index_at(chunkClaims[i].sOwner) != k) ownerOk = 0;
+            all[nAll++] = chunkClaims[i];
+        }
+        for (int i = 0; i < n; i++) {
+            const PillarDesc *d = &pillars[i];
+            if (nP < MAXP) allP[nP++] = *d;
+            nWall += d->wall;
+            nOutline += d->outline;
+            if (d->a1 - d->a0 > L) nMerged++;
+            for (int t = 1; t < d->tiers; t++) if (d->cLane[t] != d->cLane[t - 1]) { stepped++; break; }
+            double x0, z0, x1, z1;
+            pillar_bounds(d, &x0, &z0, &x1, &z1);
+            for (double s = fmax(0.0, d->sOwner - 200.0); s <= d->sOwner + 200.0; s += 0.5) {
+                DVec3 q = path_sample(&p, s).pos;
+                double dx = q.x < x0 ? x0 - q.x : (q.x > x1 ? q.x - x1 : 0.0);
+                double dz = q.z < z0 ? z0 - q.z : (q.z > z1 ? q.z - z1 : 0.0);
+                double dd = sqrt(dx * dx + dz * dz);
+                if (dd < minGap) minGap = dd;
+                if (dd < inner - 0.05) laneOk = 0;
+            }
+        }
+    }
+    qsort(all, (size_t)nAll, sizeof(PillarClaim), pclaim_cmp);
+    int dups = 0;
+    for (int i = 1; i < nAll; i++) if (!pclaim_cmp(&all[i - 1], &all[i])) dups++;
+    // No two pillars overlap (merged slabs reach into their partner cell, which must stay empty).
+    int overlaps = 0;
+    for (int i = 0; i < nP; i++) {
+        double ax0, az0, ax1, az1;
+        pillar_bounds(&allP[i], &ax0, &az0, &ax1, &az1);
+        for (int j = i + 1; j < nP && j < i + 400; j++) {
+            double bx0, bz0, bx1, bz1;
+            pillar_bounds(&allP[j], &bx0, &bz0, &bx1, &bz1);
+            if (ax0 < bx1 - 1e-9 && bx0 < ax1 - 1e-9 && az0 < bz1 - 1e-9 && bz0 < az1 - 1e-9) overlaps++;
+        }
+    }
+    printf("  corridor pillars: %d chunks, %d pillars (%d wall, %d merged, %d stepped, %d outlined), %d claimed cells; worst build %.2f ms; min lane gap %.2f (need %.1f)\n",
+           N, nP, nWall, nMerged, stepped, nOutline, nAll, worstMs, minGap, inner);
+    CHECK(nWall > N * 2 && nP > nWall, "wall and back pillars placed (%d wall of %d)", nWall, nP);
+    CHECK(nMerged > 0 && stepped > nWall / 2, "merged slabs and stepped profiles occur (%d, %d)", nMerged, stepped);
+    CHECK(ownerOk, "every pillar claim lies in its own chunk");
+    CHECK(dups == 0, "no pillar cell claimed by two chunks (%d duplicates)", dups);
+    CHECK(overlaps == 0, "no overlapping pillars (%d)", overlaps);
+    CHECK(laneOk, "no pillar inside lane + clearance (min gap %.3f)", minGap);
+    CHECK(worstMs < 3.0, "chunk pillar build < 3 ms (%.2f ms)", worstMs);
+
+    // Brute-force ownership: every cell near the interior of the path is claimed by its owner.
+    int nSeg = (int)((N * CHUNK_LEN + reach) / 2.0);
+    double *px = (double *)malloc(sizeof(double) * (size_t)(nSeg + 1)), *pz = (double *)malloc(sizeof(double) * (size_t)(nSeg + 1));
+    double minx = 1e300, maxx = -1e300, minz = 1e300, maxz = -1e300;
+    path_reset(&p, 29, st);
+    for (int i = 0; i <= nSeg; i++) {
+        path_ensure(&p, i * 2.0 - 10.0, i * 2.0 + 10.0);
+        DVec3 q = path_sample(&p, i * 2.0).pos;
+        px[i] = q.x; pz[i] = q.z;
+        if (i * 2.0 >= CHUNK_LEN && i * 2.0 <= (N - 1) * CHUNK_LEN) {
+            if (q.x < minx) minx = q.x;
+            if (q.x > maxx) maxx = q.x;
+            if (q.z < minz) minz = q.z;
+            if (q.z > maxz) maxz = q.z;
+        }
+    }
+    int checked = 0, missing = 0, wrongOwner = 0;
+    for (int iz = (int)floor((minz - pp.bandMax) / L); iz <= (int)floor((maxz + pp.bandMax) / L); iz++) {
+        for (int ix = (int)floor((minx - pp.bandMax) / L); ix <= (int)floor((maxx + pp.bandMax) / L); ix++) {
+            double cx = (ix + 0.5) * L, cz = (iz + 0.5) * L, best = 1e300, bs = 0.0;
+            for (int i = 0; i < nSeg; i++) {
+                double dx = px[i + 1] - px[i], dz = pz[i + 1] - pz[i], l2 = dx * dx + dz * dz;
+                double t = l2 > 0.0 ? ((cx - px[i]) * dx + (cz - pz[i]) * dz) / l2 : 0.0;
+                t = t < 0.0 ? 0.0 : (t > 1.0 ? 1.0 : t);
+                double ex = px[i] + dx * t - cx, ez = pz[i] + dz * t - cz, d2 = ex * ex + ez * ez;
+                if (d2 < best) { best = d2; bs = (i + t) * 2.0; }
+            }
+            int owner = chunk_index_at(bs);
+            if (sqrt(best) > pp.bandMax - 0.01 || owner < 1 || owner > N - 2) continue;
+            checked++;
+            PillarClaim key = { ix, iz, 0.0, 0 };
+            const PillarClaim *c = (const PillarClaim *)bsearch(&key, all, (size_t)nAll, sizeof(PillarClaim), pclaim_cmp);
+            if (!c) missing++;
+            else if (chunk_index_at(c->sOwner) != owner) wrongOwner++;
+        }
+    }
+    free(px); free(pz);
+    CHECK(checked > 1000 && missing == 0, "every pillar cell in the band claimed (%d of %d missing)", missing, checked);
+    CHECK(wrongOwner == 0, "pillar cells claimed by the brute-force owner (%d wrong)", wrongOwner);
+
+    static uint64_t h[N];
+    CHECK(build_order_independent(&env, 29, N, h), "corridor chunk build independent of order (%d chunks)", N);
+    lg_free(&body);
+    path_free(&p);
+    env.unload(&env);
+}
+
 static void test_params(void)
 {
     ParamRegistry reg;
@@ -627,6 +786,7 @@ int main(void)
     test_city_towers();
     test_city_decor();
     test_corridor();
+    test_corridor_pillars();
     test_params();
     printf("%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

@@ -7,6 +7,7 @@
 #include "env_common.h"
 #include "core/rng.h"
 #include "core/pacing.h"
+#include "corridor_pillars.h"
 #include "render/gridfloor.h"
 #include "render/rmath.h"
 #include "render/pipeline.h"
@@ -14,9 +15,16 @@
 #include <stdlib.h>
 #include <string.h>
 
+enum { KB_BODY = 0 };   // chunk batches
+
+#define PILLAR_BAND_LIMIT 150.0f   // largest corPillarBandMax (sets pathReach)
+
 typedef struct CorridorParams {
     PathStyle path;
     GridFloorParams floor;
+    PillarParams pillars;
+    bool  showPillars;
+    float bodyBrightness, rimIntensity, underglow, panelW, panelH, seamDark, recessed;
     float fogStart, fogEnd;          // fog for chunk content
     float hazeWidth, hazeGlow, dust; // sky
     bool  showFloor, showSky;
@@ -29,6 +37,8 @@ typedef struct CorridorState {
     int            shSky;
     Material       mat;
     GridFloor      floor;
+    int            shBody;
+    PillarDesc     pillars[COR_MAX_PILLARS];   // build scratch (builds are single-threaded)
 } CorridorState;
 
 static const Color COL_CYAN    = { 0x4F, 0xEA, 0xF5, 255 };
@@ -83,6 +93,38 @@ static void cor_register(Environment *env, ParamRegistry *reg)
     f->floorColor = COL_FLOOR;
     f->horizonColor = COL_HORIZON;
 
+    g = "Pillars";
+    PillarParams *pp = &p->pillars;
+    params_bool(reg, g, "corShowPillars", &p->showPillars, true);
+    params_int(reg, g, "corPillarLatticeCells", &pp->latticeCells, 4, 2, 8);
+    params_float(reg, g, "corPillarClearance", &pp->clearance, 1.0f, 0.0f, 20.0f);
+    params_float(reg, g, "corWallBand", &pp->wallBand, 6.0f, 0.0f, 40.0f);
+    params_float(reg, g, "corPillarBandMax", &pp->bandMax, 90.0f, 20.0f, PILLAR_BAND_LIMIT);
+    params_float(reg, g, "corWallDensity", &pp->wallDensity, 0.6f, 0.0f, 1.0f);
+    params_float(reg, g, "corBackDensity", &pp->backDensity, 0.25f, 0.0f, 1.0f);
+    params_float(reg, g, "corBackRamp", &pp->backRamp, 30.0f, 0.0f, 100.0f);
+    params_float(reg, g, "corMergeChance", &pp->mergeChance, 0.3f, 0.0f, 1.0f);
+    params_float(reg, g, "corPillarWidthMin", &pp->widthMin, 4.0f, 2.0f, 8.0f);
+    params_float(reg, g, "corPillarWidthMax", &pp->widthMax, 6.5f, 2.0f, 8.0f);
+    params_float(reg, g, "corPillarDepthMin", &pp->depthMin, 3.0f, 1.0f, 8.0f);
+    params_float(reg, g, "corPillarDepthMax", &pp->depthMax, 6.0f, 1.0f, 8.0f);
+    params_float(reg, g, "corPillarHeightMin", &pp->heightMin, 30.0f, 4.0f, 120.0f);
+    params_float(reg, g, "corPillarHeightMax", &pp->heightMax, 45.0f, 4.0f, 160.0f);
+    params_float(reg, g, "corBackHeightMul", &pp->backHeightMul, 1.4f, 0.2f, 4.0f);
+    params_int(reg, g, "corStepsMin", &pp->stepsMin, 1, 0, 3);
+    params_int(reg, g, "corStepsMax", &pp->stepsMax, 3, 0, 3);
+    params_float(reg, g, "corStepMin", &pp->stepMin, 1.0f, 0.5f, 4.0f);
+    params_float(reg, g, "corStepMax", &pp->stepMax, 2.0f, 0.5f, 4.0f);
+    params_float(reg, g, "corWallSlack", &pp->slackMax, 1.5f, 0.0f, 8.0f);
+    params_float(reg, g, "corOutlineChance", &pp->outlineChance, 0.5f, 0.0f, 1.0f);
+    params_float(reg, g, "corPillarBrightness", &p->bodyBrightness, 1.6f, 0.0f, 8.0f);
+    params_float(reg, g, "corPillarRim", &p->rimIntensity, 0.06f, 0.0f, 2.0f);
+    params_float(reg, g, "corPillarUnderglow", &p->underglow, 0.08f, 0.0f, 2.0f);
+    params_float(reg, g, "corPanelW", &p->panelW, 2.4f, 0.2f, 8.0f);
+    params_float(reg, g, "corPanelH", &p->panelH, 1.8f, 0.2f, 16.0f);
+    params_float(reg, g, "corSeamDark", &p->seamDark, 0.55f, 0.0f, 1.0f);
+    params_float(reg, g, "corRecessed", &p->recessed, 0.2f, 0.0f, 1.0f);
+
     g = "Corridor";
     params_bool(reg, g, "corShowSky", &p->showSky, true);
     params_float(reg, g, "corFogStart", &p->fogStart, 80.0f, 0.0f, 600.0f);
@@ -100,13 +142,31 @@ static void cor_init(Environment *env, uint64_t seed, ShaderLib *sl)
     gridfloor_init(&st->floor, sl);
     if (sl) {
         st->shSky = sl_load(sl, "fullscreen.vs", "sky.fs");
+        st->shBody = sl_load(sl, "tower.vs", "tower.fs");
         st->mat = LoadMaterialDefault();
     }
 }
 
 static void cor_reseed(Environment *env, uint64_t seed) { ((CorridorState *)env->state)->seed = seed; }
 
-static void cor_build_chunk(Environment *env, const PathSystem *path, int chunkIndex, ChunkCpu *out) { out->archetype = 0; }
+// Pillar params that follow other settings (floor grid, lane, floor height).
+static PillarParams pillar_params(const CorridorState *st, const PathSystem *path)
+{
+    PillarParams pp = st->p.pillars;
+    pp.cell = st->p.floor.cell;
+    pp.laneHalfWidth = path->style.baseRadius;
+    pp.floorY = (float)(path_sample(path, 0.0).pos.y - path->style.floorDepth);   // level path: y is constant
+    return pp;
+}
+
+static void cor_build_chunk(Environment *env, const PathSystem *path, int chunkIndex, ChunkCpu *out)
+{
+    CorridorState *st = (CorridorState *)env->state;
+    out->archetype = 0;
+    PillarParams pp = pillar_params(st, path);
+    int n = pillars_plan(&pp, NULL, st->seed, path, chunkIndex, st->pillars, COR_MAX_PILLARS, NULL, 0, NULL);
+    pillars_build(st->pillars, n, out->origin, &out->geo[KB_BODY]);
+}
 static void cor_upload(Environment *env, ChunkCpu *in, ChunkGpu *out) { chunk_upload_default(in, out); }
 static void cor_release(Environment *env, ChunkGpu *gpu) { chunk_release_default(gpu); }
 static float cor_energy(const Environment *env, const PathSystem *path, double s) { return 0.5f; }
@@ -160,9 +220,46 @@ static void cor_draw_background(Environment *env, const FrameContext *ctx)
     rlEnableDepthMask();
 }
 
+static void draw_batch(CorridorState *st, const FrameContext *ctx, int sh, const ChunkGpu *const *chunks, int n, int batch)
+{
+    st->mat.shader = sl_shader(st->sl, sh);
+    for (int i = 0; i < n; i++) {
+        const ChunkGpu *c = chunks[i];
+        Matrix xf = env_chunk_transform(c, ctx->renderOrigin);
+        for (int m = 0; m < c->meshCount; m++) {
+            if (c->meshBatch[m] != batch) continue;
+            if (batch != KB_BODY) sl_f1(st->sl, sh, "uChunkFade", env_chunk_fade(c, ctx->time));
+            DrawMesh(c->meshes[m], st->mat, xf);
+            ctx->stats->drawCalls++;
+            ctx->stats->vertices += c->meshes[m].vertexCount;
+        }
+    }
+}
+
+static void draw_pillars(CorridorState *st, const FrameContext *ctx, const ChunkGpu *const *chunks, int n)
+{
+    const CorridorParams *p = &st->p;
+    ShaderLib *sl = st->sl;
+    int sh = st->shBody;
+    env_set_common_uniforms(sl, sh, ctx);
+    Vector3 body = ct_srgb_to_linear((Color){ 0x1A, 0x22, 0x2C, 255 });
+    Vector3 cyan = ct_srgb_to_linear(COL_CYAN);
+    sl_v3(sl, sh, "uBody", Vector3Scale(body, p->bodyBrightness));
+    sl_v3(sl, sh, "uRim", Vector3Scale(cyan, p->rimIntensity));
+    sl_v3(sl, sh, "uUnderglow", Vector3Scale(cyan, p->underglow));
+    sl_v3(sl, sh, "uKeyDir", Vector3Normalize((Vector3){ 0.35f, 0.55f, 0.75f }));
+    sl_f4(sl, sh, "uPanel", p->panelW, p->panelH, p->seamDark, p->recessed);
+    sl_f2(sl, sh, "uFogRange", p->fogStart, p->fogEnd);
+    sl_v3(sl, sh, "uZenith", ct_srgb_to_linear(COL_ZENITH));
+    sl_v3(sl, sh, "uHorizon", ct_srgb_to_linear(COL_HORIZON));
+    sl_f2(sl, sh, "uHaze", p->hazeWidth, p->hazeGlow);
+    draw_batch(st, ctx, sh, chunks, n, KB_BODY);
+}
+
 static void cor_draw_opaque(Environment *env, const FrameContext *ctx, const ChunkGpu *const *chunks, int n)
 {
     CorridorState *st = (CorridorState *)env->state;
+    if (st->p.showPillars) draw_pillars(st, ctx, chunks, n);
     if (!st->p.showFloor || ctx->reflectionPass) return;
     GridFloorParams fp = st->p.floor;
     fp.horizonGlow = st->p.hazeGlow;
@@ -189,7 +286,7 @@ Environment env_corridor_create(void)
     e.name = "Server Corridor";
     e.id = ENV_CORRIDOR;
     e.state = calloc(1, sizeof(CorridorState));
-    e.pathReach = 0.0;
+    e.pathReach = 2.2 * (PILLAR_BAND_LIMIT + 8.0 * 4.0) + 4.0;   // pillars_reach() at the largest band and lattice
     e.reflectiveFloor = true;
     e.pathStyle = cor_path_style;
     e.init = cor_init;

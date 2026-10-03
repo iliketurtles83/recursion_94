@@ -544,3 +544,35 @@ Plan: `PLAN_ENV3_SERVER_CORRIDOR.md`. Reference frames `reference/t_4.0s` … `t
   - Regression set (13 renders: vortex s=1200/3000/4200, seed 7, calm, intense, template, city
     s=40/300/1400/4230, city seed 4, city preset) byte-identical before and after the extraction.
   - Stub bench (`--env 3 --bench 8 --speed 120`): avg 0.15 ms, 22 draw calls.
+
+## Phase B — Pillars: placement and bodies
+
+- `env/corridor_pillars.c/.h`, on `lattice_place` with an 8-unit lattice (4 floor cells of 2.0).
+  The corridor's yaw spring keeps the heading within ~8° of one world axis, so each cell takes
+  its lane axis from the path tangent at its owner point ("along" with the lane, "across" away
+  from it); the camera-facing end is the one toward −T.
+- Wall rows: cells whose usable near edge is within `corWallBand` (6) of lane + clearance. The
+  lane face sits at the closest allowed position plus 0–1.5 slack (snapped to 0.5), and is pushed
+  out in 0.5 steps until the exact path-to-footprint distance (`lattice_rect_dist`) clears
+  lane + clearance; otherwise the cell stays empty. Width 4–6.5 along the lane inside the cell.
+- Merged slabs: even/odd cell pairs along the lane. The even cell may build one slab across both
+  (gaps 0.5–2 at the ends); the odd cell evaluates its partner's occupancy and merge roll itself
+  (both computed from the global nearest-point owner), so it is empty exactly when the partner
+  extends into it, whatever the build order. Window reach covers the extra lattice cell.
+- Back rows: placed freely inside their cell, density ramping in over `corBackRamp` (30) behind
+  the wall band so gaps between wall slabs stay dark; taller with distance, darker tint, 0–1 step.
+- Profile: 1–3 steps on wall pillars, the lane face moving in or out by 1–2 units (snapped to
+  0.5), never closer than the base lane face. Geometry is only what the chase camera can see:
+  per tier the lane face and the camera-facing face, plus overhang undersides and ledges.
+  Shaded with the city's `tower.fs` (rack-like panels 2.4 × 1.8, darker slate) instead of a new
+  `pillar.fs`: the panel uniforms already give the rack look, so a separate shader was not needed.
+- `screenshots/corridor_pillars_b.png` (s = 100, 700, 1500, 2600; no emissive content yet).
+- **Accept:**
+  - Tests: 75 passed. 200 chunks, 5709 pillars (1716 wall, 247 merged slabs, 879 with an outline
+    flag): no cell claimed twice, every cell in the band claimed by its brute-force owner, no
+    overlapping pillars, min lane gap 7.50 (lane 6.5 + clearance 1.0), worst build 0.52 ms;
+    env-level build order independence over 200 chunks.
+  - Curves: with the heading within 8° the world-aligned walls stagger in and out by at most a
+    few units along a chunk; reads as natural variation, no need for path-aligned placement.
+  - Bench (`--env 3 --bench 20 --speed 120`): avg 0.23 ms, 42 draw calls, max chunk build 1.65 ms.
+  - Regression set byte-identical.
