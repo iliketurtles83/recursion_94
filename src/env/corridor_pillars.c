@@ -171,11 +171,15 @@ static void plan_cell(void *user, const LatticeWindow *w, const LatticeCell *cel
         int steps = ci.wall ? pcg32_int(r, p->stepsMin, p->stepsMax) : pcg32_int(r, 0, 1);
         if (steps > COR_MAX_TIERS - 1) steps = COR_MAX_TIERS - 1;
         d->tiers = steps + 1;
-        // Tier tops: evenly spread fractions with jitter, last = H.
+        // Tier tops: wall pillars step within the part of the pillar the chase camera sees
+        // (4 units up to ~55 % of the height); back rows anywhere. Last = H.
         for (int k = 0; k < d->tiers; k++) {
-            float f = (float)(k + 1) / (float)d->tiers;
-            if (k < d->tiers - 1) f += pcg32_range(r, -0.25f, 0.25f) / (float)d->tiers;
-            d->yTop[k] = p->floorY + H * f;
+            float y = H;
+            if (k < d->tiers - 1) {
+                float t = ((float)k + 0.5f + pcg32_range(r, -0.3f, 0.3f)) / (float)(d->tiers - 1);
+                y = ci.wall ? 4.0f + (0.55f * H - 4.0f) * t : H * (0.3f + 0.5f * t);
+            }
+            d->yTop[k] = p->floorY + y;
         }
         // Lane face per tier: outward offset from `lane`, stepping by stepMin..stepMax.
         double maxOff = depth - p->depthMin * 0.75, off = 0.0;
@@ -319,6 +323,96 @@ void pillars_build(const PillarDesc *pl, int n, DVec3 o, LineGeo *body)
                 tan.x = 4.0f;
                 quad(body, p, uv, (Vector3){ 0.0f, 1.0f, 0.0f }, uv2, tan, tint);
             }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Decor: code rain panels, stepped outlines, floor kerbs
+
+static const Color COL_OUTLINE = { 0xC8, 0xF4, 0xFF, 255 };
+
+static void rain_quad(LineGeo *g, const Vector3 p[4], float w, float vb, float vt, Vector3 n, float hash, float face, float top,
+                      float intensity, float wall)
+{
+    int b = lg_reserve(g, 4, 6);
+    Vector4 t = { w, top, intensity, wall };
+    Vector2 uv2 = { hash, face };
+    Vector2 uv[4] = { { 0.0f, vb }, { w, vb }, { w, vt }, { 0.0f, vt } };
+    for (int i = 0; i < 4; i++) lg_vertex(g, p[i], uv[i], uv2, n, t, WHITE);
+    lg_quad(g, b, 0, 1, 2, 3);
+}
+
+void pillars_build_decor(const PillarDecorParams *p, const PillarDesc *pl, int n, DVec3 o,
+                         LineGeo *rain, LineGeo *outlines, LineGeo *kerbs)
+{
+    for (int i = 0; i < n; i++) {
+        const PillarDesc *d = &pl[i];
+        Pcg32 r = pcg32_seed(ct_hash64_2(d->hash, 2));
+        float h01 = (float)(d->hash & 0xFFFFFF) / 16777216.0f;
+        int s = d->side;
+        double aF = d->front > 0 ? d->a1 : d->a0;
+        double off = p->rainOffset;
+        float inten = p->rainIntensity * (d->wall ? 1.0f : p->backRain);
+        Vector3 nLane = axis_vec(d, 0.0, -s), nFront = axis_vec(d, d->front, 0.0);
+        float top = d->yTop[d->tiers - 1] - d->baseY;
+        if (rain && inten > 0.0f) {
+            for (int k = 0; k < d->tiers; k++) {
+                double yb = k == 0 ? d->baseY : d->yTop[k - 1], yt = d->yTop[k];
+                float vb = (float)(yb - d->baseY), vt = (float)(yt - d->baseY);
+                double cl = d->cLane[k] - s * off;
+                // Lane face, u along from a0 (all tiers share it, so columns line up).
+                Vector3 pa[4] = { loc(pillar_point(d, d->a0, cl, yb), o), loc(pillar_point(d, d->a1, cl, yb), o),
+                                  loc(pillar_point(d, d->a1, cl, yt), o), loc(pillar_point(d, d->a0, cl, yt), o) };
+                rain_quad(rain, pa, (float)(d->a1 - d->a0), vb, vt, nLane, h01, 0.0f, top, inten * p->laneRain, (float)d->wall);
+                // Camera-facing face, u across from the outer face.
+                double af = aF + d->front * off;
+                Vector3 pf[4] = { loc(pillar_point(d, af, d->cOut, yb), o), loc(pillar_point(d, af, d->cLane[k], yb), o),
+                                  loc(pillar_point(d, af, d->cLane[k], yt), o), loc(pillar_point(d, af, d->cOut, yt), o) };
+                rain_quad(rain, pf, (float)fabs(d->cOut - d->cLane[k]), vb, vt, nFront, h01, 1.0f, top, inten, (float)d->wall);
+            }
+        }
+        if (!d->outline) continue;
+        // Outline polyline in the camera-facing plane: (across, y) corners.
+        enum { MAXP = 2 * COR_MAX_TIERS + 4 };
+        double pc[MAXP], py[MAXP];
+        int np = 0;
+        double eo = p->outlineOffset, af = aF + d->front * eo, y0 = p->floorY + 0.03;
+        pc[np] = d->cLane[0] - s * eo; py[np++] = y0;
+        for (int k = 0; k < d->tiers; k++) {
+            double c = d->cLane[k] - s * eo;
+            if (k > 0 && fabs(c - pc[np - 1]) > 1e-6) { pc[np] = c; py[np] = py[np - 1]; np++; }
+            pc[np] = c; py[np++] = d->yTop[k];
+        }
+        double depth = fabs(d->cOut - d->cLane[d->tiers - 1]);
+        double frac = pcg32_range(&r, p->outlineTopMin, 1.0f);
+        pc[np] = pc[np - 1] + s * (depth + eo) * frac; py[np] = py[np - 1]; np++;
+        Vector3 pts[MAXP], acr[MAXP];
+        Vector3 up = { 0.0f, 1.0f, 0.0f };
+        for (int j = 0; j < np; j++) {
+            pts[j] = loc(pillar_point(d, af, pc[j], py[j]), o);
+            // In-plane normals of the adjacent segments; their sum is the miter at a right angle.
+            Vector3 m = { 0.0f, 0.0f, 0.0f };
+            for (int e = -1; e <= 0; e++) {
+                int a = j + e, b = a + 1;
+                if (a < 0 || b >= np) continue;
+                // Normal = direction turned toward the outside of the silhouette: up the lane edge it
+                // points at the lane, on an outward step up (ledge), on an inward step down (overhang).
+                int vertical = fabs(py[b] - py[a]) > fabs(pc[b] - pc[a]);
+                Vector3 nn = vertical ? axis_vec(d, 0.0, -s) : ((pc[b] - pc[a]) * s > 0.0 ? up : (Vector3){ 0.0f, -1.0f, 0.0f });
+                m.x += nn.x; m.y += nn.y; m.z += nn.z;
+            }
+            acr[j] = m;
+        }
+        LineAttr at = { COL_OUTLINE, p->outlineIntensity, pcg32_float(&r), 0.0f, -1.0f, 0.0f };
+        if (outlines) lg_planar_polyline(outlines, pts, acr, np, p->outlineWidth, at);
+        // Floor kerb from the outline's foot along the lane toward the camera.
+        if (kerbs) {
+            double len = pcg32_range(&r, p->kerbMin, p->kerbMax);
+            Vector3 ka = loc(pillar_point(d, af, d->cLane[0] - s * eo, y0), o);
+            Vector3 kb = loc(pillar_point(d, af + d->front * len, d->cLane[0] - s * eo, y0), o);
+            LineAttr ka2 = { COL_OUTLINE, p->outlineIntensity, at.hash, 0.0f, -1.0f, 0.0f };
+            lg_facing_segment(kerbs, ka, kb, p->kerbWidth, p->kerbWidth, p->outlineIntensity, p->outlineIntensity * 0.5f, ka2);
         }
     }
 }

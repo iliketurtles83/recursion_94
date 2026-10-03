@@ -97,6 +97,28 @@ void pillar_bounds(const PillarDesc *d, double *x0, double *z0, double *x1, doub
 // Vertex layout as tower.vs: texcoord face (u, v) world units, texcoord2 (hash, height),
 // tangent (face id 0 lane / 1 front / 4 underside, tier, wall, -), colour tint.
 void pillars_build(const PillarDesc *d, int n, DVec3 origin, LineGeo *body);
+typedef struct PillarDecorParams {
+    float rainOffset;        // code rain panels: distance off the face
+    float rainIntensity;     // per-panel HDR (the shader varies it per column / dash)
+    float backRain;          // back-row multiplier
+    float laneRain;          // lane-face multiplier (seen at grazing angles, reads denser)
+    float outlineWidth;      // half width
+    float outlineIntensity;
+    float outlineOffset;     // distance off the pillar edge
+    float outlineTopMin;     // the top run covers this..1 of the pillar depth
+    float kerbMin, kerbMax;  // floor kerb length along the lane
+    float kerbWidth;         // half width
+    float floorY;
+} PillarDecorParams;
+
+// Code rain panels: one quad per tier on the lane face and on the camera-facing face.
+// Layout as glyph.vs: texcoord (u across the face from its start, v above the floor),
+// texcoord2 (pillar hash, face 0 lane / 1 front), normal, tangent (width, tier top, intensity, wall).
+// Outlines (planar strips in the camera-facing plane, trace.vs packing) follow the lane-side
+// silhouette from the floor up the steps and partly across the top; kerbs (camera-facing
+// segments, object.vs packing) run from the outline's foot along the lane on the floor.
+void pillars_build_decor(const PillarDecorParams *p, const PillarDesc *d, int n, DVec3 origin,
+                         LineGeo *rain, LineGeo *outlines, LineGeo *kerbs);
 // World position of (along, across, y) for a pillar's lane axis.
 DVec3 pillar_point(const PillarDesc *d, double along, double across, double y);
 

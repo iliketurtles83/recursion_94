@@ -566,7 +566,7 @@ Plan: `PLAN_ENV3_SERVER_CORRIDOR.md`. Reference frames `reference/t_4.0s` … `t
   per tier the lane face and the camera-facing face, plus overhang undersides and ledges.
   Shaded with the city's `tower.fs` (rack-like panels 2.4 × 1.8, darker slate) instead of a new
   `pillar.fs`: the panel uniforms already give the rack look, so a separate shader was not needed.
-- `screenshots/corridor_pillars_b.png` (s = 100, 700, 1500, 2600; no emissive content yet).
+- (Screenshot superseded by `corridor_pillars_c.png`, Phase C.)
 - **Accept:**
   - Tests: 75 passed. 200 chunks, 5709 pillars (1716 wall, 247 merged slabs, 879 with an outline
     flag): no cell claimed twice, every cell in the band claimed by its brute-force owner, no
@@ -575,4 +575,47 @@ Plan: `PLAN_ENV3_SERVER_CORRIDOR.md`. Reference frames `reference/t_4.0s` … `t
   - Curves: with the heading within 8° the world-aligned walls stagger in and out by at most a
     few units along a chunk; reads as natural variation, no need for path-aligned placement.
   - Bench (`--env 3 --bench 20 --speed 120`): avg 0.23 ms, 42 draw calls, max chunk build 1.65 ms.
+  - Regression set byte-identical.
+
+## Phase C — Code rain and stepped outlines
+
+- Visual check against t_6.0 / t_7.0 changed the pillar proportions: in the reference the near
+  pillars are deep across, so their camera-facing faces (code rain + outline) fill the frame. The
+  lattice is now 12 units (6 floor cells), wall pillars 5–9 along × 6–10 across, wall band one
+  full cell (12) at density 0.75. Steps on wall pillars sit between 4 units and ~55 % of the
+  height (where the chase camera sees them) and move the lane face by 1.5–3 units.
+- Code rain (`coderain.fs`, vertex shader `glyph.vs`): one quad per tier on the lane face and on
+  the camera-facing face, 0.05 off the surface (back rows too, at 35 %; lane faces at 60 %, they
+  are seen at grazing angles and read denser). u in world units across the face, v above the
+  floor, so columns line up across tiers. Per column (hash): on/off (35 % empty), vertical span,
+  speed 1–4 u/s, dash period 0.32–0.62 and length; per dash: on/off (70 %) and brightness; rounded
+  dashes from an SDF; a brighter head with a trail runs down some columns; 18 % mint columns, rare
+  white flicker in the trail. Colour `#39FF6A`, HDR 1.6.
+- Distance filter: when columns (`fwidth(u/pitch)`) or dash rows shrink below ~2 px the pattern
+  converges to its mean brightness, halved, because a fully averaged grazing face otherwise reads
+  as flat green paint.
+- Outlines: for wall pillars with the outline flag (~half), a polyline in the camera-facing plane
+  follows the lane-side silhouette from the floor up every step and 30–100 % across the top. It
+  is a planar strip with mitred right-angle corners (in-plane normal turned toward the outside of
+  the silhouette, summed at corners), offset 0.1 off the edges, half width 0.2, HDR 4, own shader
+  `outline.fs` (white-hot core, pale cyan halo) with a gain so the reflection pass draws them at
+  35 % (full strength made long hard lines on the floor).
+- Floor kerbs: a camera-facing segment from the outline's foot along the lane toward the camera,
+  2–6 long, on the floor. The reference also runs some floor lines across the lane; those are
+  left out so nothing bright crosses the centre band where enemies will be.
+- Floor retuned for the enclosed look: grid intensity 1.7, halo 0.2, node pads 1.0, reflection 1.0.
+  Pillar bodies brighter (2.6) so the slate shows between the rain.
+- `screenshots/compare_corridor_c.png` (reference t_6.0 / t_6.5 / t_7.0 left, s = 100 / 2600 /
+  1500 right) and `corridor_pillars_c.png`. Beams, sky lattice, rings and rain come in D and E.
+- **Accept:**
+  - Tests: 79 passed. New: over 200 full chunks every outline and kerb vertex stays ≥ 6.98 from the
+    path (lane half-width 6.5; the ship reaches at most 0.9 × 6.5 = 5.85); max 1144 vertices per
+    chunk, worst build 0.26 ms.
+  - Shimmer: no scripted 60 s flight capture exists, so I used frames 1/60 s apart at base speed
+    (camera moved 0.42 units) and measured the mean absolute difference in the far third of the
+    screen, with the city as the accepted baseline: corridor 0.047–0.055 (720p) / 0.052–0.065
+    (1080p) vs city 0.033–0.051 / 0.036–0.060, at s = 900 / 2600 / 4100. Same range, no
+    shimmer seen in the 1080p crops.
+  - Bench 720p speed 120, 30 s: avg 0.31 ms, p99 0.45 ms, 98 draw calls; 1080p speed 40:
+    avg 0.49 ms, 102 draw calls. Max chunk build 0.9 ms.
   - Regression set byte-identical.

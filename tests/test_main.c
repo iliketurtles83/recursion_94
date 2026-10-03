@@ -754,6 +754,59 @@ static void test_corridor_pillars(void)
     env.unload(&env);
 }
 
+// Full corridor chunks: outlines and kerbs stay outside the lane (the ship's lateral range is
+// at most steerLimit x lane half-width), vertex budget, build time.
+static void test_corridor_decor(void)
+{
+    Environment env = env_corridor_create();
+    ParamRegistry reg;
+    params_clear(&reg);
+    env.registerParams(&env, &reg);
+    env.init(&env, 37, NULL);
+    PathStyle st = env.pathStyle(&env);
+    PathSystem p;
+    path_init(&p, 37, st);
+    static ChunkCpu c;
+    enum { N = 200, B_RAIN = 1, B_OUTLINE = 2, B_KERB = 3 };
+    int maxVerts = 0, rainQuads = 0, outlineVerts = 0, kerbs = 0;
+    double worstMs = 0.0, minLat = 1e9;
+    for (int k = 0; k < N; k++) {
+        ensure_for_chunk(&p, &env, k);
+        clock_t c0 = clock();
+        chunk_cpu_begin(&c, &p, k);
+        env.buildChunk(&env, &p, k, &c);
+        double ms = (double)(clock() - c0) * 1000.0 / CLOCKS_PER_SEC;
+        if (ms > worstMs) worstMs = ms;
+        int v = 0;
+        for (int b = 0; b < CHUNK_BATCHES; b++) v += c.geo[b].vcount;
+        if (v > maxVerts) maxVerts = v;
+        rainQuads += c.geo[B_RAIN].vcount / 4;
+        outlineVerts += c.geo[B_OUTLINE].vcount;
+        kerbs += c.geo[B_KERB].vcount / 4;
+        const int bs[2] = { B_OUTLINE, B_KERB };
+        for (int bi = 0; bi < 2; bi++) {
+            const LineGeo *g = &c.geo[bs[bi]];
+            for (int i = 0; i < g->vcount; i++) {
+                double x = c.origin.x + g->pos[i * 3], z = c.origin.z + g->pos[i * 3 + 2];
+                for (double s = fmax(0.0, c.s0 - 80.0); s <= c.s1 + 80.0; s += 0.5) {
+                    DVec3 q = path_sample(&p, s).pos;
+                    double d = sqrt((q.x - x) * (q.x - x) + (q.z - z) * (q.z - z));
+                    if (d < minLat) minLat = d;
+                }
+            }
+        }
+    }
+    printf("  corridor chunks: max %d verts/chunk, %d rain panels, %d outline verts, %d kerbs over %d chunks; worst full build %.2f ms; outline/kerb min distance to path %.2f (lane %.1f)\n",
+           maxVerts, rainQuads, outlineVerts, kerbs, N, worstMs, minLat, st.baseRadius);
+    CHECK(rainQuads > N * 10 && outlineVerts > 0 && kerbs > 0, "code rain, outlines and kerbs generated");
+    CHECK(minLat >= st.baseRadius, "outlines and kerbs stay outside the lane (%.2f >= %.1f)", minLat, st.baseRadius);
+    CHECK(maxVerts <= 60000, "corridor chunk vertex budget (%d <= 60000)", maxVerts);
+    CHECK(worstMs < 3.0, "full corridor chunk build < 3 ms (%.2f ms)", worstMs);
+    for (int b = 0; b < CHUNK_BATCHES; b++) lg_free(&c.geo[b]);
+    path_free(&p);
+    env.unload(&env);
+}
+
 static void test_params(void)
 {
     ParamRegistry reg;
@@ -787,6 +840,7 @@ int main(void)
     test_city_decor();
     test_corridor();
     test_corridor_pillars();
+    test_corridor_decor();
     test_params();
     printf("%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
