@@ -140,18 +140,21 @@ A game simply never calls it, nor `ct_debug_draw`.
 
 Select with `CtConfig.environment` / `ct_set_environment(ct, id)` (harness: `--env N`, `T`).
 Environment params exist only while that environment is active, so load an environment's
-preset after switching to it (`--env 2 --preset city`).
+preset after switching to it (`--env 2 --preset city`, `--env 3 --preset corridor`).
 
 | Id | Name | What it is | Preset |
 |---|---|---|---|
 | `CT_ENV_VORTEX` (0) | Data Vortex | Curving tunnel of segmented neon rings, spiral ribbons, speed streaks, tumbling debris, blazing core. Pacing CALM / GATES / DENSE / CORRIDOR | `default`, `calm`, `intense` |
 | `CT_ENV_TEMPLATE` (1) | Template | Skeleton to copy for new environments | – |
 | `CT_ENV_CITY` (2) | Neon Grid City | Open flight low over an infinite reflective grid floor between monolith towers with circuit traces and code text, light rain, floating props. Level path weaving around the grid axes; ship kept above the floor. Pacing AVENUE / DOWNTOWN / OPEN / PLAZA | `city` |
+| `CT_ENV_CORRIDOR` (3) | Server Corridor | Low flight over the same reflective grid floor between walls of server pillars covered in Matrix-style digital rain, with white stepped outlines and floor kerbs; a broken lattice of circuit-covered beams above the pillars, a sparse sky lattice, holo rings, light rain, wireframe props. Level path held within ~8° of a grid axis; ship kept between floor and ceiling. Pacing COLONNADE / SERVER HALL / ATRIUM | `corridor` |
 
 Both full environments follow the same treadmill model: the path is fixed and the player
 moves within the lane around it (`steerLimit` × lane radius; the city also clamps above its
-floor). `ct_debris_in_range` returns the vortex debris and the city's floating props; city
-towers never come closer than lane + `towerClearance` to the path, so they need no collision.
+floor). `ct_debris_in_range` returns the vortex debris and the city's and corridor's floating
+props; city towers never come closer than lane + `towerClearance` to the path and corridor
+pillars never closer than lane + `corPillarClearance`, so they need no collision. In the
+corridor the ship is also kept below `corCeilingHeight`; the beams start above it.
 
 ## 11. Adding an environment
 
@@ -193,12 +196,21 @@ towers never come closer than lane + `towerClearance` to the path, so they need 
      Use `env_chunk_transform(chunk, ctx->renderOrigin)` as the model matrix and
      `env_set_common_uniforms()` for the shared fog/fade/time uniforms (`shaders/common.glsl`).
      Count draw calls in `ctx->stats`.
+   - Content on a world lattice (open environments): `env/lattice_place.h` gives every lattice
+     cell near the path exactly one owning chunk (nearest path point), order-independently, plus
+     an exact path-to-rectangle distance for keep-out checks. If a cell's decision depends on a
+     neighbour cell or on pacing, evaluate those at the neighbour's own owner point through a
+     lookup that does not depend on the chunk being built (see `corridor_pillars.c` merges,
+     `corridor_beams.c` end caps, `arch_at` in `env_corridor.c`).
+   - Pacing: `core/pacing.h` (archetype Markov chain from a table of run bounds and a transition
+     matrix; blend helpers). `env/trace_route.h`: circuit-trace bus router for flat faces.
    - Shared building blocks: `render/streaks.h` (GPU speed streaks along the path, in a
      cylinder or, with `volume = 1`, a slab above a floor with optional fall slant; keep a
      `StreakParams` in your params and register its fields under your own names) and
      `render/shapes.h` (wireframe cube / octahedron with data faces, wire sphere) and
      `render/gridfloor.h` (infinite filtered neon grid floor; call from `drawOpaque`, it writes
-     depth from `ctx->zNear/zFar` and samples `ctx->reflection` when present).
+     depth from `ctx->zNear/zFar` and samples `ctx->reflection` when present; ceiling mode
+     `gridfloor_draw_ceiling` draws a sparse lattice on a high plane from `drawEmissive`).
    - `reflectiveFloor` (field) – with `PathStyle.floorDepth > 0`, the core renders a mirrored,
      blurred copy of the scene before the main pass (`reflectRes`, `reflectBlur`). Your draw
      functions are called for it with `ctx->reflectionPass = true`: skip the floor and sky, and
@@ -382,3 +394,4 @@ unknown keys are skipped, and loading first resets everything to defaults).
 
 The template environment adds `tplRadius`, `tplYawStepDeg`, `tplMarkerIntensity` (group Template) while it is active.
 The city environment adds, while it is active: `cityLaneHalfWidth`, `cityYawStepDeg`, `cityFloorDepth`, `cityYawSpring` (group Path); `showFloor`, `gridCell`, `gridLineWidth`, `gridHaloWidth`, `gridIntensity`, `gridHalo`, `gridNodeBoost`, `gridWhiteCore`, `floorFogStart`, `floorFogEnd`, `floorSheen`, `gridFilter`, `gridNodeSize`, `floorReflect`, `floorReflectR0` (group Floor); `showSky`, `cityFogStart`, `cityFogEnd`, `hazeWidth`, `hazeGlow`, `skyDust` (group City); `showTowers`, `towerLatticeCells`, `towerClearance`, `towerBandMax`, `towerDensityNear`, `towerDensityFar`, `towerHeightMin`, `towerHeightMax`, `towerHeightFar`, `landmarkChance`, `landmarkMul`, `towerFootMin`, `towerFootMax`, `setbackChance`, `towerEdgeIntensity`, `towerEdgeWidth`, `towerBrightness`, `towerRim`, `towerUnderglow`, `panelW`, `panelH`, `seamDark`, `recessed` (group Towers); `showTraces`, `showGlyphs`, `tracePitch`, `traceWidth`, `traceIntensity`, `traceBuses`, `traceFar`, `traceStop`, `tracePulse`, `tracePulseSpeed`, `tracePulseAmount`, `viaRadius`, `glyphStripChance`, `glyphBlockChance`, `glyphIntensity`, `glyphScroll`, `decorOffset` (group Decor); `showRain`, `rainDensity`, `rainLenMul`, `rainWMin`, `rainWMax`, `rainIntensity`, `rainCometFrac`, `rainZRange`, `rainHalfWidth`, `rainYMin`, `rainYMax`, `rainFallTilt`, `rainCenterGap`, `rainCenterFrac`, `rainSpeedMul` (group Rain); `showProps`, `propsMax`, `propSizeMin`, `propSizeMax`, `propHeightMax`, `propEdgeIntensity`, `propFaceIntensity` (group Props); `cityPacing` (group Pacing). The core adds `rebaseDist` (group Sim, default 1024).
+The corridor environment adds, while it is active (all prefixed `cor`, defaults in `presets/corridor.ini`): `coreR`, `coreG`, `coreB` (group Fog); `corLaneHalfWidth`, `corYawStepDeg`, `corFloorDepth`, `corCeilingHeight`, `corYawSpring` (group Path); `corShowFloor`, `corGridCell`, `corGridLineWidth`, `corGridHaloWidth`, `corGridIntensity`, `corGridHalo`, `corGridNodeBoost`, `corGridWhiteCore`, `corFloorFogStart`, `corFloorFogEnd`, `corFloorSheen`, `corGridFilter`, `corGridNodeSize`, `corFloorReflect`, `corFloorReflectR0` (group Floor); `corShowPillars`, `corPillarLatticeCells`, `corPillarClearance`, `corWallBand`, `corPillarBandMax`, `corWallDensity`, `corBackDensity`, `corBackRamp`, `corMergeChance`, `corPillarWidthMin`, `corPillarWidthMax`, `corPillarDepthMin`, `corPillarDepthMax`, `corPillarHeightMin`, `corPillarHeightMax`, `corBackHeightMul`, `corStepsMin`, `corStepsMax`, `corStepMin`, `corStepMax`, `corWallSlack`, `corOutlineChance`, `corPillarBrightness`, `corPillarRim`, `corPillarUnderglow`, `corPanelW`, `corPanelH`, `corSeamDark`, `corRecessed`, `corShowOutlines`, `corOutlineWidth`, `corOutlineIntensity`, `corOutlineOffset`, `corOutlineTopMin`, `corOutlineReflect`, `corKerbMin`, `corKerbMax`, `corKerbWidth` (group Pillars); `corShowRain`, `corRainIntensity`, `corRainBack`, `corRainLane`, `corRainOffset`, `corRainCharWidth`, `corRainEmpty`, `corRainSpeedMin`, `corRainSpeedMax`, `corRainResidual`, `corRainHead`, `corRainTrail`, `corRainGlyphRate` (group CodeRain); `corShowBeams`, `corBeamCell`, `corBeamBandMax`, `corBeamChance`, `corBeamGap`, `corBeamWidthMin`, `corBeamWidthMax`, `corBeamThickMin`, `corBeamThickMax`, `corBeamHeight`, `corBeamLevels`, `corBeamLaneKeep`, `corBeamBrightness`, `corBeamTraceIntensity`, `corBeamTracePitch`, `corBeamTraceRuns`, `corBeamTraceCross`, `corBeamPulseSpeed`, `corBeamPulseAmount`, `corShowSkyGrid`, `corSkyGridHeight`, `corSkyGridCell`, `corSkyGridSparse`, `corSkyGridWidth`, `corSkyGridIntensity`, `corSkyGridFadeStart`, `corSkyGridFadeEnd` (group Beams); `corShowRings`, `corRingTopChance`, `corRingLaneChance`, `corRingRadiusMin`, `corRingRadiusMax`, `corRingIntensity`, `corRingWidth`, `corRingSpin`, `corRingTilt` (group Rings); `corShowStreaks`, `corStreakDensity`, `corStreakLenMul`, `corStreakWMin`, `corStreakWMax`, `corStreakIntensity`, `corStreakCometFrac`, `corStreakZRange`, `corStreakHalfWidth`, `corStreakYMin`, `corStreakYMax`, `corStreakFallTilt`, `corStreakCenterGap`, `corStreakCenterFrac`, `corStreakSpeedMul` (group Rain); `corShowProps`, `corPropsMax`, `corPropSizeMin`, `corPropSizeMax`, `corPropHeightMin`, `corPropHeightMax`, `corPropEdgeIntensity`, `corPropFaceIntensity` (group Props); `corPacing` (group Pacing); `corShowSky`, `corFogStart`, `corFogEnd`, `corHazeWidth`, `corHazeGlow`, `corSkyDust` (group Corridor).

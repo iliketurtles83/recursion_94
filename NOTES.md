@@ -686,3 +686,51 @@ Plan: `PLAN_ENV3_SERVER_CORRIDOR.md`. Reference frames `reference/t_4.0s` … `t
   - Bench 720p speed 120, 30 s: avg 0.33 ms, 133 draw calls; 1080p speed 40: avg 0.53 ms, p99
     0.71 ms, 135 draw calls (budget 150), max chunk build 2.06 ms, streaming 2.2 ms per frame.
   - Regression set byte-identical.
+
+## Phase F — Pacing, presets, docs, bench
+
+- Archetypes (same Markov scheme as the city and vortex, `core/pacing.c`; every flight starts in
+  a COLONNADE, the reference framing). Each is a `CorArch` of multipliers:
+
+  | Archetype | Run (chunks) | Character | Energy |
+  |---|---|---|---|
+  | COLONNADE | 4–9 | wall pillars both sides with gaps, sparse beams | 0.50 |
+  | SERVER HALL | 3–6 | denser walls (×1.3), merged slabs ×2 (few gaps), outlines ×1.6, beams ×1.9 | 0.85 |
+  | ATRIUM | 2–4 | walls thinned (×0.45) and pushed 10 further out, no beams, ring clusters ×3 and 1.4× larger, props ×2 | 0.30 |
+
+  CRYSTAL (orange polyhedra) is not added: still an open question (plan §6).
+- Order independence across archetype boundaries: a pillar cell's merge partner and a beam
+  cell's neighbours can be owned by the next chunk, so the archetype is not a per-chunk blend
+  but a global lookup `arch_at(s)` (previous chunk's archetype fading into this one across the
+  chunk, evaluated at each cell's own owner point). `PillarArchFn` / `BeamParams.densityAt` take
+  it as a callback. To keep it cheap the build caches the archetypes of the 24 chunks around the
+  one being built in one walk of the chain (`pacing_archetypes`). The archetype never brings a
+  pillar closer than the base clearance (`clearanceAdd ≥ 0`), never raises pillars (height ≤ 1×),
+  and beam density only changes which lines carry beams, so the lane, ceiling and beam-gap
+  guarantees hold in every archetype.
+- `corPacing = 0` uses the base parameters everywhere; the overlay shows the archetype.
+- Debug UI groups: Path, Floor, Pillars, CodeRain, Beams, Rings, Rain, Props, Pacing, Corridor
+  (content groups rebuild chunks). 140 corridor params (206 registered of 256 with the core).
+- `presets/corridor.ini`: full snapshot (`--env 3 --write-preset corridor`); loading it renders
+  byte-identically to the defaults. `INTEGRATION.md`: §10b table row, keep-out notes, §11
+  building blocks (`lattice_place`, `pacing`, `trace_route`, gridfloor ceiling mode), §12 params.
+- `screenshots/corridor_archetypes.png`: COLONNADE (s = 40), SERVER HALL (900), ATRIUM (1700), seed 1.
+- **Accept:**
+  - Tests: 90 passed. Pacing over 200 chunks: 42 runs, COLONNADE 104 / SERVER HALL 69 / ATRIUM
+    27 chunks, all runs within bounds, starts in a COLONNADE; env-level build order independence
+    (200 chunks, shuffled) holds with pacing.
+  - 10-minute bench (`--env 3 --bench 600 --speed 120`, 1280×720, autopilot, final s = 72,083):
+    avg 0.36 ms, p99 0.48 ms, max frame 6.0 ms; max chunk build 2.36 ms (budget 3); max streaming
+    per frame 2.44 ms (< 4); max GL coordinate 1421 (< 2048); GPU meshes 47–73 (bounded);
+    134 draw calls (< 150); heaviest chunk 2876 vertices (budget 60k).
+  - Regression set byte-identical.
+
+## Environment #3 summary
+
+The Server Corridor is complete per `PLAN_ENV3_SERVER_CORRIDOR.md` (minus the optional CRYSTAL
+archetype): walls of stepped server pillars with Matrix digital rain and white stepped outlines
+and kerbs over the shared reflective grid floor, a broken lattice of circuit beams above the
+pillars with a gap, a sparse sky lattice, holo rings, light rain, props, three pacing
+archetypes, `presets/corridor.ini`. Shared pieces extracted for it: `lattice_place`, `pacing`,
+`trace_route`, gridfloor ceiling mode. Open: orange polyhedra (CRYSTAL archetype or a transition
+set piece) and the corridor-into-vortex ending, both tied to the transition design.

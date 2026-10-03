@@ -769,7 +769,7 @@ static void test_corridor_decor(void)
     path_init(&p, 37, st);
     static ChunkCpu c;
     enum { N = 200, B_RAIN = 1, B_OUTLINE = 2, B_KERB = 3 };
-    int maxVerts = 0, rainQuads = 0, outlineVerts = 0, kerbs = 0, props = 0, propsOut = 1, rings = 0, ringsOut = 1;
+    int maxVerts = 0, rainQuads = 0, outlineVerts = 0, kerbs = 0, props = 0, propsOut = 1, rings = 0, ringsOut = 1, arch[N];
     double worstMs = 0.0, minLat = 1e9;
     for (int k = 0; k < N; k++) {
         ensure_for_chunk(&p, &env, k);
@@ -782,6 +782,7 @@ static void test_corridor_decor(void)
         for (int b = 0; b < CHUNK_BATCHES; b++) v += c.geo[b].vcount;
         if (v > maxVerts) maxVerts = v;
         rainQuads += c.geo[B_RAIN].vcount / 4;
+        arch[k] = c.archetype;
         outlineVerts += c.geo[B_OUTLINE].vcount;
         kerbs += c.geo[B_KERB].vcount / 4;
         // Props: outside the lane, above the floor. Ring clusters: outside the lane or above the
@@ -827,6 +828,23 @@ static void test_corridor_decor(void)
            maxVerts, rainQuads, outlineVerts, kerbs, N, worstMs, minLat, st.baseRadius);
     CHECK(rainQuads > N * 10 && outlineVerts > 0 && kerbs > 0, "code rain, outlines and kerbs generated");
     CHECK(minLat >= st.baseRadius, "outlines and kerbs stay outside the lane (%.2f >= %.1f)", minLat, st.baseRadius);
+    // Pacing: starts in a colonnade, every archetype appears, runs within bounds
+    // (COLONNADE 4-9, SERVER HALL 3-6, ATRIUM 2-4; the last run may be cut off).
+    static const int rmin[3] = { 4, 3, 2 }, rmax[3] = { 9, 6, 4 };
+    int runsOk = 1, runs = 0, seen[3] = { 0 };
+    for (int k = 0; k < N;) {
+        int e = k;
+        while (e < N && arch[e] == arch[k]) e++;
+        int len = e - k, a = arch[k];
+        if (a < 0 || a > 2 || len > rmax[a] || (e < N && len < rmin[a])) runsOk = 0;
+        else seen[a] += len;
+        runs++;
+        k = e;
+    }
+    printf("  corridor pacing: %d runs over %d chunks; COLONNADE %d SERVER HALL %d ATRIUM %d chunks\n", runs, N, seen[0], seen[1], seen[2]);
+    CHECK(arch[0] == 0, "corridor flight starts in a COLONNADE");
+    CHECK(seen[0] && seen[1] && seen[2], "all three corridor archetypes appear");
+    CHECK(runsOk, "corridor archetype runs within their length bounds");
     printf("  corridor props %d, ring clusters %d\n", props, rings);
     CHECK(props > 0 && propsOut, "corridor props outside the lane, above the floor");
     CHECK(rings > 0 && ringsOut, "ring clusters outside the lane or above the ship's ceiling");
@@ -876,7 +894,6 @@ static void test_corridor_beams(void)
     bp.levels = (int)params_get(params_find(&reg, "corBeamLevels"));
     bp.laneKeep = params_get(params_find(&reg, "corBeamLaneKeep"));
     bp.floorY = -st.floorDepth;
-    bp.density = 1.0f;
     double reach = beams_reach(&bp);
     enum { N = 200, MAXB = 40000, MAXC = 40000 };
     static BeamDesc beams[COR_MAX_BEAMS];

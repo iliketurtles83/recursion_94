@@ -12,7 +12,7 @@ enum { F_BEAMS = 3 };        // corridor feature sub-streams (pillars 1, pillar 
 double beams_reach(const BeamParams *p) { return lattice_reach(p->bandMax + p->cell); }
 
 typedef struct Line {
-    int      on;
+    float    roll;           // the line carries a beam where roll < chance * density(s)
     float    width, thick, y;
     uint32_t hash;
 } Line;
@@ -22,7 +22,7 @@ static Line line_of(const BeamParams *p, uint64_t envSeed, int dir, int idx)
 {
     Pcg32 r = pcg32_seed(ct_hash64_3(envSeed, (uint64_t)dir, (uint64_t)(int64_t)idx));
     Line l;
-    l.on = pcg32_chance(&r, p->chance * p->density);
+    l.roll = pcg32_float(&r);
     l.width = pcg32_range(&r, p->widthMin, p->widthMax);
     l.thick = pcg32_range(&r, p->thickMin, p->thickMax);
     int lv = pcg32_int(&r, 0, p->levels - 1);
@@ -44,10 +44,11 @@ typedef struct PlanCtx {
 static int has_segment(const PlanCtx *pc, const LatticeWindow *w, int dir, int ix, int iz, const Line *l)
 {
     const BeamParams *p = pc->p;
-    if (!l->on) return 0;
+    if (!p->densityAt && l->roll >= p->chance) return 0;
     double L = p->cell, cx = (ix + 0.5) * L, cz = (iz + 0.5) * L, s;
     double d = lattice_nearest(w, cx, cz, &s);
     if (d > p->bandMax) return 0;
+    if (p->densityAt && l->roll >= p->chance * p->densityAt(p->densityUser, s)) return 0;
     // Keep beams that run along the lane out from above it: the path's direction at the owner.
     double fs = s / LATTICE_SAMPLE_STEP - (double)w->m0;
     int i = (int)floor(fs);

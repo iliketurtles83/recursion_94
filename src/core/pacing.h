@@ -17,6 +17,8 @@ typedef struct PacingTable {
 
 // Archetype of chunk k (k < 0 is treated as 0). base: per-seed, per-environment hash.
 int   pacing_archetype(const PacingTable *t, uint64_t base, int k);
+// Archetypes of chunks k0 .. k0+n-1 in one walk of the chain (k0 may be negative).
+void  pacing_archetypes(const PacingTable *t, uint64_t base, int k0, int n, int *out);
 // Smoothstep blend factor 0..1 of s across [s0, s0 + len] (1 when len <= 0).
 float pacing_blend_t(double s, double s0, double len);
 // out[i] = a[i] + (b[i] - a[i]) * t for n floats (archetype structs made only of floats).

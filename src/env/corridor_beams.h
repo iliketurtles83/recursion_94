@@ -31,7 +31,10 @@ typedef struct BeamParams {
     int   levels;
     float laneKeep;          // along-lane beams need their centreline this far from the path
     float floorY;
-    float density;           // archetype multiplier on chance (1 = base)
+    // Archetype multiplier on chance at arc length s (NULL = 1), evaluated at each cell's owner
+    // point; must not depend on the chunk being built (neighbour cells decide the end caps).
+    float (*densityAt)(const void *user, double s);
+    const void *densityUser;
 } BeamParams;
 
 typedef struct BeamDesc {

@@ -5,7 +5,7 @@
 // Phases done: A (path style: level, no twist, floor and ceiling, strong yaw spring; grid
 // floor, sky, reflection), B (pillar placement and stepped bodies, corridor_pillars.c),
 // C (code rain, stepped outlines and floor kerbs), D (overhead beams, corridor_beams.c; sky
-// lattice), E (holo rings, light rain, props).
+// lattice), E (holo rings, light rain, props), F (pacing archetypes COLONNADE / SERVER HALL / ATRIUM).
 #include "env_common.h"
 #include "core/rng.h"
 #include "core/pacing.h"
@@ -28,7 +28,36 @@ enum { U_RING_A = 0, U_RING_B = 16, U_RING_C = 32, U_OBJ_A = 48, U_OBJ_B = 64, U
 #define MAX_PROPS    8
 #define RAIN_COUNT   600
 
-enum { F_RINGS = 4, F_PROPS = 5 };   // corridor feature sub-streams (pillars 1, decor 2, beams 3)   // chunk batches
+enum { F_RINGS = 4, F_PROPS = 5, F_PACING = 6 };   // corridor feature sub-streams (pillars 1, decor 2, beams 3)
+
+// Pacing archetypes: a hash-driven Markov chain over runs of chunks (core/pacing.c).
+typedef struct CorArch {
+    PillarArch pillar;       // wall/back density, clearance, height, outline, merge multipliers
+    float beams;             // x beam line chance
+    float ringTop, ringLane; // x ring chances
+    float ringSize;          // x ring radius
+    float props;             // x propsMax
+    float energy;            // pacing energy 0..1
+} CorArch;
+
+enum { CA_COLONNADE, CA_HALL, CA_ATRIUM, CA_COUNT, CA_DEFAULT = CA_COUNT };
+static const char *CA_NAMES[CA_COUNT + 1] = { "COLONNADE", "SERVER HALL", "ATRIUM", "DEFAULT" };
+//                       wall  back  clear  height outl  merge   beams  rTop  rLane rSize props energy
+static const CorArch CA_TABLE[CA_COUNT + 1] = {
+    [CA_COLONNADE] = { { 1.00f, 1.0f,  0.0f, 1.00f, 1.0f, 0.7f }, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0.50f },   // the reference framing
+    [CA_HALL]      = { { 1.30f, 1.6f,  0.0f, 1.00f, 1.6f, 2.0f }, 1.9f, 0.6f, 0.5f, 1.0f, 0.5f, 0.85f },   // dense walls, many outlines, dense beams
+    [CA_ATRIUM]    = { { 0.45f, 0.6f, 10.0f, 0.85f, 0.5f, 0.5f }, 0.0f, 3.0f, 1.0f, 1.4f, 2.0f, 0.30f },   // walls pushed back, open sky, big rings
+    [CA_DEFAULT]   = { { 1.00f, 1.0f,  0.0f, 1.00f, 1.0f, 1.0f }, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0.50f },
+};
+static const int CA_RUN_MIN[CA_COUNT] = { 4, 3, 2 };
+static const int CA_RUN_MAX[CA_COUNT] = { 9, 6, 4 };
+static const float CA_TRANSITION[CA_COUNT][CA_COUNT] = {
+    { 0.00f, 0.55f, 0.45f },
+    { 0.65f, 0.00f, 0.35f },
+    { 0.70f, 0.30f, 0.00f },
+};
+static const PacingTable CA_PACING = { CA_COUNT, CA_COLONNADE, CA_RUN_MIN, CA_RUN_MAX, &CA_TRANSITION[0][0] };
+#define ARCH_CACHE 24   // chunks around the one being built (cells reach ~5 chunks away)   // chunk batches
 
 #define PILLAR_BAND_LIMIT 150.0f   // largest corPillarBandMax (sets pathReach)
 #define BEAM_BAND_LIMIT   120.0f   // largest corBeamBandMax
@@ -53,6 +82,7 @@ typedef struct CorridorParams {
     bool  showProps;
     int   propsMax;
     float propSizeMin, propSizeMax, propHeightMin, propHeightMax, propEdgeIntensity, propFaceIntensity;
+    bool  pacing;
     float rainPitch, rainEmpty, rainSpeedMin, rainSpeedMax, rainResidual, rainHead, rainTrail, rainGlyphRate;
     float bodyBrightness, rimIntensity, underglow, panelW, panelH, seamDark, recessed;
     float fogStart, fogEnd;          // fog for chunk content
@@ -70,6 +100,8 @@ typedef struct CorridorState {
     int            shBody, shRain, shTrace, shLines, shBeam, shRing, shFace;
     StreakSystem   streaks;
     PillarDesc     near[2][COR_MAX_PILLARS];   // neighbouring chunks' pillars (prop keep-out)
+    int            archK0, archCache[ARCH_CACHE];   // archetypes of chunks archK0.. (build scratch)
+    bool           archValid;
     BeamDesc       beams[COR_MAX_BEAMS];
     PillarDesc     pillars[COR_MAX_PILLARS];   // build scratch (builds are single-threaded)
 } CorridorState;
@@ -258,6 +290,9 @@ static void cor_register(Environment *env, ParamRegistry *reg)
     params_float(reg, g, "corPropEdgeIntensity", &p->propEdgeIntensity, 2.4f, 0.0f, 10.0f);
     params_float(reg, g, "corPropFaceIntensity", &p->propFaceIntensity, 0.2f, 0.0f, 3.0f);
 
+    g = "Pacing";
+    params_bool(reg, g, "corPacing", &p->pacing, true);
+
     g = "Corridor";
     params_bool(reg, g, "corShowSky", &p->showSky, true);
     params_float(reg, g, "corFogStart", &p->fogStart, 80.0f, 0.0f, 600.0f);
@@ -287,7 +322,47 @@ static void cor_init(Environment *env, uint64_t seed, ShaderLib *sl)
     streaks_init(&st->streaks, sl, RAIN_COUNT);
 }
 
-static void cor_reseed(Environment *env, uint64_t seed) { ((CorridorState *)env->state)->seed = seed; }
+static void cor_reseed(Environment *env, uint64_t seed)
+{
+    CorridorState *st = (CorridorState *)env->state;
+    st->seed = seed;
+    st->archValid = false;
+}
+
+static uint64_t pacing_base(const CorridorState *st) { return ct_hash64_3(st->seed, ENV_CORRIDOR, F_PACING); }
+
+static int archetype_of_chunk(const CorridorState *st, int k)
+{
+    if (!st->p.pacing) return CA_DEFAULT;
+    if (k < 0) k = 0;
+    if (st->archValid && k >= st->archK0 && k < st->archK0 + ARCH_CACHE) return st->archCache[k - st->archK0];
+    return pacing_archetype(&CA_PACING, pacing_base(st), k);   // every flight starts in a colonnade
+}
+
+// Blended archetype at s: the previous chunk's archetype fades into this one across the chunk.
+// Depends only on (seed, s), never on the chunk being built.
+static CorArch arch_at(const CorridorState *st, double s)
+{
+    int k = chunk_index_at(s);
+    int a = archetype_of_chunk(st, k - 1), b = archetype_of_chunk(st, k);
+    if (a == b) return CA_TABLE[b];
+    CorArch r;
+    pacing_lerp(&r.pillar.wallDensity, &CA_TABLE[a].pillar.wallDensity, &CA_TABLE[b].pillar.wallDensity,
+                (int)(sizeof(CorArch) / sizeof(float)), pacing_blend_t(s, k * CHUNK_LEN, CHUNK_LEN));
+    return r;
+}
+
+static PillarArch pillar_arch_cb(const void *user, double s) { return arch_at((const CorridorState *)user, s).pillar; }
+static float beam_density_cb(const void *user, double s) { return arch_at((const CorridorState *)user, s).beams; }
+
+static void cache_archetypes(CorridorState *st, int k)
+{
+    st->archValid = false;
+    if (!st->p.pacing) return;
+    st->archK0 = k - ARCH_CACHE / 2;
+    pacing_archetypes(&CA_PACING, pacing_base(st), st->archK0, ARCH_CACHE, st->archCache);
+    st->archValid = true;
+}
 
 // Pillar params that follow other settings (floor grid, lane, floor height).
 static PillarParams pillar_params(const CorridorState *st, const PathSystem *path)
@@ -335,7 +410,7 @@ static void ring_cluster(const CorridorParams *p, ChunkCpu *c, int slot, DVec3 c
     }
 }
 
-static void build_rings(const CorridorState *st, const PathSystem *path, const PillarDesc *pl, int n, ChunkCpu *c)
+static void build_rings(const CorridorState *st, const PathSystem *path, const PillarDesc *pl, int n, const CorArch *ca, ChunkCpu *c)
 {
     const CorridorParams *p = &st->p;
     Pcg32 r = pcg32_seed(ct_hash64_3(st->seed, ((uint64_t)ENV_CORRIDOR << 8) | F_RINGS, (uint64_t)(int64_t)c->index));
@@ -343,10 +418,10 @@ static void build_rings(const CorridorState *st, const PathSystem *path, const P
     // Above the lane, higher than the ship can fly (keeps the play band clear): 0-1 per chunk.
     float fd = path->style.floorDepth, ceil = path->style.ceilingHeight;
     float beamY = p->beams.heightMin - 1.5f;   // underside of the lowest beam level, above the floor
-    if (pcg32_chance(&r, p->ringLaneChance)) {
+    if (pcg32_chance(&r, p->ringLaneChance * ca->ringLane)) {
         double s = c->s0 + pcg32_range(&r, 0.2f, 0.8f) * CHUNK_LEN;
         PathSample ps = path_sample(path, s);
-        float rad = pcg32_range(&r, p->ringRadiusMin, p->ringRadiusMax);
+        float rad = pcg32_range(&r, p->ringRadiusMin, p->ringRadiusMax) * ca->ringSize;
         float y = pcg32_range(&r, ceil + fd + 2.0f, fmaxf(beamY - 1.5f, ceil + fd + 2.0f));
         DVec3 ctr = dv_add(ps.pos, dv_add(dv_scale(ps.B, pcg32_range(&r, -2.0f, 2.0f)), dv_scale(ps.N, y - fd)));
         ring_cluster(p, c, slot++, ctr, rad, &r);
@@ -355,10 +430,10 @@ static void build_rings(const CorridorState *st, const PathSystem *path, const P
     for (int i = 0; i < n && slot < MAX_CLUSTERS; i++) {
         const PillarDesc *d = &pl[i];
         Pcg32 pr = pcg32_seed(ct_hash64_2(d->hash, F_RINGS));
-        if (!d->wall || !pcg32_chance(&pr, p->ringTopChance)) continue;
+        if (!d->wall || !pcg32_chance(&pr, p->ringTopChance * ca->ringTop)) continue;
         int t = d->tiers - 1;
         double cl = d->cLane[t], depth = fabs(d->cOut - cl);
-        float rad = fminf(pcg32_range(&pr, p->ringRadiusMin, p->ringRadiusMax), (float)(depth * 0.5 + 0.9));   // edge stays outside the lane
+        float rad = fminf(pcg32_range(&pr, p->ringRadiusMin, p->ringRadiusMax) * ca->ringSize, (float)(depth * 0.5 + 0.9));   // edge stays outside the lane
         DVec3 ctr = pillar_point(d, (d->a0 + d->a1) * 0.5, (cl + d->cOut) * 0.5, d->yTop[t] + pcg32_range(&pr, 0.8f, 2.0f));
         ring_cluster(p, c, slot++, ctr, rad, &pr);
     }
@@ -376,12 +451,13 @@ static int prop_hits(const PillarDesc *pl, int n, DVec3 ctr, double bound)
 
 // Small slowly turning wireframe cubes low beside the lane, in the gaps between pillars. Checked
 // against this chunk's and both neighbours' pillars (a pillar can reach across a chunk boundary).
-static void build_props(CorridorState *st, const PathSystem *path, const PillarParams *pp, const PillarDesc *own, int nOwn, ChunkCpu *c)
+static void build_props(CorridorState *st, const PathSystem *path, const PillarParams *pp, const PillarArchFn *af,
+                        const PillarDesc *own, int nOwn, int propsMax, ChunkCpu *c)
 {
     const CorridorParams *p = &st->p;
-    if (p->propsMax <= 0) return;
+    if (propsMax <= 0) return;
     Pcg32 r = pcg32_seed(ct_hash64_3(st->seed, ((uint64_t)ENV_CORRIDOR << 8) | F_PROPS, (uint64_t)(int64_t)c->index));
-    int count = pcg32_int(&r, 0, p->propsMax > MAX_PROPS ? MAX_PROPS : p->propsMax);
+    int count = pcg32_int(&r, 0, propsMax > MAX_PROPS ? MAX_PROPS : propsMax);
     if (count == 0) return;
     int nn[2] = { -1, -1 };   // neighbours' pillars, planned only when a prop comes near that end
     float lane = path->style.baseRadius;
@@ -400,7 +476,7 @@ static void build_props(CorridorState *st, const PathSystem *path, const PillarP
         int hit = prop_hits(own, nOwn, ctr, bound + 0.3);
         for (int j = 0; j < 2 && !hit; j++) {
             if ((j ? c->s1 - s : s - c->s0) > 24.0) continue;   // a neighbour's pillar reaches < 24 into this chunk
-            if (nn[j] < 0) nn[j] = pillars_plan(pp, NULL, st->seed, path, c->index + (j ? 1 : -1), st->near[j], COR_MAX_PILLARS, NULL, 0, NULL);
+            if (nn[j] < 0) nn[j] = pillars_plan(pp, af, st->seed, path, c->index + (j ? 1 : -1), st->near[j], COR_MAX_PILLARS, NULL, 0, NULL);
             hit = prop_hits(st->near[j], nn[j], ctr, bound + 0.3);
         }
         if (hit) continue;
@@ -421,24 +497,31 @@ static void build_props(CorridorState *st, const PathSystem *path, const PillarP
 static void cor_build_chunk(Environment *env, const PathSystem *path, int chunkIndex, ChunkCpu *out)
 {
     CorridorState *st = (CorridorState *)env->state;
-    out->archetype = 0;
+    cache_archetypes(st, chunkIndex);
+    out->archetype = archetype_of_chunk(st, chunkIndex);
     PillarParams pp = pillar_params(st, path);
-    int n = pillars_plan(&pp, NULL, st->seed, path, chunkIndex, st->pillars, COR_MAX_PILLARS, NULL, 0, NULL);
+    PillarArchFn af = { pillar_arch_cb, st };
+    int n = pillars_plan(&pp, &af, st->seed, path, chunkIndex, st->pillars, COR_MAX_PILLARS, NULL, 0, NULL);
     pillars_build(st->pillars, n, out->origin, &out->geo[KB_BODY]);
     PillarDecorParams dp = st->p.decor;
     dp.floorY = pp.floorY;
     pillars_build_decor(&dp, st->pillars, n, out->origin, &out->geo[KB_RAIN], &out->geo[KB_OUTLINE], &out->geo[KB_KERB]);
     BeamParams bp = st->p.beams;
     bp.floorY = pp.floorY;
-    bp.density = 1.0f;
+    bp.densityAt = beam_density_cb;
+    bp.densityUser = st;
     int nb = beams_plan(&bp, st->seed, path, chunkIndex, st->beams, COR_MAX_BEAMS, NULL, 0, NULL);
     beams_build(st->beams, nb, out->origin, &out->geo[KB_BEAM]);
-    build_rings(st, path, st->pillars, n, out);
-    build_props(st, path, &pp, st->pillars, n, out);
+    CorArch ca = arch_at(st, out->s0 + CHUNK_LEN * 0.5);
+    build_rings(st, path, st->pillars, n, &ca, out);
+    build_props(st, path, &pp, &af, st->pillars, n, (int)lroundf((float)st->p.propsMax * ca.props), out);
 }
 static void cor_upload(Environment *env, ChunkCpu *in, ChunkGpu *out) { chunk_upload_default(in, out); }
 static void cor_release(Environment *env, ChunkGpu *gpu) { chunk_release_default(gpu); }
-static float cor_energy(const Environment *env, const PathSystem *path, double s) { return 0.5f; }
+static float cor_energy(const Environment *env, const PathSystem *path, double s)
+{
+    return arch_at((const CorridorState *)env->state, s).energy;
+}
 
 // Enclosed open space: fog to the dark sky instead of toward a core.
 static void cor_atmosphere(const Environment *env, Atmosphere *atmo)
@@ -624,7 +707,10 @@ static void cor_draw_emissive(Environment *env, const FrameContext *ctx, const C
     }
 }
 
-static const char *cor_label(const Environment *env, int archetype) { return "CORRIDOR"; }
+static const char *cor_label(const Environment *env, int archetype)
+{
+    return (archetype >= 0 && archetype <= CA_COUNT) ? CA_NAMES[archetype] : "?";
+}
 
 static void cor_unload(Environment *env)
 {

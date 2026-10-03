@@ -47,7 +47,7 @@ typedef struct PillarParams {
     float floorY;            // world y of the floor
 } PillarParams;
 
-// Pacing archetype multipliers for pillars (blended by owner point, as in the city).
+// Pacing archetype multipliers for pillars (taken at each cell's owner point, as in the city).
 typedef struct PillarArch {
     float wallDensity, backDensity;
     float clearanceAdd;      // >= 0
@@ -56,10 +56,12 @@ typedef struct PillarArch {
     float merge;
 } PillarArch;
 
-typedef struct PillarArchBlend {
-    PillarArch prev, cur;
-    double s0, len;
-} PillarArchBlend;
+// Archetype parameters at arc length s (blended), for any s: a cell's merge partner may be
+// owned by a neighbouring chunk, so the lookup must not depend on the chunk being built.
+typedef struct PillarArchFn {
+    PillarArch (*at)(const void *user, double s);
+    const void *user;
+} PillarArchFn;
 
 typedef struct PillarDesc {
     int32_t  ix, iz;         // lattice cell
@@ -88,8 +90,8 @@ typedef struct PillarClaim {
 PillarArch pillar_arch_neutral(void);
 // Path arc length a chunk build samples beyond [s0, s1].
 double pillars_reach(const PillarParams *p);
-// Pillars owned by chunk `chunkIndex`. blend and claims may be NULL.
-int pillars_plan(const PillarParams *p, const PillarArchBlend *blend, uint64_t seed, const PathSystem *path, int chunkIndex,
+// Pillars owned by chunk `chunkIndex`. arch (NULL = neutral) and claims may be NULL.
+int pillars_plan(const PillarParams *p, const PillarArchFn *arch, uint64_t seed, const PathSystem *path, int chunkIndex,
                  PillarDesc *out, int maxPillars, PillarClaim *claims, int maxClaims, int *claimCount);
 // World xz rectangle covering all tiers of a pillar.
 void pillar_bounds(const PillarDesc *d, double *x0, double *z0, double *x1, double *z1);

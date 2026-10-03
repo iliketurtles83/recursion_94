@@ -3,20 +3,15 @@
 #include "env.h"
 #include "core/chunks.h"
 #include "core/rng.h"
-#include "core/pacing.h"
 #include <math.h>
 
 enum { F_PILLARS = 1 };     // feature sub-streams of the corridor's per-cell RNG
 
 PillarArch pillar_arch_neutral(void) { return (PillarArch){ 1.0f, 1.0f, 0.0f, 1.0f, 1.0f, 1.0f }; }
 
-static PillarArch arch_at(const PillarArchBlend *b, double s)
+static PillarArch arch_at(const PillarArchFn *a, double s)
 {
-    if (!b) return pillar_arch_neutral();
-    PillarArch r;
-    pacing_lerp(&r.wallDensity, &b->prev.wallDensity, &b->cur.wallDensity, (int)(sizeof(PillarArch) / sizeof(float)),
-                pacing_blend_t(s, b->s0, b->len));
-    return r;
+    return a ? a->at(a->user, s) : pillar_arch_neutral();
 }
 
 double pillars_reach(const PillarParams *p)
@@ -44,7 +39,7 @@ static void window_at(const LatticeWindow *w, double s, double *x, double *z, do
 
 typedef struct PlanCtx {
     const PillarParams *p;
-    const PillarArchBlend *blend;
+    const PillarArchFn *arch;
     uint64_t envSeed;
     double L;
     PillarDesc *out;
@@ -86,7 +81,7 @@ static void cell_info(const PlanCtx *pc, const LatticeWindow *w, int ix, int iz,
     ci->cHi = ci->cLo + L;
     ci->aLo = ia2 * L;
     ci->aHi = ci->aLo + L;
-    ci->arch = arch_at(pc->blend, ci->sOwn);
+    ci->arch = arch_at(pc->arch, ci->sOwn);
     double inner = p->laneHalfWidth + p->clearance + fmax(ci->arch.clearanceAdd, 0.0f);
     ci->laneMin = pathAcross + ci->side * inner;
     ci->nearEdge = ci->side > 0 ? ci->cLo : ci->cHi;
@@ -225,13 +220,13 @@ static void plan_cell(void *user, const LatticeWindow *w, const LatticeCell *cel
     if (pc->claims && pc->nc < pc->maxClaims) pc->claims[pc->nc++] = (PillarClaim){ ix, iz, cell->sOwner, idx };
 }
 
-int pillars_plan(const PillarParams *p, const PillarArchBlend *blend, uint64_t seed, const PathSystem *path, int chunkIndex,
+int pillars_plan(const PillarParams *p, const PillarArchFn *arch, uint64_t seed, const PathSystem *path, int chunkIndex,
                  PillarDesc *out, int maxPillars, PillarClaim *claims, int maxClaims, int *claimCount)
 {
     static LatticeWindow w;   // large; builds run on one thread
     lattice_window_load(&w, path, chunkIndex, pillars_reach(p));
     double L = (double)p->latticeCells * p->cell;
-    PlanCtx pc = { p, blend, ct_hash64_2(seed, ((uint64_t)ENV_CORRIDOR << 8) | F_PILLARS), L, out, maxPillars, 0, claims, maxClaims, 0 };
+    PlanCtx pc = { p, arch, ct_hash64_2(seed, ((uint64_t)ENV_CORRIDOR << 8) | F_PILLARS), L, out, maxPillars, 0, claims, maxClaims, 0 };
     lattice_for_each(&w, L, p->bandMax, plan_cell, &pc);
     if (claimCount) *claimCount = pc.nc;
     return pc.n;
