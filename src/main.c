@@ -1,20 +1,29 @@
 // Sandbox harness: window, input, CLI. Talks to the module only through cybertunnel.h.
 #include "cybertunnel.h"
+#include "game/game.h"
+#include "game/techno.h"
+#include "core/resources.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#ifdef _WIN32
+#include <direct.h>
+#endif
 
 typedef struct Cli {
     unsigned long long seed;
     int    w, h, vsync, fps, env;
     double bench, speed;
     double shot;
-    bool   hasShot, hdr8, noShip, ui, whiteout, boost;
+    bool   hasShot, hdr8, noShip, ui, whiteout, boost, hidden;
     const char *preset;
     const char *shotOut;
     const char *writePreset;
+    const char *musicPreview;
     bool   listParams;
+    bool   sandbox, autoplay, idleBot, audioCheck, startupCheck;
+    double missionShot;
     const char *sets[32];        // --set name=value, applied after --preset
     int    setCount;
 } Cli;
@@ -23,12 +32,14 @@ static void usage(void)
 {
     printf("cybertunnel [--seed N] [--w W --h H] [--vsync 0|1] [--fps N] [--env 0|1|2|3]\n"
            "            [--bench SECONDS [--speed U]] [--shot S [--out FILE]] [--preset NAME] [--write-preset NAME] [--list-params] [--hdr8] [--noship] [--ui] [--whiteout] [--boost]\n"
-           "            [--set NAME=VALUE ...]\n");
+           "            [--set NAME=VALUE ...] [--hidden] [--sandbox]\n"
+           "            [--mission-shot SECONDS --out FILE] [--autoplay] [--bot-idle]\n"
+           "            [--music-preview FILE.wav] [--startup-check]\n");
 }
 
 static Cli parse(int argc, char **argv)
 {
-    Cli c = { 1, 1280, 720, 1, 0, 0, 0.0, 120.0, 0.0, false, false, false, false, false, false, NULL, NULL, NULL, false, { 0 }, 0 };
+    Cli c = { .seed = 1, .w = 1600, .h = 900, .vsync = 1, .speed = 120.0, .missionShot = -1 };
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
         const char *v = i + 1 < argc ? argv[i + 1] : NULL;
@@ -51,6 +62,14 @@ static Cli parse(int argc, char **argv)
         else if (!strcmp(a, "--ui")) c.ui = true;
         else if (!strcmp(a, "--whiteout")) c.whiteout = true;
         else if (!strcmp(a, "--boost")) c.boost = true;
+        else if (!strcmp(a, "--hidden")) c.hidden = true;
+        else if (!strcmp(a, "--sandbox")) c.sandbox = true;
+        else if (!strcmp(a, "--autoplay")) c.autoplay = true;
+        else if (!strcmp(a, "--bot-idle")) c.idleBot = true;
+        else if (!strcmp(a, "--audio-check")) c.audioCheck = true;
+        else if (!strcmp(a, "--startup-check")) c.startupCheck = true;
+        else if (!strcmp(a,"--music-preview")&&v){c.musicPreview=v;i++;}
+        else if (!strcmp(a, "--mission-shot") && v) {c.missionShot=atof(v);i++;}
         else if (!strcmp(a, "--help") || !strcmp(a, "-h")) { usage(); exit(0); }
         else { fprintf(stderr, "unknown argument: %s\n", a); usage(); exit(1); }
     }
@@ -68,7 +87,11 @@ static void save_screenshot(CtTunnel *ct, const char *explicitPath)
     char name[256], path[512];
     if (explicitPath) snprintf(path, sizeof(path), "%s", explicitPath);
     else {
+#ifdef _WIN32
+        _mkdir("shots");
+#else
         mkdir("shots", 0755);
+#endif
         ct_screenshot_name(ct, name, sizeof(name));
         snprintf(path, sizeof(path), "shots/%s", name);
     }
@@ -81,12 +104,20 @@ static void save_screenshot(CtTunnel *ct, const char *explicitPath)
 int main(int argc, char **argv)
 {
     Cli cli = parse(argc, argv);
+    if(cli.musicPreview)return techno_preview(cli.musicPreview,cli.seed)?0:1;
+    char resourceRoot[1024];
+    if(!resources_prepare(resourceRoot,sizeof(resourceRoot))) {
+        fprintf(stderr,"DATA-RUN: game resources are unavailable\n");return 2;
+    }
     bool bench = cli.bench > 0.0;
+    bool mission = !bench && !cli.hasShot && !cli.sandbox && !cli.listParams && !cli.writePreset && (cli.env==CT_ENV_VORTEX||cli.env==CT_ENV_CITY);
     unsigned int flags = FLAG_WINDOW_RESIZABLE;
-    if (cli.vsync && !bench) flags |= FLAG_VSYNC_HINT;
+    if (cli.hidden) flags |= FLAG_WINDOW_HIDDEN;
+    if (cli.vsync && !bench && !cli.autoplay && cli.missionShot<0) flags |= FLAG_VSYNC_HINT;
     SetConfigFlags(flags);
     SetTraceLogLevel(LOG_WARNING);
-    InitWindow(cli.w, cli.h, "cybertunnel sandbox");
+    InitWindow(cli.w, cli.h, mission ? "DATA // RUN - Data Vortex" : "cybertunnel sandbox");
+    SetWindowMinSize(800,450);
     SetExitKey(KEY_NULL);
     if (cli.fps > 0) SetTargetFPS(cli.fps);
 
@@ -97,7 +128,14 @@ int main(int argc, char **argv)
     cfg.environment = cli.env;
     cfg.hdr16 = !cli.hdr8;
     cfg.drawShip = !cli.noShip;
+    // Packaged assets live beside the executable, independent of the working directory.
+    char shaderDir[1200], presetDir[1200], assetDir[1200];
+    snprintf(shaderDir, sizeof(shaderDir), "%s/shaders", resourceRoot);
+    snprintf(presetDir, sizeof(presetDir), "%s/presets", resourceRoot);
+    snprintf(assetDir, sizeof(assetDir), "%s/assets", resourceRoot);
+    cfg.shaderDir=shaderDir;cfg.presetDir=presetDir;cfg.assetDir=assetDir;
     CtTunnel *ct = ct_create(&cfg);
+    if (mission && !ct_preset_load(ct,cli.env==CT_ENV_CITY?"mission":"mission_tunnel")) {ct_destroy(ct);CloseWindow();return 2;}
     if (cli.preset) ct_preset_load(ct, cli.preset);
     for (int i = 0; i < cli.setCount; i++) {
         char name[128];
@@ -120,6 +158,10 @@ int main(int argc, char **argv)
         ct_destroy(ct);
         CloseWindow();
         return ok ? 0 : 1;
+    }
+    if (mission) {
+        int result=game_run(ct,cli.hidden,cli.missionShot,cli.autoplay,cli.idleBot,cli.audioCheck,cli.startupCheck,cli.shotOut);
+        ct_destroy(ct);CloseWindow();return result;
     }
 
     float *frameTimes = NULL;

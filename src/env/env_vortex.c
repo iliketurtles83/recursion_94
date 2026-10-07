@@ -20,7 +20,7 @@
 enum { F_RINGS = 1, F_RIBBONS, F_DEBRIS, F_HOLO, F_PACING, F_RAILS };
 
 // Chunk batches (material slots).
-enum { B_RINGS = 0, B_RIBBONS, B_EDGES, B_FACES, B_HOLO, B_RAILS };
+enum { B_RINGS = 0, B_RIBBONS, B_EDGES, B_FACES, B_HOLO, B_RAILS, B_STRUCTURE };
 
 // Per-chunk uniform layout (vec4 slots).
 #define MAX_RINGS   16
@@ -76,6 +76,8 @@ typedef struct VortexParams {
     float coreIntensity, coreSize, coreStreak, coreRays, bgGlow, dust;
     // pacing
     bool  pacing;
+    float curveDetail;
+    bool showPanels;
     // layer toggles
     bool  showRings, showRibbons, showStreaks, showDebris, showHolo, showCore, showBackground;
 } VortexParams;
@@ -85,7 +87,7 @@ typedef struct VortexState {
     VortexParams p;
     ArchParams   arch[ARCH_COUNT + 1];
     ShaderLib   *sl;
-    int          shRing, shRibbon, shObject, shFace, shCore, shBg;
+    int          shRing, shRibbon, shObject, shFace, shCore, shBg, shPanel;
     Material     mat;
     StreakSystem streaks;
     Vector2      coreUV;         // smoothed screen position of the core
@@ -179,6 +181,8 @@ static void vortex_register(Environment *env, ParamRegistry *reg)
     params_float(reg, g, "streakZRange", &p->streaks.zRange, 160.0f, 40.0f, 400.0f);
     params_float(reg, g, "streakZBehind", &p->streaks.zBehind, 12.0f, -50.0f, 50.0f);
     params_float(reg, g, "streakSpeedMul", &p->streaks.speedMul, 1.0f, 0.0f, 4.0f);
+    params_float(reg, g, "streakInnerRadius", &p->streaks.cylinderInner, 0.2f, 0.0f, 1.2f);
+    params_float(reg, g, "streakCenterClear", &p->streaks.centerClear, 0.0f, 0.0f, 1.0f);
     p->streaks.colMain = (Color){ 0xD8, 0xF8, 0xFF, 255 };
     p->streaks.colAccent = COL_PURPLE;
 
@@ -213,6 +217,9 @@ static void vortex_register(Environment *env, ParamRegistry *reg)
 
     g = "Pacing";
     params_bool(reg, g, "pacing", &p->pacing, true);
+    g="Tunnel detail";
+    params_float(reg,g,"curveDetail",&p->curveDetail,1.0f,1.0f,4.0f);
+    params_bool(reg,g,"showPanels",&p->showPanels,false);
 }
 
 static PathStyle vortex_path_style(const Environment *env)
@@ -304,7 +311,7 @@ static void build_layer(const VortexState *st, LineGeo *g, Pcg32 *r, float radiu
     if (gap > 0.7f) gap = 0.7f;
     float phase = pcg32_float(r) * TAU_F;
     float scale = R / 12.0f;
-    float step3 = 3.0f * DEG;
+    float step3 = 3.0f * DEG / p->curveDetail;
 
     // Style-wide dimensions so a layer reads as one consistent trace.
     float bandW = pcg32_range(r, p->bandWMin, p->bandWMax) * scale;
@@ -450,7 +457,7 @@ static void build_rails(const VortexState *st, ChunkCpu *c, const PathSystem *pa
             int64_t qi = (int64_t)floor(q0 / RAIL_PIECE + 0.5);
             ArchParams ap = arch_at(st, ca, q0);
             if (ct_hash01(ct_hash64_2(rh, (uint64_t)qi)) >= ap.railDensity * p->railDensityMul * 0.5f) continue;
-            const int steps = 4;
+            const int steps = (int)(4*p->curveDetail);
             Vector3 prev = { 0 };
             for (int k = 0; k <= steps; k++) {
                 double s = q0 + RAIL_PIECE * k / steps;
@@ -474,7 +481,7 @@ static void build_ribbons(const VortexState *st, ChunkCpu *c, const PathSystem *
     const VortexParams *p = &st->p;
     LineGeo *g = &c->geo[B_RIBBONS];
     uint64_t base = ct_hash64_3(st->seed, ENV_VORTEX, F_RIBBONS);
-    const double ds = 1.5;
+    const double ds = 1.5/p->curveDetail;
     int n = (int)ceil(CHUNK_LEN / ds);
     double uBase = floor(c->s0 / RIBBON_PERIOD) * RIBBON_PERIOD;
     for (int i = 0; i < p->ribbonCount; i++) {
@@ -584,7 +591,7 @@ static void build_holo(const VortexState *st, ChunkCpu *c, const PathSystem *pat
         for (int k = 0; k < rings; k++) {
             float rk = rad * (1.0f - 0.14f * (float)k);
             LineAttr at = { k == 0 ? COL_CYAN : COL_ICE, p->holoIntensity * (k == 0 ? 1.0f : 0.7f), pcg32_float(&r), 0.0f, (float)g, 0.0f };
-            const int segs = 48;
+            const int segs = (int)(48*p->curveDetail);
             Vector3 prev = { 0 };
             float gapStart = pcg32_float(&r) * TAU_F, gapLen = pcg32_chance(&r, 0.5f) ? pcg32_range(&r, 0.3f, 1.2f) : 0.0f;
             for (int i = 0; i <= segs; i++) {
@@ -594,6 +601,32 @@ static void build_holo(const VortexState *st, ChunkCpu *c, const PathSystem *pat
                 if (i > 0 && rel > gapLen) lg_facing_segment(&c->geo[B_HOLO], prev, q, 0.025f, 0.025f, at.intensity, at.intensity, at);
                 prev = q;
             }
+        }
+    }
+}
+
+static Vector3 panel_point(const PathSystem *path,ChunkCpu *c,double s,float a)
+{
+    PathSample p=path_sample(path,s);
+    DVec3 r=dv_add(dv_scale(p.B,cosf(a)),dv_scale(p.N,sinf(a)));
+    return env_local(dv_madd(p.pos,r,p.radius*1.25),c->origin);
+}
+static void build_panels(const VortexState *st,ChunkCpu *c,const PathSystem *path)
+{
+    if(!st->p.showPanels)return;
+    LineGeo *g=&c->geo[B_STRUCTURE];
+    // Sparse solid segments leave the original rings and ribbons visible.
+    for(double start=c->s0+3;start<c->s1;start+=24)for(int panel=0;panel<8;panel++) {
+        for(int z=0;z<4;z++)for(int a=0;a<12;a++) {
+            double s0=start+z*4,s1=s0+4;
+            float a0=panel*TAU_F/8+(.10f+a*.032f)*TAU_F/8,a1=a0+.032f*TAU_F/8;
+            Vector3 q[4]={panel_point(path,c,s0,a0),panel_point(path,c,s0,a1),panel_point(path,c,s1,a1),panel_point(path,c,s1,a0)};
+            PathSample p=path_sample(path,(s0+s1)*.5);
+            Vector3 normal=dv_to_v3(dv_scale(dv_add(dv_scale(p.B,cosf((a0+a1)*.5f)),dv_scale(p.N,sinf((a0+a1)*.5f))),-1));
+            int b=lg_reserve(g,4,6);
+            const Vector2 uv[4]={{a/12.0f,z/4.0f},{(a+1)/12.0f,z/4.0f},{(a+1)/12.0f,(z+1)/4.0f},{a/12.0f,(z+1)/4.0f}};
+            for(int k=0;k<4;k++)lg_vertex(g,q[k],uv[k],(Vector2){panel,0},normal,(Vector4){0},WHITE);
+            lg_quad(g,b,0,1,2,3);
         }
     }
 }
@@ -610,6 +643,7 @@ static void vortex_build_chunk(Environment *env, const PathSystem *path, int chu
     build_ribbons(st, out, path, &ca);
     build_debris(st, out, path, chunkSeed, &ca, &objSlot);
     build_holo(st, out, path, chunkSeed, &objSlot);
+    build_panels(st,out,path);
 }
 
 // ---------------------------------------------------------------------------
@@ -629,6 +663,7 @@ static void vortex_init(Environment *env, uint64_t worldSeed, ShaderLib *sl)
         st->shFace = sl_load(sl, "face.vs", "face.fs");
         st->shCore = sl_load(sl, "fullscreen.vs", "core.fs");
         st->shBg = sl_load(sl, "fullscreen.vs", "background.fs");
+        st->shPanel=sl_load(sl,"tunnel_panel.vs","tunnel_panel.fs");
         st->mat = LoadMaterialDefault();
     }
 }
@@ -707,7 +742,11 @@ static void vortex_draw_background(Environment *env, const FrameContext *ctx)
 
 static void vortex_draw_opaque(Environment *env, const FrameContext *ctx, const ChunkGpu *const *chunks, int n)
 {
-    (void)env; (void)ctx; (void)chunks; (void)n;
+    VortexState *st=env->state;
+    if(!st->p.showPanels)return;
+    sl_v3(st->sl,st->shPanel,"uCamPos",ctx->camera.position);
+    for(int i=0;i<n;i++)for(int j=0;j<chunks[i]->meshCount;j++)if(chunks[i]->meshBatch[j]==B_STRUCTURE)
+        draw_mesh(st,ctx,st->shPanel,chunks[i]->meshes[j],env_chunk_transform(chunks[i],ctx->renderOrigin));
 }
 
 static void draw_core(VortexState *st, const FrameContext *ctx)

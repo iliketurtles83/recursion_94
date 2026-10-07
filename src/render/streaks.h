@@ -17,6 +17,7 @@ typedef struct StreakParams {
     float density, lenMul, wMin, wMax, intensity;
     float cometFrac, accentFrac, helixFrac, helixRate;
     float zRange, zBehind, speedMul;
+    float cylinderInner, centerClear;  // radial fraction; clear screen center (0 disables)
     Color colMain, colAccent;    // sRGB
     // Volume: 0 = cylinder of the path radius (tunnels), 1 = slab above a floor (open spaces).
     int   volume;

@@ -15,6 +15,26 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOGDI
+#define NOUSER
+#include <windows.h>
+#endif
+
+// The legacy Windows CRT clock() can advance in coarse ticks, producing false
+// failures for sub-millisecond work. QPC measures these short builds precisely.
+static double build_timer_seconds(void)
+{
+#ifdef _WIN32
+    LARGE_INTEGER counter, frequency;
+    QueryPerformanceFrequency(&frequency);
+    QueryPerformanceCounter(&counter);
+    return (double)counter.QuadPart / (double)frequency.QuadPart;
+#else
+    return (double)clock() / CLOCKS_PER_SEC;
+#endif
+}
 
 static int g_fail = 0, g_pass = 0;
 
@@ -410,12 +430,12 @@ static void test_city_towers(void)
     for (int k = 0; k < N; k++) {
         int nc = 0;
         path_ensure(&p, k * CHUNK_LEN - 100.0 - reach, (k + 1) * CHUNK_LEN + 100.0 + reach);
-        clock_t c0 = clock();
+        double c0 = build_timer_seconds();
         int n = city_towers_plan(&tp, NULL, 23, &p, k, towers, CITY_MAX_TOWERS, chunkClaims, 4096, &nc);
         lg_clear(&body); lg_clear(&edges);
         PathSample o = path_sample(&p, k * CHUNK_LEN);
         city_towers_build(towers, n, o.pos, &body, &edges, 0.9f, 0.03f);
-        double ms = (double)(clock() - c0) * 1000.0 / CLOCKS_PER_SEC;
+        double ms = (build_timer_seconds() - c0) * 1000.0;
         if (ms > worstMs) worstMs = ms;
         nTowers += n;
         for (int i = 0; i < nc && nAll < MAXC; i++) {
@@ -513,10 +533,10 @@ static void test_city_decor(void)
     double worstMs = 0.0;
     for (int k = 0; k < N; k++) {
         ensure_for_chunk(&p, &env, k);
-        clock_t c0 = clock();
+        double c0 = build_timer_seconds();
         chunk_cpu_begin(&c, &p, k);
         env.buildChunk(&env, &p, k, &c);
-        double ms = (double)(clock() - c0) * 1000.0 / CLOCKS_PER_SEC;
+        double ms = (build_timer_seconds() - c0) * 1000.0;
         if (ms > worstMs) worstMs = ms;
         arch[k] = c.archetype;
         if (c.archetype >= 0 && c.archetype < 8) seen[c.archetype]++;
@@ -655,11 +675,11 @@ static void test_corridor_pillars(void)
     for (int k = 0; k < N; k++) {
         int nc = 0;
         path_ensure(&p, k * CHUNK_LEN - 100.0 - reach, (k + 1) * CHUNK_LEN + 100.0 + reach);
-        clock_t c0 = clock();
+        double c0 = build_timer_seconds();
         int n = pillars_plan(&pp, NULL, 29, &p, k, pillars, COR_MAX_PILLARS, chunkClaims, 8192, &nc);
         lg_clear(&body);
         pillars_build(pillars, n, path_sample(&p, k * CHUNK_LEN).pos, &body);
-        double ms = (double)(clock() - c0) * 1000.0 / CLOCKS_PER_SEC;
+        double ms = (build_timer_seconds() - c0) * 1000.0;
         if (ms > worstMs) worstMs = ms;
         for (int i = 0; i < nc && nAll < MAXC; i++) {
             if (chunk_index_at(chunkClaims[i].sOwner) != k) ownerOk = 0;
@@ -773,10 +793,10 @@ static void test_corridor_decor(void)
     double worstMs = 0.0, minLat = 1e9;
     for (int k = 0; k < N; k++) {
         ensure_for_chunk(&p, &env, k);
-        clock_t c0 = clock();
+        double c0 = build_timer_seconds();
         chunk_cpu_begin(&c, &p, k);
         env.buildChunk(&env, &p, k, &c);
-        double ms = (double)(clock() - c0) * 1000.0 / CLOCKS_PER_SEC;
+        double ms = (build_timer_seconds() - c0) * 1000.0;
         if (ms > worstMs) worstMs = ms;
         int v = 0;
         for (int b = 0; b < CHUNK_BATCHES; b++) v += c.geo[b].vcount;
@@ -906,9 +926,9 @@ static void test_corridor_beams(void)
     for (int k = 0; k < N; k++) {
         path_ensure(&p, k * CHUNK_LEN - 100.0 - reach, (k + 1) * CHUNK_LEN + 100.0 + reach);
         int nc = 0;
-        clock_t c0 = clock();
+        double c0 = build_timer_seconds();
         int n = beams_plan(&bp, 41, &p, k, beams, COR_MAX_BEAMS, chunkCells, 2048, &nc);
-        double ms = (double)(clock() - c0) * 1000.0 / CLOCKS_PER_SEC;
+        double ms = (build_timer_seconds() - c0) * 1000.0;
         if (ms > worstMs) worstMs = ms;
         for (int i = 0; i < nc && ncells < MAXC; i++) { cells[ncells][0] = chunkCells[i][0]; cells[ncells][1] = chunkCells[i][1]; ncells++; }
         for (int i = 0; i < n && nk < MAXB; i++) {

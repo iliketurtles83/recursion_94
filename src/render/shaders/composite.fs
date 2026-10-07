@@ -17,8 +17,25 @@ uniform float uVignette;
 uniform float uGrain;
 uniform float uWhiteout;
 uniform float uTime;
+uniform int uFXAA;
 
-vec3 hdr(vec2 uv) { return texture(texture0, uv).rgb + texture(uBloom, uv).rgb * uBloomIntensity; }
+float lum(vec3 c){float l=dot(c,vec3(.299,.587,.114));return l/(1.0+l);}
+vec3 sceneAA(vec2 uv){
+    vec3 center=texture(texture0,uv).rgb;
+    if(uFXAA==0)return center;
+    vec2 pixel=1.0/uResolution;
+    float nw=lum(texture(texture0,uv+vec2(-1,-1)*pixel).rgb),ne=lum(texture(texture0,uv+vec2(1,-1)*pixel).rgb);
+    float sw=lum(texture(texture0,uv+vec2(-1,1)*pixel).rgb),se=lum(texture(texture0,uv+vec2(1,1)*pixel).rgb),middle=lum(center);
+    float lo=min(middle,min(min(nw,ne),min(sw,se))),hi=max(middle,max(max(nw,ne),max(sw,se)));
+    if(hi-lo<max(.05,hi*.16))return center;
+    vec2 dir=vec2(-((nw+ne)-(sw+se)),(nw+sw)-(ne+se));
+    float reduce=max((nw+ne+sw+se)*.03125,.0078125);
+    dir=clamp(dir/(min(abs(dir.x),abs(dir.y))+reduce),vec2(-4),vec2(4))*pixel;
+    vec3 a=.5*(texture(texture0,uv-dir/6).rgb+texture(texture0,uv+dir/6).rgb);
+    vec3 b=a*.5+.25*(texture(texture0,uv-dir*.5).rgb+texture(texture0,uv+dir*.5).rgb);
+    float lb=lum(b);return (lb<lo||lb>hi)?a:b;
+}
+vec3 hdr(vec2 uv) { return sceneAA(uv) + texture(uBloom, uv).rgb * uBloomIntensity; }
 
 const mat3 ACESIn = mat3(0.59719, 0.07600, 0.02840, 0.35458, 0.90834, 0.13383, 0.04823, 0.01566, 0.83777);
 const mat3 ACESOut = mat3(1.60475, -0.10208, -0.00327, -0.53108, 1.10813, -0.07276, -0.07367, -0.00605, 1.07602);

@@ -8,6 +8,7 @@
 #include "env_common.h"
 #include "city_towers.h"
 #include "city_decor.h"
+#include "city_landmarks.h"
 #include "core/rng.h"
 #include "core/pacing.h"
 #include "render/gridfloor.h"
@@ -67,7 +68,7 @@ typedef struct CityParams {
     bool  pacing;
     float fogStart, fogEnd;          // fog for chunk content (towers etc.)
     float hazeWidth, hazeGlow, dust; // sky
-    bool  showFloor, showSky;
+    bool  showFloor, showSky, landmarks;
 } CityParams;
 
 typedef struct CityState {
@@ -81,12 +82,12 @@ typedef struct CityState {
     TowerDesc  towers[CITY_MAX_TOWERS];   // build scratch (builds are single-threaded)
 } CityState;
 
-static const Color COL_CYAN    = { 0x4F, 0xEA, 0xF5, 255 };
-static const Color COL_FLOOR   = { 0x03, 0x0B, 0x14, 255 };
-static const Color COL_HORIZON = { 0x0B, 0x2A, 0x3A, 255 };
-static const Color COL_ZENITH  = { 0x02, 0x03, 0x08, 255 };
-static const Color COL_PINK    = { 0xFF, 0x4F, 0xD8, 255 };
-static const Color COL_VIOLET  = { 0xB0, 0x6C, 0xFF, 255 };
+static const Color COL_CYAN    = { 0x42, 0xAD, 0xCC, 255 };
+static const Color COL_FLOOR   = { 0x0B, 0x15, 0x20, 255 };
+static const Color COL_HORIZON = { 0x21, 0x43, 0x56, 255 };
+static const Color COL_ZENITH  = { 0x09, 0x12, 0x21, 255 };
+static const Color COL_PINK    = { 0xCB, 0x79, 0xB1, 255 };
+static const Color COL_VIOLET  = { 0x78, 0xA3, 0xD6, 255 };
 static const Color COL_PALE    = { 0xA8, 0xEE, 0xFF, 255 };
 
 static PathStyle city_path_style(const Environment *env)
@@ -218,6 +219,7 @@ static void city_register(Environment *env, ParamRegistry *reg)
 
     g = "City";
     params_bool(reg, g, "showSky", &p->showSky, true);
+    params_bool(reg, g, "cityLandmarks", &p->landmarks, false);
     params_float(reg, g, "cityFogStart", &p->fogStart, 120.0f, 0.0f, 600.0f);
     // Fog must be complete before ~358 units: the far chunk becomes visible with its nearest
     // towers about that far away (window s + 400, chunk length 48, camera 6 behind the ship).
@@ -330,6 +332,7 @@ static void city_build_chunk(Environment *env, const PathSystem *path, int chunk
     dp.bandMax = tp.bandMax;
     city_decor_build(&dp, st->towers, n, path, out->origin, &out->geo[CB_TRACES], &out->geo[CB_GLYPHS]);
     build_props(st, path, chunkIndex, (int)lroundf((float)st->p.propsMax * blend.cur.props), out);
+    if(st->p.landmarks) city_landmarks_build(path,chunkIndex,st->p.path.floorDepth,out);
 }
 
 static void city_upload(Environment *env, ChunkCpu *in, ChunkGpu *out) { chunk_upload_default(in, out); }
@@ -417,7 +420,7 @@ static void draw_towers(CityState *st, const FrameContext *ctx, const ChunkGpu *
     ShaderLib *sl = st->sl;
     int sh = st->shTower;
     env_set_common_uniforms(sl, sh, ctx);
-    Vector3 body = ct_srgb_to_linear((Color){ 0x1C, 0x24, 0x34, 255 });
+    Vector3 body = ct_srgb_to_linear((Color){ 0x35, 0x49, 0x5B, 255 });
     Vector3 cyan = ct_srgb_to_linear(COL_CYAN);
     sl_v3(sl, sh, "uBody", Vector3Scale(body, p->bodyBrightness));
     sl_v3(sl, sh, "uRim", Vector3Scale(cyan, p->rimIntensity));

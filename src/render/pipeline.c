@@ -29,6 +29,7 @@ void post_register_params(PostSettings *s, ParamRegistry *reg)
     params_bool(reg, g, "vignetteOn", &s->vignetteOn, true);
     params_float(reg, g, "vignette", &s->vignette, 0.55f, 0.0f, 1.5f);
     params_bool(reg, g, "grainOn", &s->grainOn, true);
+    params_bool(reg,g,"fxaaOn",&s->fxaaOn,false);
     params_float(reg, g, "grain", &s->grain, 0.025f, 0.0f, 0.2f);
     params_int(reg, g, "reflectRes", &s->reflectRes, 2, 0, 2);
     params_float(reg, g, "reflectBlur", &s->reflectBlur, 2.5f, 0.0f, 6.0f);
@@ -302,6 +303,7 @@ void pipe_post(Pipeline *p, const PostSettings *s, RenderTexture2D *dst, int out
     sl_f1(sl, c, "uGrain", s->grainOn ? s->grain : 0.0f);
     sl_f1(sl, c, "uWhiteout", whiteout);
     sl_f1(sl, c, "uTime", time);
+    sl_i1(sl,c,"uFXAA",s->fxaaOn?1:0);
     rlSetTexture(p->scene.color.id);
     pipe_fullscreen_quad();
     rlSetTexture(0);

@@ -25,6 +25,17 @@ extern "C" {
 
 typedef struct CtTunnel CtTunnel;
 
+// Optional game content is drawn into the HDR scene, with the camera already bound.
+typedef struct CtSceneView {
+    Camera3D camera;
+    Matrix view, projection;
+    double origin[3];
+    float time, speed, intensity;
+    bool reflection;
+} CtSceneView;
+typedef void (*CtSceneDrawFn)(void *user, const CtSceneView *view, bool emissive);
+void ct_set_scene_draw(CtTunnel *ct, CtSceneDrawFn draw, void *user);
+
 enum { CT_ENV_VORTEX = 0, CT_ENV_TEMPLATE = 1, CT_ENV_CITY = 2, CT_ENV_CORRIDOR = 3 };
 
 typedef struct CtConfig {
@@ -37,6 +48,7 @@ typedef struct CtConfig {
     bool        drawShip;        // draw the placeholder ship and trails
     const char *shaderDir;       // NULL = compiled-in default
     const char *presetDir;       // NULL = compiled-in default
+    const char *assetDir;        // NULL = assets beside the application
 } CtConfig;
 
 typedef struct CtInput {
@@ -108,6 +120,8 @@ void ct_set_whiteout(CtTunnel *ct, float whiteout);     // manual override, < 0 
 void ct_jump_to(CtTunnel *ct, double s);
 void ct_reseed(CtTunnel *ct, uint64_t seed);
 uint64_t ct_get_seed(const CtTunnel *ct);
+const char *ct_shader_directory(const CtTunnel *ct);
+const char *ct_asset_directory(const CtTunnel *ct);
 void ct_set_paused(CtTunnel *ct, bool paused);
 void ct_set_time_scale(CtTunnel *ct, float scale);
 void ct_rebuild(CtTunnel *ct);                           // regenerate path and chunks

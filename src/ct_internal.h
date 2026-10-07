@@ -30,7 +30,7 @@ typedef struct CoreParams {
 
 struct CtTunnel {
     CtConfig       cfg;
-    char           shaderDir[512], presetDir[512];
+    char           shaderDir[512], presetDir[512], assetDir[512];
     uint64_t       seed;
 
     ParamRegistry  reg;
@@ -51,13 +51,16 @@ struct CtTunnel {
     FlightView     view;
     double         acc, simTime;
     bool           paused;
+    CtSceneDrawFn  sceneDraw;
+    void          *sceneUser;
 
     ShaderLib      sl;
     Pipeline       pipe;
-    int            shShip, shLine;
+    int            shShip, shLine, shAfterburner;
     Material       mat;
-    Mesh           shipHull, shipEdges, trailMesh;
-    LineGeo        shipHullGeo, shipEdgesGeo, trailGeo;
+    Texture2D      shipSkin;
+    Mesh           shipHull, shipEdges, shipNozzles, shipFlames, trailMesh;
+    LineGeo        shipHullGeo, shipEdgesGeo, shipNozzleGeo, shipFlameGeo, trailGeo;
 
     DVec3          renderOrigin;
     float          maxRenderCoord;

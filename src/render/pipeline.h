@@ -12,7 +12,7 @@
 #define PIPE_MAX_MIPS 8
 
 typedef struct PostSettings {
-    bool  bloomOn, zoomBlurOn, caOn, tonemapOn, vignetteOn, grainOn;
+    bool  bloomOn, zoomBlurOn, caOn, tonemapOn, vignetteOn, grainOn, fxaaOn;
     float bloomThreshold, bloomKnee, bloomIntensity, bloomRadius;
     int   bloomMips;
     bool  bloomQuarterRes;

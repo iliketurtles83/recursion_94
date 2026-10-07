@@ -42,8 +42,8 @@ float flight_speed_norm(const FlightParams *p, float speed)
 
 void flight_engine_offsets(Vector3 out[2])
 {
-    out[0] = (Vector3){ -0.16f, 0.02f, -0.62f };
-    out[1] = (Vector3){ 0.16f, 0.02f, -0.62f };
+    out[0] = (Vector3){ -0.48f, -0.05f, -1.56f };
+    out[1] = (Vector3){ 0.48f, -0.05f, -1.56f };
 }
 
 static float clampf(float x, float lo, float hi) { return x < lo ? lo : (x > hi ? hi : x); }

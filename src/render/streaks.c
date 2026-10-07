@@ -70,6 +70,8 @@ void streaks_draw(StreakSystem *s, const StreakParams *p, const FrameContext *ct
     sl_f1(sl, sh, "uCometFrac", p->cometFrac);
     sl_f1(sl, sh, "uPurpleFrac", p->accentFrac);
     sl_f1(sl, sh, "uStreakIntensity", p->intensity * energy);
+    sl_f1(sl, sh, "uCylinderInner", p->cylinderInner);
+    sl_f1(sl, sh, "uCenterClear", p->centerClear);
     sl_v3(sl, sh, "uColWhite", ct_srgb_to_linear(p->colMain));
     sl_v3(sl, sh, "uColPurple", ct_srgb_to_linear(p->colAccent));
     sl_f1(sl, sh, "uVolume", (float)p->volume);

@@ -4,12 +4,27 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOGDI
+#define NOUSER
+#include <windows.h>
+#endif
 
 static long long file_mtime(const char *path)
 {
+#ifdef _WIN32
+    WIN32_FILE_ATTRIBUTE_DATA data;
+    if (!GetFileAttributesExA(path, GetFileExInfoStandard, &data)) return 0;
+    ULARGE_INTEGER stamp;
+    stamp.LowPart = data.ftLastWriteTime.dwLowDateTime;
+    stamp.HighPart = data.ftLastWriteTime.dwHighDateTime;
+    return (long long)stamp.QuadPart;  // FILETIME retains sub-second shader edits.
+#else
     struct stat st;
     if (stat(path, &st) != 0) return 0;
     return (long long)st.st_mtime * 1000000000ll + (long long)st.st_mtim.tv_nsec;
+#endif
 }
 
 static void path_join(char *out, size_t n, const char *dir, const char *name) { snprintf(out, n, "%s/%s", dir, name); }

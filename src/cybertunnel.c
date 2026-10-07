@@ -3,6 +3,7 @@
 #include "ct_internal.h"
 #include "env/env_common.h"
 #include "render/rmath.h"
+#include "render/shipmodel.h"
 #include "rlgl.h"
 #include "raymath.h"
 #include <math.h>
@@ -94,7 +95,7 @@ static void register_env_params(CtTunnel *ct)
 }
 
 // ---------------------------------------------------------------------------
-// Ship (placeholder dart)
+// Detailed courier ship, articulated nozzles and volumetric jet meshes.
 
 static void upload_static(Mesh *m, LineGeo *g, bool dynamic)
 {
@@ -103,40 +104,25 @@ static void upload_static(Mesh *m, LineGeo *g, bool dynamic)
 
 static void build_ship(CtTunnel *ct)
 {
-    // Ship local: x right, y up, z forward.
-    Vector3 nose = { 0.0f, 0.0f, 0.95f };
-    Vector3 tl = { -0.62f, -0.02f, -0.5f }, tr = { 0.62f, -0.02f, -0.5f };
-    Vector3 ridge = { 0.0f, 0.17f, -0.38f }, belly = { 0.0f, -0.1f, -0.4f };
-    Vector3 back = { 0.0f, 0.04f, -0.62f };
-    Color hull = { 0x10, 0x16, 0x24, 255 };
-    LineAttr fa = { hull, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f };
-    LineGeo *g = &ct->shipHullGeo;
-    lg_clear(g);
-    Vector3 tris[8][3] = {
-        { nose, ridge, tl }, { nose, tr, ridge }, { nose, tl, belly }, { nose, belly, tr },
-        { tl, ridge, back }, { ridge, tr, back }, { tl, back, belly }, { back, tr, belly },
-    };
-    for (int i = 0; i < 8; i++) {
-        Vector3 n = Vector3Normalize(Vector3CrossProduct(Vector3Subtract(tris[i][1], tris[i][0]), Vector3Subtract(tris[i][2], tris[i][0])));
-        lg_fill_tri(g, tris[i][0], tris[i][1], tris[i][2], n, fa);
+    char textureFile[1024];
+    snprintf(textureFile,sizeof(textureFile),"%s/ship-metal-v1.png",ct->assetDir);
+    if(FileExists(textureFile)) {
+        ct->shipSkin=LoadTexture(textureFile);
+        if(ct->shipSkin.id){
+            GenTextureMipmaps(&ct->shipSkin);
+            SetTextureFilter(ct->shipSkin,TEXTURE_FILTER_TRILINEAR);
+            SetTextureFilter(ct->shipSkin,TEXTURE_FILTER_ANISOTROPIC_16X);
+            SetTextureWrap(ct->shipSkin,TEXTURE_WRAP_REPEAT);
+            printf("ship texture: %dx%d, mipmapped aerospace metal\n",ct->shipSkin.width,ct->shipSkin.height);
+        }
     }
-    upload_static(&ct->shipHull, g, false);
-
-    LineGeo *e = &ct->shipEdgesGeo;
-    lg_clear(e);
-    LineAttr ea = { (Color){ 0x4F, 0xEA, 0xF5, 255 }, 2.5f, 0.0f, 0.0f, -1.0f, 0.0f };
-    Vector3 edges[][2] = { { nose, tl }, { nose, tr }, { nose, ridge }, { tl, back }, { tr, back }, { ridge, back } };
-    for (int i = 0; i < 6; i++) lg_facing_segment(e, edges[i][0], edges[i][1], 0.012f, 0.012f, ea.intensity, ea.intensity, ea);
-    Vector3 eng[2];
-    flight_engine_offsets(eng);
-    // Engine glow intensity is baked at build time (engineIntensity).
-    float gi = ct->core.engineIntensity;
-    LineAttr ga = { (Color){ 0xE8, 0xFB, 0xFF, 255 }, gi, 0.0f, 0.0f, -1.0f, 0.0f };
-    for (int i = 0; i < 2; i++) {
-        Vector3 a = eng[i], b = { eng[i].x, eng[i].y, eng[i].z - 0.08f };
-        lg_facing_segment(e, a, b, 0.09f, 0.09f, gi, gi, ga);
-    }
-    upload_static(&ct->shipEdges, e, false);
+    shipmodel_build(&ct->shipHullGeo, &ct->shipEdgesGeo, ct->core.engineIntensity);
+    upload_static(&ct->shipHull, &ct->shipHullGeo, false);
+    upload_static(&ct->shipEdges, &ct->shipEdgesGeo, false);
+    shipmodel_nozzles(&ct->shipNozzleGeo,0);
+    upload_static(&ct->shipNozzles,&ct->shipNozzleGeo,true);
+    shipmodel_flames(&ct->shipFlameGeo);
+    upload_static(&ct->shipFlames,&ct->shipFlameGeo,false);
 
     // Trail mesh: fixed capacity, rewritten each frame.
     LineGeo *t = &ct->trailGeo;
@@ -157,6 +143,14 @@ static Matrix basis_matrix(Vector3 right, Vector3 up, Vector3 fwd, Vector3 pos)
     return m;
 }
 
+static void update_nozzles(CtTunnel *ct)
+{
+    shipmodel_nozzles(&ct->shipNozzleGeo,flight_speed_norm(&ct->fp,ct->view.speed));
+    LineGeo *g=&ct->shipNozzleGeo;int n=g->vcount;
+    UpdateMeshBuffer(ct->shipNozzles,0,g->pos,n*3*(int)sizeof(float),0);
+    UpdateMeshBuffer(ct->shipNozzles,2,g->nrm,n*3*(int)sizeof(float),0);
+}
+
 static void update_trail_mesh(CtTunnel *ct)
 {
     const FlightState *st = &ct->cur;
@@ -167,7 +161,8 @@ static void update_trail_mesh(CtTunnel *ct)
     Vector3 eng[2];
     flight_engine_offsets(eng);
     const FlightView *v = &ct->view;
-    float w0 = ct->core.trailWidth, i0 = ct->core.trailIntensity;
+    float boost=flight_speed_norm(&ct->fp,v->speed);
+    float w0 = ct->core.trailWidth*(1+.8f*boost), i0 = ct->core.trailIntensity*(.5f+.5f*boost);
     for (int e = 0; e < 2; e++) {
         DVec3 head = dv_add(v->shipPos, dv_add(dv_add(dv_scale(v->shipRight, eng[e].x), dv_scale(v->shipUp, eng[e].y)), dv_scale(v->shipFwd, eng[e].z)));
         Vector3 prev = dv_to_v3(dv_sub(head, ct->renderOrigin));
@@ -210,7 +205,15 @@ static void draw_ship_opaque(CtTunnel *ct, const FrameContext *ctx)
     sl_v3(&ct->sl, ct->shShip, "uCamPos", ctx->camera.position);
     sl_f3(&ct->sl, ct->shShip, "uRimColor", 0.25f, 0.85f, 1.0f);
     sl_v3(&ct->sl, ct->shShip, "uFillDir", Vector3Negate(dv_to_v3(v->shipFwd)));
+    sl_v3(&ct->sl,ct->shShip,"uKeyDir",dv_to_v3(dv_add(dv_add(dv_scale(v->shipUp,.9),dv_scale(v->shipRight,-.55)),dv_scale(v->shipFwd,-.35))));
+    sl_i1(&ct->sl,ct->shShip,"uHasSkin",ct->shipSkin.id?1:0);
+    sl_f1(&ct->sl, ct->shShip, "uTime", ctx->shaderTime);
+    sl_f1(&ct->sl, ct->shShip, "uBoost", ctx->speedNorm);
+    Texture2D previousTexture=ct->mat.maps[MATERIAL_MAP_ALBEDO].texture;
+    if(ct->shipSkin.id)ct->mat.maps[MATERIAL_MAP_ALBEDO].texture=ct->shipSkin;
     draw_mesh(ct, ct->shShip, ct->shipHull, xf);
+    draw_mesh(ct, ct->shShip, ct->shipNozzles, xf);
+    ct->mat.maps[MATERIAL_MAP_ALBEDO].texture=previousTexture;
 }
 
 // update_trail_mesh() must have run this frame.
@@ -227,7 +230,11 @@ static void draw_ship_emissive(CtTunnel *ct, const FrameContext *ctx)
     sl_f4(sl, sh, "uFade", 1e6f, 2e6f, 0.0f, 0.001f);
     sl_f1(sl, sh, "uChunkFade", 1.0f);
     draw_mesh(ct, sh, ct->shipEdges, xf);
-    Vector3 mag = ct_srgb_to_linear((Color){ 0xFF, 0x4F, 0xD8, 255 });
+    sl_f1(sl,ct->shAfterburner,"uTime",ctx->shaderTime);
+    sl_f1(sl,ct->shAfterburner,"uBoost",ctx->speedNorm);
+    sl_f1(sl,ct->shAfterburner,"uPower",fminf(ct->core.engineIntensity*.22f,2.0f));
+    draw_mesh(ct,ct->shAfterburner,ct->shipFlames,xf);
+    Vector3 mag = ct_srgb_to_linear((Color){ 0x65, 0xCE, 0xF5, 255 });
     sl_v3(sl, sh, "uEdgeColor", mag);
     sl_f1(sl, sh, "uEdgeMix", 1.0f);
     draw_mesh(ct, sh, ct->trailMesh, MatrixIdentity());
@@ -264,6 +271,9 @@ static void reset_world(CtTunnel *ct, double s, bool regenPath)
     ct->renderOrigin = ct->cur.shipPos;
     ct->acc = 0.0;
     prewarm(ct);
+    // Creation, restart and jumps must be renderable before time advances.
+    // The first interactive frame reports dt == 0 on Windows.
+    ct_update(ct,0.0f);
 }
 
 CtTunnel *ct_create(const CtConfig *cfg)
@@ -272,6 +282,8 @@ CtTunnel *ct_create(const CtConfig *cfg)
     ct->cfg = *cfg;
     snprintf(ct->shaderDir, sizeof(ct->shaderDir), "%s", cfg->shaderDir ? cfg->shaderDir : CT_SHADER_DIR);
     snprintf(ct->presetDir, sizeof(ct->presetDir), "%s", cfg->presetDir ? cfg->presetDir : CT_PRESET_DIR);
+    if(cfg->assetDir)snprintf(ct->assetDir,sizeof(ct->assetDir),"%s",cfg->assetDir);
+    else snprintf(ct->assetDir,sizeof(ct->assetDir),"%sassets",GetApplicationDirectory());
     ct->seed = cfg->seed;
     ct->whiteoutT = -1.0f;
     ct->whiteoutManual = -1.0f;
@@ -304,6 +316,7 @@ CtTunnel *ct_create(const CtConfig *cfg)
 
     pipe_init(&ct->pipe, &ct->sl, cfg->width, cfg->height, cfg->hdr16, ct->post.bloomQuarterRes);
     ct->shShip = sl_load(&ct->sl, "ship.vs", "ship.fs");
+    ct->shAfterburner = sl_load(&ct->sl,"afterburner.vs","afterburner.fs");
     ct->shLine = sl_load(&ct->sl, "object.vs", "line_facing.fs");
     ct->mat = LoadMaterialDefault();
     build_ship(ct);
@@ -320,10 +333,15 @@ void ct_destroy(CtTunnel *ct)
     chunks_free(&ct->chunks, ct->env);
     for (int i = 0; i < ENV_COUNT; i++) if (ct->envs[i].unload) ct->envs[i].unload(&ct->envs[i]);
     lg_unload_mesh(ct->shipHull);
+    if(ct->shipSkin.id)UnloadTexture(ct->shipSkin);
     lg_unload_mesh(ct->shipEdges);
+    lg_unload_mesh(ct->shipNozzles);
+    lg_unload_mesh(ct->shipFlames);
     lg_unload_mesh(ct->trailMesh);
     lg_free(&ct->shipHullGeo);
     lg_free(&ct->shipEdgesGeo);
+    lg_free(&ct->shipNozzleGeo);
+    lg_free(&ct->shipFlameGeo);
     lg_free(&ct->trailGeo);
     ct->mat.shader.id = rlGetShaderIdDefault();
     UnloadMaterial(ct->mat);
@@ -359,6 +377,8 @@ void ct_reseed(CtTunnel *ct, uint64_t seed)
 }
 
 uint64_t ct_get_seed(const CtTunnel *ct) { return ct->seed; }
+const char *ct_shader_directory(const CtTunnel *ct) { return ct->shaderDir; }
+const char *ct_asset_directory(const CtTunnel *ct) { return ct->assetDir; }
 
 void ct_jump_to(CtTunnel *ct, double s)
 {
@@ -543,6 +563,21 @@ static void draw_path_debug(CtTunnel *ct)
 // Planar floor reflection: the scene mirrored about the floor plane (view' = R * view, so a
 // floor point projects to the same pixel in both passes), opaque + emissive content and the
 // ship, then a vertical blur. The floor shader samples the result at its screen uv.
+void ct_set_scene_draw(CtTunnel *ct, CtSceneDrawFn draw, void *user)
+{
+    ct->sceneDraw = draw;
+    ct->sceneUser = user;
+}
+
+static void draw_game_scene(CtTunnel *ct, const FrameContext *ctx, bool emissive)
+{
+    if (!ct->sceneDraw) return;
+    CtSceneView view = { ctx->camera, ctx->view, ctx->proj,
+        { ctx->renderOrigin.x, ctx->renderOrigin.y, ctx->renderOrigin.z },
+        ctx->shaderTime, ctx->speed, ctx->intensity, ctx->reflectionPass };
+    ct->sceneDraw(ct->sceneUser, &view, emissive);
+}
+
 static void render_reflection(CtTunnel *ct, const ChunkGpu *const *vis, int nvis, bool ship)
 {
     FrameContext *c = &ct->ctx;
@@ -562,9 +597,11 @@ static void render_reflection(CtTunnel *ct, const ChunkGpu *const *vis, int nvis
     pipe_begin_reflection(&ct->pipe, res == 1 ? 4 : 2, rc.view, rc.proj);
     if (ct->env->drawOpaque) ct->env->drawOpaque(ct->env, &rc, vis, nvis);
     if (ship) draw_ship_opaque(ct, &rc);
+    draw_game_scene(ct, &rc, false);
     pipe_set_emissive(true);
     if (ct->env->drawEmissive) ct->env->drawEmissive(ct->env, &rc, vis, nvis);
     if (ship) draw_ship_emissive(ct, &rc);
+    draw_game_scene(ct, &rc, true);
     pipe_set_emissive(false);
     pipe_end_reflection(&ct->pipe);
     c->reflection = pipe_blur_reflection(&ct->pipe, ct->post.reflectBlur);
@@ -587,16 +624,18 @@ void ct_render(CtTunnel *ct, const RenderTexture2D *target, int width, int heigh
     const ChunkGpu *const *vis = chunks_visible(&ct->chunks, &nvis);
 
     bool ship = ct->cfg.drawShip && ct->core.showShip;
-    if (ship) update_trail_mesh(ct);
+    if (ship) {update_trail_mesh(ct);update_nozzles(ct);}
     render_reflection(ct, vis, nvis, ship);
 
     pipe_begin_scene(&ct->pipe, c->view, c->proj, (Color){ 3, 6, 12, 255 });
     if (ct->env->drawBackground) ct->env->drawBackground(ct->env, c);
     if (ct->env->drawOpaque) ct->env->drawOpaque(ct->env, c, vis, nvis);
     if (ship) draw_ship_opaque(ct, c);
+    draw_game_scene(ct, c, false);
     pipe_set_emissive(true);
     if (ct->env->drawEmissive) ct->env->drawEmissive(ct->env, c, vis, nvis);
     if (ship) draw_ship_emissive(ct, c);
+    draw_game_scene(ct, c, true);
     if (ct->core.showPathDebug) draw_path_debug(ct);
     pipe_set_emissive(false);
     pipe_end_scene(&ct->pipe);

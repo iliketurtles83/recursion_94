@@ -66,6 +66,8 @@ void main()
     vec2 w = uFilter > 0.5 ? fwidth(g) : vec2(1e-4);
     vec2 ax = grid_axis(g.x, w.x), az = grid_axis(g.y, w.y);
     float core = ax.x + az.x - ax.x * az.x;
+    vec2 mx=grid_axis(g.x*.25,w.x*.25), mz=grid_axis(g.y*.25,w.y*.25);
+    core=core*.35+(mx.x+mz.x-mx.x*mz.x)*.65;
     float halo = ax.y + az.y;
     // Square pads where lines cross.
     float dx = abs(fract(g.x + 0.5) - 0.5), dz = abs(fract(g.y + 0.5) - 0.5);

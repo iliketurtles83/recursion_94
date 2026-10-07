@@ -51,7 +51,17 @@ void main()
 
     float key = max(dot(n, uKeyDir), 0.0);
     float roof = fFace > 3.5 ? 0.5 : 1.0;
-    vec3 col = uBody * fTint * shade * (0.3 + 0.7 * key) * roof * (1.0 - uPanel.z * seam);
+    vec3 col = uBody * fTint * shade * (0.42 + 0.85 * key) * roof * (1.0 - uPanel.z * seam);
+    // Glazed windows and metal mullions make the towers read as architecture.
+    float window = smoothstep(.13,.19,f.x)*(1.0-smoothstep(.76,.83,f.x))
+                 * smoothstep(.25,.32,f.y)*(1.0-smoothstep(.63,.72,f.y));
+    float occupied = step(.72,h) * step(fFace,3.5);
+    vec3 lamp = mix(vec3(.13,.34,.43),vec3(.62,.37,.15),step(.93,h));
+    col = mix(col,col*.48,window*.45);
+    col += lamp * window * occupied * .45;
+    vec3 H = normalize(V+uKeyDir);
+    col += vec3(.08,.16,.22)*pow(max(dot(n,H),0.0),48.0)*window;
+    col += uBody*.16*(1.0-seam)*smoothstep(.0,.025,edge.x);
     float rim = pow(1.0 - max(dot(n, V), 0.0), 4.0);
     col += uRim * rim * roof;
     col += uUnderglow * exp(-fUV.y * 0.6) * (fFace < 3.5 ? 1.0 : 0.0);
