@@ -7,6 +7,7 @@
 #include "core/flight.h"
 #include "env/env.h"
 #include "render/gridfloor.h"
+#include "render/tunneldetail.h"
 #include "env/city_towers.h"
 #include "env/corridor_pillars.h"
 #include "env/corridor_beams.h"
@@ -198,6 +199,7 @@ static void test_chunks(void)
     ParamRegistry reg;
     params_clear(&reg);
     env.registerParams(&env, &reg);
+    params_set(params_find(&reg,"showPanels"),1);
     env.init(&env, 99, NULL);
     PathStyle st = env.pathStyle(&env);
 
@@ -254,6 +256,33 @@ static void test_chunks(void)
     path_free(&p1); path_free(&p3);
     for (int b = 0; b < CHUNK_BATCHES; b++) lg_free(&cpu.geo[b]);
     env.unload(&env);
+}
+
+static void test_tunnel_detail(void)
+{
+    PathSystem path;path_init(&path,83,default_style());path_ensure(&path,0,120);
+    DVec3 origin=path_sample(&path,0).pos;
+    LineGeo a={0},b={0};
+    tunnel_detail_build(&a,&path,origin,0);tunnel_detail_build(&b,&path,origin,0);
+    int bytes=a.vcount*60+a.icount*2;
+    CHECK(bytes>=180*1024&&bytes<=220*1024,"tunnel adds about 200 KB of actual mesh data (%d)",bytes);
+    CHECK(lg_hash(&a)==lg_hash(&b),"solid tunnel hardware deterministic");
+    bool valid=true,outside=true;int materials[5]={0};
+    for(int i=0;i<a.vcount;i++) {
+        float norm=0;
+        for(int j=0;j<3;j++){valid=valid&&isfinite(a.pos[i*3+j])&&isfinite(a.nrm[i*3+j]);norm+=a.nrm[i*3+j]*a.nrm[i*3+j];}
+        valid=valid&&fabsf(norm-1)<.002f;
+        int material=(int)a.uv2[i*2+1];if(material>=1&&material<=4)materials[material]++;
+        DVec3 world=dv_add(origin,dv3(a.pos[i*3],a.pos[i*3+1],a.pos[i*3+2]));
+        double nearest=1e9,radius=12;
+        for(int s=0;s<=48;s+=3){PathSample p=path_sample(&path,s);double d=dv_len(dv_sub(world,p.pos));if(d<nearest){nearest=d;radius=p.radius;}}
+        if(nearest<radius*.95)outside=false;
+    }
+    CHECK(valid&&a.batchCount==1,"hardware normals finite and mesh within index limit");
+    CHECK(outside,"solid wall hardware outside player flight lane");
+    CHECK(materials[1]&&materials[2]&&materials[3]&&materials[4],"ribs, recesses, louvers and conduit materials present");
+    printf("  tunnel: %d added hardware vertices, %d mesh bytes per 48 m chunk\n",a.vcount,bytes);
+    lg_free(&a);lg_free(&b);path_free(&path);
 }
 
 // The sim must produce identical states at 30, 60 and 144 fps (fixed 120 Hz steps).
@@ -1002,6 +1031,7 @@ int main(void)
     test_rng();
     test_path();
     test_chunks();
+    test_tunnel_detail();
     test_flight_framerate();
     test_city();
     test_city_towers();

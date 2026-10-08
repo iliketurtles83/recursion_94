@@ -38,7 +38,7 @@ static void test_continuous_boost(bool pickups)
 static void test_endless(void)
 {
     Mission m;mission_reset(&m,83);int64_t total=5000000000ll;
-    for(int number=1;number<=16;number++) {
+    for(int number=1;number<=32;number++) {
         CHECK(m.number==number&&m.enemyKinds==mission_enemy_count(number));
         int kinds[11]={0};
         CHECK(m.eventCount<MISSION_EVENTS);
@@ -82,6 +82,39 @@ static void test_endless(void)
     MissionEvent split={.kind=EVENT_SPLITTER,.amplitude=2.5f,.frequency=1,.radius=.8f};
     for(int side=-1;side<=1;side+=2){float x,y;mission_event_split(&split,.8f,side,&x,&y);CHECK(mission_event_danger(&split,.8f,x,y,.55f));}
     CHECK(!mission_event_danger(&split,0,0,0,.55f));
+}
+static void test_difficulty(void)
+{
+    CHECK(mission_difficulty(0)==1&&mission_difficulty(5)==1);
+    CHECK(fabsf(mission_difficulty(10)-1.4f)<.001f);
+    CHECK(fabsf(mission_difficulty(20)-2.8f)<.001f);
+    CHECK(fabsf(mission_difficulty(21)-2.98f)<.001f);
+    Mission previous;mission_reset_at(&previous,83,5);
+    for(int number=6;number<=100;number++) {
+        Mission m;mission_reset_at(&m,83,number);
+        CHECK(m.difficulty>previous.difficulty&&m.boostSpeed>=previous.boostSpeed);
+        CHECK(m.packetCount>=previous.packetCount&&m.required>=previous.required&&m.required<m.packetCount);
+        CHECK(m.duration<=previous.duration&&m.duration>MISSION_FINISH/m.boostSpeed+5);
+        CHECK(m.eventCount<MISSION_EVENTS&&m.boostSpeed<=104&&m.cruiseSpeed<=57);
+        for(int i=0;i<m.eventCount;i++) {
+            MissionEvent *e=&m.events[i];
+            if(i)CHECK(e->s>m.events[i-1].s);
+            if(mission_event_opening(e))CHECK(e->radius>2.0f);
+            if(e->kind==EVENT_PACKET)CHECK(e->radius>=1.44f);
+        }
+        if(number==10||number==11||number==20||number==21)
+            printf("difficulty M%d: %.2fx, %.1f m/s boost, %d hazards, %d/%d data, %.1f s deadline\n",number,m.difficulty,m.boostSpeed,m.eventCount-m.packetCount,m.required,m.packetCount,m.duration);
+        previous=m;
+    }
+    Mission a,b;mission_reset_at(&a,83,10);mission_reset_at(&b,83,11);
+    CHECK(b.eventCount-b.packetCount>a.eventCount-a.packetCount);
+    mission_reset_at(&a,83,20);mission_reset_at(&b,83,21);
+    CHECK(b.eventCount-b.packetCount>a.eventCount-a.packetCount);
+    mission_reset_at(&b,83,10000);
+    CHECK(isfinite(b.difficulty)&&b.required==30&&b.packetCount==40&&b.eventCount<MISSION_EVENTS);
+    // Damage recovery at the very-hard milestone changes at the collision time.
+    b.phase=MISSION_RUNNING;one_event(&b,(MissionEvent){.s=10,.kind=EVENT_DRONE,.radius=1});
+    mission_tick(&b,.1f,(MissionSample){10},true);CHECK(fabsf(b.immunity-.9f)<.001f&&b.shield==2);
 }
 int main(void)
 {
@@ -145,5 +178,6 @@ int main(void)
     for(int i=0;i<m.eventCount;i++){kinds[m.events[i].kind]++;CHECK(fabsf(m.events[i].x)<4&&fabsf(m.events[i].y)<3);}
     CHECK(kinds[0]==25 && kinds[1]>0 && kinds[2]>0 && kinds[3]==0 && kinds[4]==0);
     test_endless();
+    test_difficulty();
     printf("mission: %d checks, %d failures\n",checks,failures);return failures?1:0;
 }

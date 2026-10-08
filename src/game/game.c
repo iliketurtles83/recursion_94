@@ -502,7 +502,7 @@ static void hud(Game *g,int w,int height)
         readout(&h,TextFormat("MISSION %02d / %02d ENEMY TYPES",m->number,m->enemyKinds),452,245,27,CYAN);
         readout(&h,TextFormat("%d",(int)ceilf(m->countdown)),602,298,108,AMBER);
         if(m->number<=5)readout(&h,TextFormat("NEW: %s + %s",mission_enemy_name((EventKind)(m->enemyKinds-1)),mission_enemy_name((EventKind)m->enemyKinds)),407,434,23,DIM);
-        else readout(&h,"ALL TEN ACTIVE / SECURITY ESCALATING",424,434,23,DIM);
+        else readout(&h,TextFormat("%.2fx SECURITY / %s",m->difficulty,m->number>20?"VERY HARD":m->number>10?"HARD":"ESCALATING"),445,434,23,m->number>20?HUD_RED:DIM);
     }
     if(g->paused) {
         DrawRectangle(0,0,w,height,(Color){3,10,18,190});

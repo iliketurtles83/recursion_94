@@ -9,6 +9,44 @@ static void face(LineGeo *g, Vector3 a, Vector3 b, Vector3 c, Vector3 d, Vector3
     lg_fill_quad(g,a,b,c,d,n,(LineAttr){.color=color,.intensity=1,.group=material});
 }
 typedef struct Section { float z,w,h,y; } Section;
+// Small solid tubes retain a silhouette and specular highlight at close range.
+static void tube(LineGeo *g,const Vector3 *p,int count,int sides,float radius,Color color,float material)
+{
+    Vector3 ring[16][8];
+    for(int i=0;i<count;i++) {
+        Vector3 tangent=Vector3Normalize(Vector3Subtract(p[i+1<count?i+1:i],p[i?i-1:0]));
+        Vector3 ref=fabsf(tangent.z)>.9f?(Vector3){0,1,0}:(Vector3){0,0,1};
+        Vector3 u=Vector3Normalize(Vector3CrossProduct(tangent,ref)),v=Vector3CrossProduct(tangent,u);
+        for(int k=0;k<sides;k++)ring[i][k]=Vector3Add(p[i],Vector3Scale(Vector3Add(Vector3Scale(u,cosf(k*2*PI/sides)),Vector3Scale(v,sinf(k*2*PI/sides))),radius));
+    }
+    for(int i=0;i<count-1;i++)for(int k=0;k<sides;k++) {
+        int next=(k+1)%sides;
+        face(g,ring[i][k],ring[i][next],ring[i+1][next],ring[i+1][k],Vector3Subtract(ring[i][k],p[i]),color,material);
+    }
+    for(int end=0;end<2;end++) {
+        int i=end?count-1:0;
+        Vector3 n=Vector3Normalize(Vector3Subtract(p[i],p[end?i-1:1]));
+        for(int k=0;k<sides;k++) {
+            Vector3 a=ring[i][k],b=ring[i][(k+1)%sides];
+            if(Vector3DotProduct(Vector3CrossProduct(Vector3Subtract(a,p[i]),Vector3Subtract(b,p[i])),n)<0){Vector3 t=a;a=b;b=t;}
+            lg_fill_tri(g,p[i],a,b,n,(LineAttr){.color=color,.intensity=1,.group=material});
+        }
+    }
+}
+static void radiator(LineGeo *g,float cx,float z)
+{
+    for(int k=0;k<16;k++) {
+        float a=k*2*PI/16,b=(k+1)*2*PI/16;
+        Vector3 p[8];
+        for(int j=0;j<8;j++) {
+            float angle=(j&1)?b:a,r=(j&2)?.202f:.231f;
+            p[j]=(Vector3){cx+r*cosf(angle),-.05f+r*sinf(angle),z+((j&4)?-.018f:0)};
+        }
+        face(g,p[0],p[1],p[5],p[4],(Vector3){cosf(a),sinf(a),0},(Color){95,113,123,255},3);
+        face(g,p[0],p[2],p[3],p[1],(Vector3){0,0,1},(Color){123,133,137,255},3);
+        face(g,p[4],p[5],p[7],p[6],(Vector3){0,0,-1},(Color){64,78,87,255},3);
+    }
+}
 static void collar(LineGeo *g,float cx,float z,float radius)
 {
     for(int k=0;k<24;k++) {
@@ -103,6 +141,11 @@ void shipmodel_build(LineGeo *hull, LineGeo *lights, float engineIntensity)
     const Section canopy[]={{1.08f,.018f,.015f,.20f},{.78f,.12f,.095f,.25f},{.38f,.225f,.17f,.29f},{.04f,.23f,.17f,.29f},{-.31f,.21f,.11f,.27f},{-.59f,.12f,.018f,.26f}};
     loft(hull,body,9,0,(Color){225,229,229,255},0);
     loft(hull,canopy,6,0,(Color){23,63,91,255},1);
+    for(int arch=0;arch<2;arch++) {
+        Vector3 p[13];float width=arch?.218f:.225f,z=arch?-.20f:.32f;
+        for(int k=0;k<13;k++){float a=k*PI/12;p[k]=(Vector3){width*cosf(a),.29f+.175f*sinf(a),z};}
+        tube(hull,p,13,8,.009f,(Color){104,126,137,255},3);
+    }
     for(int side=-1;side<=1;side+=2) {
         Vector3 top[4]={{side*.25f,.01f,.90f},{side*1.48f,.01f,-.65f},{side*1.12f,.08f,-1.26f},{side*.23f,.10f,-.83f}},bottom[4];
         for(int i=0;i<4;i++) {bottom[i]=top[i];bottom[i].y-=.12f;}
@@ -115,6 +158,13 @@ void shipmodel_build(LineGeo *hull, LineGeo *lights, float engineIntensity)
         const Section pod[]={{.10f,.10f,.10f,-.07f},{-.15f,.16f,.15f,-.06f},{-.50f,.21f,.20f,-.05f},{-.90f,.22f,.20f,-.05f},{-1.20f,.20f,.18f,-.05f},{-1.42f,.18f,.17f,-.05f}};
         loft(hull,pod,6,side*.48f,(Color){154,161,166,255},3);
         collar(hull,side*.48f,-1.24f,.205f);
+        for(int k=0;k<5;k++)radiator(hull,side*.48f,-.46f-k*.12f);
+        Vector3 hose[9];
+        for(int k=0;k<9;k++) {
+            float t=k/8.0f;
+            hose[k]=(Vector3){side*(.64f-.33f*t),.14f+.10f*sinf(t*PI),-1.08f+.43f*t};
+        }
+        tube(hull,hose,9,6,.012f,(Color){138,116,83,255},3);
         // Raised armor plates, recessed intake slats and canopy rails.
         face(hull,(Vector3){side*.36f,.125f,.22f},(Vector3){side*1.27f,.13f,-.69f},(Vector3){side*1.0f,.17f,-1.08f},(Vector3){side*.38f,.19f,-.71f},(Vector3){0,1,0},(Color){211,220,226,255},0);
         service_hatch(hull,side*.88f,.165f,-.62f);

@@ -30,7 +30,7 @@ typedef struct Mission {
     int number, completed, enemyKinds, required, packetCount;
     int64_t score;
     uint64_t seed;
-    float elapsed, countdown, immunity, warpRemaining, duration, cruiseSpeed, boostSpeed;
+    float elapsed, countdown, immunity, warpRemaining, duration, cruiseSpeed, boostSpeed, difficulty;
     MissionSample previous;
     int justCollected, justHit, justNear;
     const char *failure;
@@ -39,6 +39,7 @@ typedef struct Mission {
 void mission_reset(Mission *m, uint64_t seed);
 void mission_reset_at(Mission *m, uint64_t seed, int number);
 int mission_enemy_count(int number);
+float mission_difficulty(int number);
 uint64_t mission_route_seed(const Mission *m);
 float mission_theme_hue(int number);
 const char *mission_enemy_name(EventKind kind);

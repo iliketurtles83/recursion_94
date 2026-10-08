@@ -7,6 +7,7 @@
 #include "render/pipeline.h"
 #include "render/shapes.h"
 #include "render/streaks.h"
+#include "render/tunneldetail.h"
 #include "rlgl.h"
 #include <math.h>
 #include <stdlib.h>
@@ -650,6 +651,7 @@ static void build_panels(const VortexState *st,ChunkCpu *c,const PathSystem *pat
             lg_quad(g,b,0,1,2,3);
         }
     }
+    tunnel_detail_build(g,path,c->origin,c->s0);
 }
 
 static void vortex_build_chunk(Environment *env, const PathSystem *path, int chunkIndex, ChunkCpu *out)

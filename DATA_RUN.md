@@ -36,9 +36,26 @@ endless missions and music changes, retaining its city palette.
 
 After mission five, cruise/boost speed, gate density, required payload and enemy
 motion increase while deadlines, pickup tolerance and safe openings tighten.
-The progression uses bounded speeds and smoothly increasing motion pressure:
-cruise rises from 32 to at most 80 m/s, boost from 65 to 160 m/s, gates from
-25 to 41, required payload from 8 to 20, and the deadline from 90 to 75 seconds.
+`mission_difficulty()` supplies a piecewise multiplier: missions 1–5 use 1.00×,
+6–10 add 0.08 per mission, 11–20 add 0.14, and 21 onward add 0.18. This makes
+mission 10 1.40×, mission 20 2.80× and mission 21 2.98×. The protected countdown
+shows the multiplier and marks missions 11–20 HARD, and 21 onward VERY HARD.
+The factor drives smoothly bounded pressure `1 - exp(-(difficulty - 1) / 2)`:
+cruise approaches 57 m/s, boost 104 m/s, gates 40, required payload 30, and the
+deadline 60 seconds. Pickup radius approaches 1.45 metres and laser openings
+2.05 metres, including a separate 0.55 metre collision clearance margin.
+After mission ten, every fourth leg adds a second attack wave; after twenty,
+every second leg does; after thirty, all legs do. Secondary attacks use existing
+drones, orbiters, interceptors and splitters, separated in depth from the first
+wave. Two full laser walls are never chained within one leg.
+
+| Mission | Multiplier | Boost (m/s) | Hazards | Required / available data | Deadline (s) |
+| --- | --- | --- | --- | --- | --- |
+| 10 | 1.40× | 72.1 | 28 | 12 / 28 | 84.6 |
+| 11 | 1.54× | 74.2 | 34 | 13 / 29 | 82.9 |
+| 20 | 2.80× | 88.1 | 42 | 20 / 34 | 72.2 |
+| 21 | 2.98× | 89.5 | 51 | 21 / 35 | 71.1 |
+
 Every layout includes each unlocked enemy kind and leaves the first two gates
 clear for orientation. Score uses 64 bits for long runs.
 
@@ -114,19 +131,22 @@ cyan safe openings have distinct, unlabeled brackets. Rendering, HUD markers,
 bot prediction and swept collision share the
 same enemy-motion function; collisions sample the exact crossing time. Openings
 include a 0.55 metre ship-clearance margin. Hazards retain the three-hit shield
-and 1.2 second damage immunity. Successful laser openings award bonus points.
+and 1.2 second damage immunity, reduced to 0.9 seconds from mission 21.
+Successful laser openings award bonus points.
 
 ## Visual changes
 
 - Smooth procedural courier mesh: 64-sided cross-sections with interpolated
-  hull/canopy/pod profiles, smooth surface normals and 26,786 hull vertices. Beveled
+  hull/canopy/pod profiles, smooth surface normals and 30,026 hull vertices. Beveled
   wing armor, intake slats, fitted canopy rails, fins, twin engine pods,
   articulated nozzles, recessed dark rear bulkhead and navigation lights.
-  The latest pass adds four raised service hatches, sixteen cooling louvers,
+  The preceding pass added four raised service hatches, sixteen cooling louvers,
   eight cross-slot fasteners, two machined engine collars, nozzle rim thickness,
   sixteen external actuators and a second exhaust layer. This adds **182,256
   bytes (178 KiB)** of actual vertex/index data across the hull, nozzle and flame
-  meshes, generated at startup. It does not enlarge the existing texture.
+  meshes, generated at startup. The new pass adds ten solid engine cooling fins,
+  two tubular canopy arches and two curved engine hoses, adding another
+  **203,952 bytes (199.2 KiB)** of geometry. The existing texture is retained.
 - Native 1254 × 1254 generated aircraft-metal albedo texture, with panel seams,
   rivets, machining and worn paint. Triplanar mapping, mipmaps and anisotropic
   filtering keep detail stable at different distances. A GGX lighting shader
@@ -166,6 +186,14 @@ only mission number, payload count, time, shield bars, speed, a thin progress li
   retains its tessellation and detail. Gameplay targets remain clear at distance.
   `detailNear` and `detailFar` in the tunnel preset control the transition.
   The tunnel chase camera is slightly closer to show the ship hardware.
+- Solid tunnel hardware adds segmented structural ribs, framed recessed vents
+  with five raised louvers each, and conduits with enlarged coupling ends.
+  `render/tunneldetail.c` builds 3,328 vertices and 4,992 indices per 48 metre
+  chunk: **209,664 bytes (204.8 KiB)** beyond the previous panel geometry.
+  Parts follow the curved path and remain outside the flight lane. Separate
+  machined-metal, dark-recess, louver and conduit materials receive filtered
+  highlights; fine shading fades between 45 and 130 metres. No additional neon
+  outlines are added. The existing fixed-size chunk pool bounds memory use.
 
 The tunnel and city are procedural and the gameplay is an endless arcade run.
 Peripheral wireframe debris and architecture are scenery; the authored hazards are the
@@ -235,9 +263,10 @@ Mission unit tests cover deterministic layout, swept crossings, scoring, missed
 gates, damage immunity, near misses, continuously available boost, deadline
 ordering, portal entry, loss conditions, sustained boost with and without
 pickups, enemy motion at crossing time, laser openings and restart.
-The 90 core checks, 2,296 mission checks and 32 music checks pass, along
+The 96 core checks, 20,123 mission checks and 32 music checks pass, along
 with the dynamic ship mesh test. Mission checks include progression through
-sixteen missions, all ten collision shapes, deterministic layouts, a late-mission
+thirty-two transitions, difficulty bounds through mission 100, all ten collision
+shapes, deterministic layouts, a mission 10,000
 layout, score above five billion, shield recovery, and the full protected countdown.
 On Windows there are seven CTest suites, including a six-mission engine run,
 interactive startup with a forced zero-time first frame, and standalone startup
@@ -245,14 +274,18 @@ from a folder containing only the EXE. These exercise actual rendering, audio
 and embedded-resource extraction. Music checks cover non-silent bounded output,
 tempo endpoints, pause/mute, and identical synthesis across different device
 buffer sizes, five arrangements, and warp tempo. The ship test checks finite geometry, stable dynamic buffer size
-and exhaust aperture expansion, both exhaust layers, and the 100–200 KiB added
-geometry budget. Autoplay also checks held boost without any
+and exhaust aperture expansion, both exhaust layers, and the additional ~200 KiB
+ship budget. Core tests check the tunnel hardware budget, determinism, finite
+unit normals, index limits, materials and clearance from the player lane.
+Autoplay also checks held boost without any
 pickup events and verifies full movement time across a 120 ms frame. It reports
 speed and boost interruptions after acceleration. Seeds 17 and 83 clear six
-consecutive missions; seed 1 clears five before losing its shield in mission six.
-The city route clears three missions. Later difficulty and idle-loss paths were
-also exercised. Warp, countdown, new enemy missions and the 800 × 450 countdown
-were visually inspected.
+consecutive missions. Seed 17 clears mission 10 with two shield points; the same
+simple QA bot loses its shield at missions 11, 20 and 21. Those are expected
+gameplay losses, rather than executable crashes. Late-mission flight and loss
+paths, warp, multiplier countdown, and 800 × 450 / 3840 × 2160 captures were
+also exercised and visually inspected. Difficulty still needs human playtesting
+to judge its feel; the automated bot is a regression tool.
 
 Use `--sandbox --env 0`, `--sandbox --env 2 --preset city`, or
 `--sandbox --env 3 --preset corridor` for the original development environments.

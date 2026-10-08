@@ -42,6 +42,7 @@ set(CT_CORE_SRC
   src/render/linegeo.c
   src/env/city_landmarks.c
   src/render/shipmodel.c
+  src/render/tunneldetail.c
 )
 set(CT_MODULE_SRC
   ${CT_CORE_SRC}

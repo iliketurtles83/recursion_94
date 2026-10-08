@@ -7,6 +7,13 @@ int mission_enemy_count(int number)
 {
     return number < 1 ? 2 : number < 5 ? number * 2 : MISSION_ENEMY_KINDS;
 }
+float mission_difficulty(int number)
+{
+    if(number<=5)return 1;
+    if(number<=10)return 1+(number-5)*.08f;
+    if(number<=20)return 1.4f+(number-10)*.14f;
+    return 2.8f+((float)number-20)*.18f;
+}
 uint64_t mission_route_seed(const Mission *m)
 {
     return m->number==1?m->seed:ct_hash64_2(m->seed,(uint64_t)m->number*0x9e3779b97f4a7c15ull);
@@ -25,46 +32,60 @@ const char *mission_enemy_name(EventKind kind)
 }
 static void layout(Mission *m)
 {
-    int extra=m->number>5?m->number-5:0;
-    float pressure=(float)extra/(extra+12.0f);
+    m->difficulty=mission_difficulty(m->number);
+    // Approach playable limits smoothly, even thousands of missions into a run.
+    float pressure=1-expf(-(m->difficulty-1)*.5f);
     m->enemyKinds=mission_enemy_count(m->number);
-    m->required=MISSION_REQUIRED+(extra<24?extra/2:12);
-    m->packetCount=25+(extra<16?extra:16);
-    m->duration=MISSION_DURATION-fminf(extra*.5f,15);
-    m->cruiseSpeed=32+fminf(extra*.65f,48);
-    m->boostSpeed=65+fminf(extra*.95f,95);
+    m->packetCount=25+(int)ceilf(15*pressure);
+    m->required=(int)ceilf(m->packetCount*(.32f+.43f*pressure));
+    m->duration=MISSION_DURATION-30*pressure;
+    m->cruiseSpeed=32+25*pressure;
+    m->boostSpeed=65+39*pressure;
     Pcg32 rng=pcg32_seed(ct_hash64_2(mission_route_seed(m),0x4441544152554eull));
     const float lanes[]={0,-3.4f,3.4f,0,3.4f,-3.4f};
     double spacing=(MISSION_FINISH-200)/m->packetCount;
     for(int i=0;i<m->packetCount;i++) {
         float x=lanes[i%6],y=i<3?.7f:pcg32_range(&rng,-1.8f,2.4f);
         double s=100+i*spacing;
-        m->events[m->eventCount++]=(MissionEvent){.s=s,.x=x,.y=y,.radius=2.1f-.5f*pressure,.kind=EVENT_PACKET};
+        m->events[m->eventCount++]=(MissionEvent){.s=s,.x=x,.y=y,.radius=2.1f-.65f*pressure,.kind=EVENT_PACKET};
         if(i<=1||i>=m->packetCount-1)continue;
         // Every unlocked kind occurs; the newest pair appears early in its debut.
         int offset=m->number<=5?m->enemyKinds-2:(m->number*3)%10;
         EventKind kind=(EventKind)(1+(i-2+offset)%m->enemyKinds);
-        MissionEvent e={.s=s+spacing*.48,.x=(i%3==0?0:-x),.y=.7f,.radius=1,.kind=kind,
-            .frequency=.9f+1.4f*pressure,.phase=pcg32_range(&rng,0,6.2831853f)};
+        // After ten, compound encounters require a second steering decision.
+        // Keep these separated in depth and never chain two full laser walls.
+        bool doubleWave=m->number>30||(m->number>20&&i%2==0)||(m->number>10&&i%4==0);
+        float wave=doubleWave?.34f:.48f;
+        MissionEvent e={.s=s+spacing*wave,.x=(i%3==0?0:-x),.y=.7f,.radius=1+.25f*pressure,.kind=kind,
+            .frequency=.9f+1.8f*pressure,.phase=pcg32_range(&rng,0,6.2831853f)};
         if(kind==EVENT_MINE) {
-            e.x=-3.35f;e.y=y*.5f;e.radius=.85f;e.s=s+spacing*.44;
+            e.x=-3.35f;e.y=y*.5f;e.radius=.85f+.12f*pressure;e.s=s+spacing*(wave-.04f);
             m->events[m->eventCount++]=e;
-            e.x=3.35f;e.s=s+spacing*.54;
+            e.x=3.35f;e.s=s+spacing*(wave+.06f);
         } else if(kind==EVENT_BARRIER||kind==EVENT_SHUTTER) {
             e.x=kind==EVENT_SHUTTER?0:(x+lanes[(i+1)%6])*.5f;
             e.y=kind==EVENT_SHUTTER?.4f:(i%2?2.0f:-1.6f);
-            e.radius=2.65f-.4f*pressure;e.amplitude=kind==EVENT_SHUTTER?1.9f:0;
-            e.frequency=.5f+pressure*.6f;
+            e.radius=2.65f-.6f*pressure;e.amplitude=kind==EVENT_SHUTTER?1.9f+.3f*pressure:0;
+            e.frequency=.5f+pressure*.9f;
         } else if(kind==EVENT_SWEEPER||kind==EVENT_ORBITER||kind==EVENT_INTERCEPTOR) {
             e.x=0;e.y=y*.3f;e.amplitude=kind==EVENT_ORBITER?3.1f:2.8f;
-            e.radius=kind==EVENT_INTERCEPTOR?1.1f:1.05f;
-            if(kind==EVENT_ORBITER)e.frequency=.65f+pressure*.8f;
-            if(kind==EVENT_INTERCEPTOR)e.frequency=1.1f+pressure*1.2f;
+            e.radius=(kind==EVENT_INTERCEPTOR?1.1f:1.05f)+.20f*pressure;
+            if(kind==EVENT_ORBITER)e.frequency=.65f+pressure*1.3f;
+            if(kind==EVENT_INTERCEPTOR)e.frequency=1.1f+pressure*1.6f;
         } else if(kind==EVENT_ROTOR||kind==EVENT_PULSAR||kind==EVENT_SPLITTER) {
             e.x=0;e.y=.4f;e.amplitude=2.5f;e.radius=kind==EVENT_SPLITTER?.8f:.22f;
-            e.frequency=.6f+pressure*1.1f;
+            e.frequency=.6f+pressure*1.6f;
         }
         m->events[m->eventCount++]=e;
+        if(doubleWave) {
+            const EventKind followups[]={EVENT_DRONE,EVENT_ORBITER,EVENT_INTERCEPTOR,EVENT_SPLITTER};
+            EventKind follow=followups[(i/2+m->number)%4];
+            m->events[m->eventCount++]=(MissionEvent){.s=s+spacing*.72,
+                .x=follow==EVENT_DRONE?(i%2?3.4f:-3.4f):0,.y=follow==EVENT_DRONE?(i%3?1.8f:-1.6f):.4f,
+                .radius=(follow==EVENT_SPLITTER?.8f:1.05f)+.2f*pressure,.kind=follow,
+                .amplitude=follow==EVENT_DRONE?0:2.8f,.frequency=1.0f+1.6f*pressure,
+                .phase=pcg32_range(&rng,0,6.2831853f)};
+        }
     }
 }
 void mission_reset_at(Mission *m,uint64_t seed,int number)
@@ -186,7 +207,7 @@ void mission_tick(Mission *m, float dt, MissionSample p, bool boosting)
             if (immuneUntil <= step*t) {
                 m->shield--;
                 m->combo = 1;
-                immuneUntil = step*t+1.2f;
+                immuneUntil = step*t+(m->number>20?.9f:1.2f);
                 m->justHit++;
             }
         } else if (mission_event_opening(e) || distance < e->radius + 1.8f) {
