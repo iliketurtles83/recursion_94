@@ -6,6 +6,14 @@ remain the foundation. Launching the executable opens the original Data Vortex
 tunnel mission by default. Its three-dimensional curves, twisting rings, ribbons,
 streaks, peripheral debris and bright core are retained. The menu offers **1 /
 Tunnel** and **2 / Grid City**, selectable by keyboard or mouse.
+Both choices start the selected route. **Tab** switches the live preview before
+starting; Enter or the Start button launches the route currently on screen.
+The menu background is the actual streaming world, with the ship cruising and
+gently steering on autopilot. Menu text and its gradient fade over 0.75 seconds.
+Changing previews blends scenery over 0.55 seconds while keeping journey distance.
+Starting the previewed route does not rebuild the world or reset the camera,
+speed, position, trails or soundtrack. Countdown autopilot keeps the ship moving
+until player controls become active.
 
 In mission one, fly through at least eight amber data gates, avoid security hazards and enter
 the cyan uplink portal within 90 simulation seconds. There are 25 gates on a
@@ -15,7 +23,8 @@ The finish requires both enough data and passing through the portal opening.
 A successful delivery triggers a 2.4-second super-warp with widening afterburners,
 a speed surge, expanded field of view, radial blur and a rising music mix.
 The next mission loads automatically with a protected five-second countdown.
-The ship and mission clock stay still during the countdown. Cumulative score
+The ship cruises forward during the countdown; its mission clock, collection,
+scoring and damage remain inactive. Cumulative score
 carries forward, one shield point recovers up to three, and the payload resets.
 There is no final win screen: the run continues until a mission is lost.
 
@@ -72,13 +81,14 @@ time beyond 50 ms. A 120 ms regression advances the full 120 ms.
 | Key | Action |
 | --- | --- |
 | Enter / Start button | Start or retry |
-| 1 / 2 in the menu | Tunnel / Grid City |
+| 1 / 2 in the menu | Choose Tunnel / Grid City and start |
+| Tab in the menu | Switch the live preview |
 | WASD / arrows | Horizontal and vertical steering |
 | Shift / Space | Boost |
 | Q / E | Barrel roll |
 | Escape | Pause/resume; back to menu after a result; quit from menu |
 | R | Restart at mission one with the same seed |
-| Backspace | Return to menu |
+| Backspace | Return to the moving menu, continuing the current journey |
 | M | Mute/unmute |
 | F11 | Fullscreen |
 | F12 | Save a screenshot in the working directory |
@@ -268,9 +278,15 @@ with the dynamic ship mesh test. Mission checks include progression through
 thirty-two transitions, difficulty bounds through mission 100, all ten collision
 shapes, deterministic layouts, a mission 10,000
 layout, score above five billion, shield recovery, and the full protected countdown.
-On Windows there are seven CTest suites, including a six-mission engine run,
+On Windows there are eight CTest suites, including a six-mission engine run,
 interactive startup with a forced zero-time first frame, and standalone startup
-from a folder containing only the EXE. These exercise actual rendering, audio
+from a folder containing only the EXE, and live-menu checks for both modes.
+The live-menu regression waits through long previews, renders scenery blending,
+verifies unchanged ship coordinates, camera, speed and seed when starting,
+and observes about 160 metres of protected movement during the five-second
+countdown. It checks menu fading, countdown pause/resume, cancel/re-enter at
+speed and handing over at mission distance zero without camera recentering.
+These exercise actual rendering, audio
 and embedded-resource extraction. Music checks cover non-silent bounded output,
 tempo endpoints, pause/mute, and identical synthesis across different device
 buffer sizes, five arrangements, and warp tempo. The ship test checks finite geometry, stable dynamic buffer size
@@ -293,6 +309,14 @@ Existing `--shot`, `--bench`, parameter and preset tools continue to use sandbox
 mode. The ship and shared city shaders also improve the sandbox rendering.
 
 ## Integration
+
+The game stores `missionOrigin` independently of the streaming world's distance.
+Starting a countdown predicts its cruise-in distance, including the decay from
+any existing boost velocity. Event positions, the uplink and progress indicators
+add this origin; mission rules receive samples relative to it. This lets a new
+3,000 metre mission begin anywhere in the live world. Menu and countdown flight
+share the normal fixed-step simulation. The pure mission model still protects
+the countdown from elapsed mission time, collection and damage.
 
 `game/mission.c` contains pure mission rules. `game/game.c` handles input,
 presentation, procedural actors and audio. `game/techno.c` is an independent
