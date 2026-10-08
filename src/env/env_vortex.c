@@ -76,7 +76,7 @@ typedef struct VortexParams {
     float coreIntensity, coreSize, coreStreak, coreRays, bgGlow, dust;
     // pacing
     bool  pacing;
-    float curveDetail, themeHue;
+    float curveDetail, themeHue, detailNear, detailFar;
     bool showPanels;
     // layer toggles
     bool  showRings, showRibbons, showStreaks, showDebris, showHolo, showCore, showBackground;
@@ -233,6 +233,8 @@ static void vortex_register(Environment *env, ParamRegistry *reg)
     params_float(reg,g,"curveDetail",&p->curveDetail,1.0f,1.0f,4.0f);
     params_bool(reg,g,"showPanels",&p->showPanels,false);
     params_float(reg,g,"themeHue",&p->themeHue,0,0,1);
+    params_float(reg,g,"detailNear",&p->detailNear,45,20,120);
+    params_float(reg,g,"detailFar",&p->detailFar,125,80,300);
 }
 
 static PathStyle vortex_path_style(const Environment *env)
@@ -431,6 +433,12 @@ static void build_ring(const VortexState *st, ChunkCpu *c, const PathSystem *pat
         float pad = 0.16f * scale;
         lg_planar_arc(g, rInner, a - pad / rInner, a + pad / rInner, 0.0f, pad, 3.0f * DEG, at);
         lg_planar_arc(g, rOuter, a - pad / rOuter, a + pad / rOuter, 0.0f, pad, 3.0f * DEG, at);
+    }
+    // Sparse, smooth silhouettes replace the crowded small details at distance.
+    // Use the existing ring basis without advancing the deterministic RNG.
+    if(slot%3==0) {
+        LineAttr guide={.color=theme_color(p,COL_CYAN),.intensity=ringBright*.22f,.param=-1,.group=(float)slot};
+        lg_planar_arc(g,R*1.10f,0,TAU_F,0,.085f,4.5f*DEG,guide);
     }
 }
 
@@ -801,17 +809,21 @@ static void vortex_draw_emissive(Environment *env, const FrameContext *ctx, cons
     env_set_common_uniforms(sl, st->shRing, ctx);
     sl_f1(sl, st->shRing, "uPulseAmount", p->pulseAmount);
     sl_f1(sl, st->shRing, "uPulseSpeed", p->pulseSpeed);
+    sl_f2(sl, st->shRing, "uDetailRange", p->detailNear, fmaxf(p->detailFar,p->detailNear+1));
     env_set_common_uniforms(sl, st->shRibbon, ctx);
     sl_f1(sl, st->shRibbon, "uPeriod", (float)RIBBON_PERIOD);
     sl_v3(sl, st->shRibbon, "uColorA", ct_srgb_to_linear(theme_color(&st->p,COL_PURPLE)));
     sl_v3(sl, st->shRibbon, "uColorB", ct_srgb_to_linear(theme_color(&st->p,COL_BLUE)));
     sl_f1(sl, st->shRibbon, "uScroll", p->ribbonScroll);
+    sl_f3(sl, st->shRibbon, "uSceneryFade", p->detailNear, p->detailFar+70, .14f);
     env_set_common_uniforms(sl, st->shObject, ctx);
     sl_f3(sl, st->shObject, "uEdgeColor", 0, 0, 0);
     sl_f1(sl, st->shObject, "uEdgeMix", 0.0f);
     sl_f1(sl, st->shObject, "uFlicker", 0.35f);
+    sl_f3(sl, st->shObject, "uSceneryFade", p->detailNear+10, p->detailFar, 0);
     env_set_common_uniforms(sl, st->shFace, ctx);
     sl_f1(sl, st->shFace, "uDataRate", p->dataRate);
+    sl_f3(sl, st->shFace, "uSceneryFade", p->detailNear+10, p->detailFar, 0);
 
     static const int ORDER[6] = { B_RIBBONS, B_RINGS, B_RAILS, B_FACES, B_EDGES, B_HOLO };
     for (int pass = 0; pass < 6; pass++) {

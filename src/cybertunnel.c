@@ -231,6 +231,7 @@ static void draw_ship_emissive(CtTunnel *ct, const FrameContext *ctx)
     sl_f1(sl, sh, "uChunkFade", 1.0f);
     draw_mesh(ct, sh, ct->shipEdges, xf);
     sl_f1(sl,ct->shAfterburner,"uTime",ctx->shaderTime);
+    sl_v3(sl,ct->shAfterburner,"uCamPos",ctx->camera.position);
     sl_f1(sl,ct->shAfterburner,"uBoost",ctx->speedNorm);
     sl_f1(sl,ct->shAfterburner,"uPower",fminf(ct->core.engineIntensity*.22f,2.0f));
     draw_mesh(ct,ct->shAfterburner,ct->shipFlames,xf);

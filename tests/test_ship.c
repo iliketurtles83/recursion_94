@@ -13,7 +13,15 @@ int main(void)
     if(open<closed*1.7f)failures++;
     LineGeo *all[]={&hull,&lights,&nozzle,&flame};
     for(int g=0;g<4;g++){if(all[g]->batchCount!=1)failures++;for(int i=0;i<all[g]->vcount*3;i++)if(!isfinite(all[g]->pos[i])||!isfinite(all[g]->nrm[i]))failures++;}
-    printf("ship: %d hull vertices, nozzle aperture %.3f -> %.3f, %d failures\n",hull.vcount,closed,open,failures);
+    // The requested 100-200 KB detail budget measures actual vertex/index data,
+    // not executable padding. Baseline mesh bytes are from the prior release.
+    int bytes=(hull.vcount+nozzle.vcount+flame.vcount)*60+(hull.icount+nozzle.icount+flame.icount)*2;
+    int addedBytes=bytes-1874472;
+    if(addedBytes<100*1024||addedBytes>200*1024)failures++;
+    int coreVertices=0;
+    for(int i=0;i<flame.vcount;i++)if(flame.uv2[i*2+1]>.5f)coreVertices++;
+    if(!coreVertices||coreVertices==flame.vcount)failures++;
+    printf("ship: %d hull vertices, %d added geometry bytes, layered exhaust, nozzle aperture %.3f -> %.3f, %d failures\n",hull.vcount,addedBytes,closed,open,failures);
     for(int g=0;g<4;g++)lg_free(all[g]);
     return failures?1:0;
 }

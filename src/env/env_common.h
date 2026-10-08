@@ -20,6 +20,9 @@ static inline void env_set_common_uniforms(ShaderLib *sl, int sh, const FrameCon
     sl_f1(sl, sh, "uPixelScale", ctx->pixelScale);
     sl_f1(sl, sh, "uMinPx", a->minPixelWidth);
     sl_f1(sl, sh, "uIntensity", ctx->intensity);
+    // Only scenery opts into extra distance simplification. Ship lights and
+    // other environments may share shader entries with the tunnel.
+    sl_f3(sl, sh, "uSceneryFade", 0, 0, 1);
 }
 
 static inline float env_chunk_fade(const ChunkGpu *c, double time)

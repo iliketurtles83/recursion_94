@@ -93,8 +93,11 @@ freezes the musical transport and M mutes it. The audio callback receives atomic
 controls and performs no allocation, file access or game-state reads.
 
 Twin 24-petal metal exhaust nozzles widen from a 0.115 to 0.210 metre aperture.
-Separate tessellated jet meshes flare from short blue exhaust to long blue/orange
-afterburner flames, with animated turbulence and shock diamonds. Aperture, plume
+Separate outer-gas and hot-core jet meshes flare from short blue exhaust to long
+blue/orange afterburner flames, with animated turbulence, contracting shock
+diamonds, soft silhouettes and filtered wisps. Metallic nozzle lips and external
+actuator links follow the changing aperture; local blue exhaust light illuminates
+the aft hardware. Aperture, plume
 width/length, trail width, music and engine pitch all respond to actual speed.
 
 Enemy waves begin after the first two gates. The ten kinds have distinct behaviors:
@@ -116,9 +119,14 @@ and 1.2 second damage immunity. Successful laser openings award bonus points.
 ## Visual changes
 
 - Smooth procedural courier mesh: 64-sided cross-sections with interpolated
-  hull/canopy/pod profiles, smooth surface normals and 25,298 vertices. Beveled
+  hull/canopy/pod profiles, smooth surface normals and 26,786 hull vertices. Beveled
   wing armor, intake slats, fitted canopy rails, fins, twin engine pods,
   articulated nozzles, recessed dark rear bulkhead and navigation lights.
+  The latest pass adds four raised service hatches, sixteen cooling louvers,
+  eight cross-slot fasteners, two machined engine collars, nozzle rim thickness,
+  sixteen external actuators and a second exhaust layer. This adds **182,256
+  bytes (178 KiB)** of actual vertex/index data across the hull, nozzle and flame
+  meshes, generated at startup. It does not enlarge the existing texture.
 - Native 1254 × 1254 generated aircraft-metal albedo texture, with panel seams,
   rivets, machining and worn paint. Triplanar mapping, mipmaps and anisotropic
   filtering keep detail stable at different distances. A GGX lighting shader
@@ -151,6 +159,13 @@ only mission number, payload count, time, shield bars, speed, a thin progress li
   vents, rivets, grooves and cyan edge lights without filling the flight lane.
   Edge anti-aliasing is enabled for missions, and font atlases are larger for
   crisp HUD rendering at high resolutions.
+- Fine ring detail is full strength up to 45 metres, then fades smoothly to zero
+  by 125 metres. Sparse, smooth ring silhouettes retain distant tunnel shape.
+  Rails, decorative debris and holograms also fade; ribbons become softer and
+  distant wall panels lose their fine seams, rivets and vents. Nearby geometry
+  retains its tessellation and detail. Gameplay targets remain clear at distance.
+  `detailNear` and `detailFar` in the tunnel preset control the transition.
+  The tunnel chase camera is slightly closer to show the ship hardware.
 
 The tunnel and city are procedural and the gameplay is an endless arcade run.
 Peripheral wireframe debris and architecture are scenery; the authored hazards are the
@@ -230,7 +245,8 @@ from a folder containing only the EXE. These exercise actual rendering, audio
 and embedded-resource extraction. Music checks cover non-silent bounded output,
 tempo endpoints, pause/mute, and identical synthesis across different device
 buffer sizes, five arrangements, and warp tempo. The ship test checks finite geometry, stable dynamic buffer size
-and exhaust aperture expansion. Autoplay also checks held boost without any
+and exhaust aperture expansion, both exhaust layers, and the 100–200 KiB added
+geometry budget. Autoplay also checks held boost without any
 pickup events and verifies full movement time across a 120 ms frame. It reports
 speed and boost interruptions after acceleration. Seeds 17 and 83 clear six
 consecutive missions; seed 1 clears five before losing its shield in mission six.

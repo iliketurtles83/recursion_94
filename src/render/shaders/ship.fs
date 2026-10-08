@@ -34,10 +34,11 @@ void main(){
     vec3 n=normalize(fNormal),v=normalize(fView);
     if(dot(n,v)<0)n=-n;
     bool glass=fMaterial>.5&&fMaterial<1.5,carbon=fMaterial>1.5&&fMaterial<2.5;
-    float metal=fMaterial>2.5?.83:carbon?.10:.16;
+    bool heatShield=fMaterial>3.5;
+    float metal=heatShield?.92:fMaterial>2.5?.83:carbon?.10:.16;
     vec3 tex=material_sample(),base=fColor*tex;
     float shade=dot(tex,vec3(.2126,.7152,.0722));
-    float rough=glass?.085:carbon?.62:fMaterial>2.5?.29:.43;
+    float rough=glass?.085:carbon?.62:heatShield?.22:fMaterial>2.5?.29:.43;
     rough+=glass?0:(1-shade)*.14;
     // Small relief from panel joints and wear; mipmaps stabilize distant detail.
     if(!glass){
@@ -47,6 +48,10 @@ void main(){
         vec3 gradient=sign(det)*(dFdx(height)*r1+dFdy(height)*r2);
         n=normalize(max(abs(det),.0000001)*n-gradient);
     } else base=fColor*.48;
+    if(heatShield){
+        float temper=.5+.5*sin(fLocal.z*24.0+atan(fLocal.y+.05,abs(fLocal.x)-.48)*2.0);
+        base*=mix(vec3(1.0),mix(vec3(.78,.64,.51),vec3(.46,.55,.68),temper),.35);
+    }
     float variance=dot(dFdx(n),dFdx(n))+dot(dFdy(n),dFdy(n));
     rough=clamp(sqrt(rough*rough+variance*.12),.075,.85);
     vec3 f0=mix(vec3(.04),base,metal);
@@ -57,6 +62,9 @@ void main(){
     col+=base*vec3(.20,.28,.35)*(1-metal*.75)+reflection*f*(glass?1.8:1.1);
     if(glass)col+=vec3(.008,.022,.026);
     col+=uRimColor*pow(1-max(dot(n,v),0),4.0)*.035;
-    col+=vec3(.001,.005,.008)*uBoost;
+    // Exhaust illuminates the aft hardware locally instead of tinting the hull.
+    float left=exp(-length(fLocal-vec3(-.48,-.05,-1.78))*7.0),right=exp(-length(fLocal-vec3(.48,-.05,-1.78))*7.0);
+    col+=vec3(.025,.14,.40)*(left+right)*(.25+1.8*uBoost);
+    if(heatShield)col+=vec3(.055,.012,.002)*uBoost;
     finalColor=vec4(col,1);
 }

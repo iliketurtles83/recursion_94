@@ -7,6 +7,7 @@ uniform vec3 uTheme;
 void main(){
     vec3 n=normalize(fNormal),v=normalize(uCamPos-fPos);
     if(dot(n,v)<0.0)n=-n;
+    float distance=length(uCamPos-fPos),detail=1.0-smoothstep(45.0,130.0,distance);
     vec2 grid=fUV*vec2(3,10),cell=abs(fract(grid)-.5),aa=max(fwidth(grid),vec2(.001));
     float seam=max(smoothstep(.46-aa.x,.49+aa.x,cell.x),smoothstep(.46-aa.y,.49+aa.y,cell.y));
     float bolt=1-smoothstep(.045,.065+length(aa),length(fract(grid)-vec2(.16)));
@@ -14,10 +15,11 @@ void main(){
     float strut=1-smoothstep(.015,.026+fwidth(fUV.y),abs(fUV.y-.5));
     float vent=(1-smoothstep(.16,.22,abs(fUV.x-.5)))*smoothstep(.6,.64,fUV.y)*(1-smoothstep(.9,.94,fUV.y));
     float slats=.55+.45*smoothstep(.15,.4,fract(fUV.y*50));
+    seam*=detail;bolt*=detail;strut*=detail;vent*=detail;
     vec3 metal=vec3(.045,.079,.105)*(1-seam*.65)*(1-vent*slats*.6);
     metal+=vec3(.07,.10,.14)*(bolt*.4+strut*.3);
     vec3 col=metal*(.7+.5*max(dot(n,normalize(vec3(-.4,.8,.3))),0.0));
     col+=uTheme*edge*.16;
-    float fog=exp(-max(length(uCamPos-fPos)-20,0.0)*.009);
-    finalColor=vec4(mix(uTheme*.017,col,fog),1);
+    float fog=exp(-max(distance-30,0.0)*.013);
+    finalColor=vec4(mix(uTheme*.006,col,fog),1);
 }

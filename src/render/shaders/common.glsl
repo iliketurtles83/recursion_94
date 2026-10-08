@@ -8,6 +8,7 @@ uniform float uChunkFade;   // 0..1 pop-in fade
 uniform float uPixelScale;  // world size of one pixel at distance 1
 uniform float uMinPx;       // minimum line half-width in pixels
 uniform float uIntensity;   // global energy 0..1
+uniform vec3 uSceneryFade;  // optional detail-near, detail-far, distant intensity
 
 float hash11(float p) { p = fract(p * 0.1031); p *= p + 33.33; p *= p + p; return fract(p); }
 float hash21(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
@@ -30,7 +31,10 @@ vec3 apply_atmo(vec3 col, float dist)
     col = mix(col, uCoreColor * lum * 1.2, fogT * uFog.z);
     float far = 1.0 - smoothstep(uFade.x, uFade.y, dist);
     float near = smoothstep(uFade.z, uFade.w, dist);
-    return col * far * near * uChunkFade;
+    float detail=1.0;
+    if(uSceneryFade.y>uSceneryFade.x)
+        detail=mix(1.0,uSceneryFade.z,smoothstep(uSceneryFade.x,uSceneryFade.y,dist));
+    return col * far * near * uChunkFade * detail;
 }
 
 // Crisp core plus soft halo across v in -1..1.

@@ -9,6 +9,51 @@ static void face(LineGeo *g, Vector3 a, Vector3 b, Vector3 c, Vector3 d, Vector3
     lg_fill_quad(g,a,b,c,d,n,(LineAttr){.color=color,.intensity=1,.group=material});
 }
 typedef struct Section { float z,w,h,y; } Section;
+static void collar(LineGeo *g,float cx,float z,float radius)
+{
+    for(int k=0;k<24;k++) {
+        float a=k*2*PI/24,b=(k+1)*2*PI/24;
+        Vector3 p[8];
+        for(int j=0;j<8;j++) {
+            float angle=(j&1)?b:a,r=(j&2)?radius-.018f:radius;
+            p[j]=(Vector3){cx+r*cosf(angle),-.05f+r*sinf(angle),z+((j&4)?-.055f:0)};
+        }
+        Vector3 radial={cosf((a+b)*.5f),sinf((a+b)*.5f),0};
+        face(g,p[0],p[1],p[5],p[4],radial,(Color){174,164,145,255},3);
+        face(g,p[2],p[6],p[7],p[3],Vector3Negate(radial),(Color){35,43,50,255},2);
+        face(g,p[0],p[2],p[3],p[1],(Vector3){0,0,1},(Color){107,119,130,255},3);
+        face(g,p[4],p[5],p[7],p[6],(Vector3){0,0,-1},(Color){152,162,170,255},3);
+    }
+}
+static void fastener(LineGeo *g,float x,float y,float z)
+{
+    for(int k=0;k<8;k++) {
+        float a=k*2*PI/8,b=(k+1)*2*PI/8;
+        Vector3 p={x+.013f*cosf(a),y,z+.013f*sinf(a)},q={x+.013f*cosf(b),y,z+.013f*sinf(b)};
+        Vector3 topP=Vector3Add(p,(Vector3){0,.006f,0}),topQ=Vector3Add(q,(Vector3){0,.006f,0});
+        face(g,p,q,topQ,topP,(Vector3){cosf(a),0,sinf(a)},(Color){91,102,109,255},3);
+        lg_fill_tri(g,(Vector3){x,y+.006f,z},topQ,topP,(Vector3){0,1,0},(LineAttr){.color={188,192,190,255},.intensity=1,.group=3});
+    }
+    for(int axis=0;axis<2;axis++) {
+        float sx=axis?.002f:.008f,sz=axis?.008f:.002f;
+        face(g,(Vector3){x-sx,y+.0065f,z-sz},(Vector3){x+sx,y+.0065f,z-sz},(Vector3){x+sx,y+.0065f,z+sz},(Vector3){x-sx,y+.0065f,z+sz},
+            (Vector3){0,1,0},(Color){20,28,35,255},2);
+    }
+}
+static void service_hatch(LineGeo *g,float x,float y,float z)
+{
+    Vector3 edge[4]={{x-.115f,y,z-.135f},{x+.115f,y,z-.135f},{x+.115f,y,z+.135f},{x-.115f,y,z+.135f}},top[4];
+    for(int k=0;k<4;k++)top[k]=(Vector3){x+(edge[k].x-x)*.86f,y+.021f,z+(edge[k].z-z)*.86f};
+    face(g,top[0],top[1],top[2],top[3],(Vector3){0,1,0},(Color){125,146,157,255},3);
+    for(int k=0;k<4;k++)face(g,edge[k],edge[(k+1)%4],top[(k+1)%4],top[k],(Vector3){0,1,0},(Color){61,76,87,255},3);
+    for(int side=-1;side<=1;side+=2)fastener(g,x+side*.075f,y+.021f,z+.075f);
+    // Recessed cooling louvers in the service panel, with raised metal lips.
+    for(int k=0;k<4;k++) {
+        float vz=z-.084f+k*.037f;
+        face(g,(Vector3){x-.073f,y+.022f,vz},(Vector3){x+.073f,y+.022f,vz},(Vector3){x+.073f,y+.022f,vz+.018f},(Vector3){x-.073f,y+.022f,vz+.018f},(Vector3){0,1,0},(Color){17,27,35,255},2);
+        face(g,(Vector3){x-.073f,y+.026f,vz+.018f},(Vector3){x+.073f,y+.026f,vz+.018f},(Vector3){x+.073f,y+.022f,vz+.023f},(Vector3){x-.073f,y+.022f,vz+.023f},(Vector3){0,1,0},(Color){169,177,178,255},3);
+    }
+}
 static float curved(float a,float b,float c,float d,float t)
 {
     return .5f*((2*b)+(-a+c)*t+(2*a-5*b+4*c-d)*t*t+(-a+3*b-3*c+d)*t*t*t);
@@ -69,8 +114,11 @@ void shipmodel_build(LineGeo *hull, LineGeo *lights, float engineIntensity)
         for(int i=0;i<4;i++) face(hull,top[i],bottom[i],bottom[(i+1)%4],top[(i+1)%4],(Vector3){side,0,0},(Color){61,87,106,255},0);
         const Section pod[]={{.10f,.10f,.10f,-.07f},{-.15f,.16f,.15f,-.06f},{-.50f,.21f,.20f,-.05f},{-.90f,.22f,.20f,-.05f},{-1.20f,.20f,.18f,-.05f},{-1.42f,.18f,.17f,-.05f}};
         loft(hull,pod,6,side*.48f,(Color){154,161,166,255},3);
+        collar(hull,side*.48f,-1.24f,.205f);
         // Raised armor plates, recessed intake slats and canopy rails.
         face(hull,(Vector3){side*.36f,.125f,.22f},(Vector3){side*1.27f,.13f,-.69f},(Vector3){side*1.0f,.17f,-1.08f},(Vector3){side*.38f,.19f,-.71f},(Vector3){0,1,0},(Color){211,220,226,255},0);
+        service_hatch(hull,side*.88f,.165f,-.62f);
+        service_hatch(hull,side*.77f,.195f,-.95f);
         for(int k=0;k<7;k++) {
             float z=-.21f-k*.12f;
             face(hull,(Vector3){side*.36f,.185f,z},(Vector3){side*.60f,.185f,z-.015f},(Vector3){side*.60f,.19f,z-.05f},(Vector3){side*.36f,.19f,z-.045f},(Vector3){0,1,0},(Color){24,38,49,255},0);
@@ -106,18 +154,30 @@ void shipmodel_nozzles(LineGeo *g,float boost)
                       {side*.48f+opening*cosf(b),-.05f+opening*sinf(b),-1.78f},
                       {side*.48f+opening*cosf(a),-.05f+opening*sinf(a),-1.78f}};
         face(g,p[0],p[1],p[2],p[3],(Vector3){cosf(a),sinf(a),0},(Color){141,144,151,255},3);
+        Vector3 lipA=p[3],lipB=p[2];
         for(int j=0;j<4;j++){p[j].x=side*.48f+(p[j].x-side*.48f)*.85f;p[j].y=-.05f+(p[j].y+.05f)*.85f;}
         face(g,p[3],p[2],p[1],p[0],(Vector3){-cosf(a),-sinf(a),0},(Color){25,38,48,255},2);
+        face(g,lipA,lipB,p[2],p[3],(Vector3){0,0,-1},(Color){111,115,117,255},4);
+        if(k%3==0) {
+            float angle=(a+b)*.5f,r=.16f+.05f*boost;
+            Vector3 across={-sinf(angle)*.014f,cosf(angle)*.014f,0},out={cosf(angle)*.006f,sinf(angle)*.006f,0};
+            Vector3 hinge={side*.48f+.197f*cosf(angle),-.05f+.197f*sinf(angle),-1.45f};
+            Vector3 tip={side*.48f+r*cosf(angle),-.05f+r*sinf(angle),-1.67f};
+            Vector3 h1=Vector3Subtract(hinge,across),h2=Vector3Add(hinge,across),t1=Vector3Subtract(tip,across),t2=Vector3Add(tip,across);
+            face(g,h1,h2,t2,t1,(Vector3){cosf(angle),sinf(angle),0},(Color){177,170,147,255},3);
+            face(g,h1,t1,Vector3Add(t1,out),Vector3Add(h1,out),Vector3Negate(across),(Color){69,78,86,255},3);
+            face(g,h2,Vector3Add(h2,out),Vector3Add(t2,out),t2,across,(Color){69,78,86,255},3);
+        }
     }
 }
 void shipmodel_flames(LineGeo *g)
 {
     lg_clear(g);
-    for(int side=-1;side<=1;side+=2)for(int z=0;z<16;z++)for(int k=0;k<32;k++) {
+    for(int layer=0;layer<2;layer++)for(int side=-1;side<=1;side+=2)for(int z=0;z<(layer?8:16);z++)for(int k=0;k<(layer?16:32);k++) {
         int base=lg_reserve(g,4,6);const int dz[4]={0,0,1,1},da[4]={0,1,1,0};
         for(int j=0;j<4;j++) {
-            float u=(z+dz[j])/16.0f,v=(k+da[j])/32.0f;
-            lg_vertex(g,(Vector3){cosf(v*2*PI),sinf(v*2*PI),-u},(Vector2){u,v},(Vector2){side,0},(Vector3){cosf(v*2*PI),sinf(v*2*PI),0},(Vector4){0},WHITE);
+            float u=(z+dz[j])/(layer?8.0f:16.0f),v=(k+da[j])/(layer?16.0f:32.0f);
+            lg_vertex(g,(Vector3){cosf(v*2*PI),sinf(v*2*PI),-u},(Vector2){u,v},(Vector2){side,(float)layer},(Vector3){cosf(v*2*PI),sinf(v*2*PI),0},(Vector4){0},WHITE);
         }
         lg_quad(g,base,0,1,2,3);
     }
