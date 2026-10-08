@@ -8,11 +8,11 @@
 #define TAU 6.283185307179586f
 #define DELAY 24000
 struct Techno {
-    atomic_uint control, bpm;
+    atomic_uint control, bpm, scene;
     atomic_uint_fast64_t frames;
     uint32_t noise;
     double beat;
-    float drive, gain, kickTime, kickPhase, hatTime, clapTime, bassTime, leadTime, chordTime;
+    float drive, gain, warp, kickTime, kickPhase, hatTime, clapTime, bassTime, leadTime, chordTime;
     float bassPhase, leadPhase[2], chordPhase[3], bassHz, leadHz, chordHz[3];
     float bassFilter, leadFilter[2], noiseLow, hatLow, delay[2][DELAY];
     int step, delayHead;
@@ -28,7 +28,7 @@ static float limit(float x){return x/(1.0f+.6f*fabsf(x));}
 Techno *techno_create(uint64_t seed)
 {
     Techno *m=calloc(1,sizeof(*m));if(!m)return NULL;
-    atomic_init(&m->control,0);atomic_init(&m->bpm,TECHNO_CRUISE_BPM*10);atomic_init(&m->frames,0);
+    atomic_init(&m->scene,0);atomic_init(&m->control,0);atomic_init(&m->bpm,TECHNO_CRUISE_BPM*10);atomic_init(&m->frames,0);
     m->noise=(uint32_t)(seed^(seed>>32)^0x9e3779b9u);if(!m->noise)m->noise=1;
     m->step=-1;m->kickTime=m->hatTime=m->clapTime=m->bassTime=m->leadTime=m->chordTime=10;
     m->bassHz=note(29);m->leadHz=note(65);
@@ -40,6 +40,10 @@ void techno_control(Techno *m,float speed,bool running,bool paused,bool muted)
 {
     if(m)atomic_store_explicit(&m->control,(unsigned int)(bound(speed,0,1)*4095)+(running?4096:0)+(paused?8192:0)+(muted?16384:0),memory_order_relaxed);
 }
+void techno_scene(Techno *m,unsigned int mission,bool warping)
+{
+    if(m)atomic_store_explicit(&m->scene,((mission?mission-1:0)%5)|(warping?8:0),memory_order_relaxed);
+}
 float techno_bpm(const Techno *m){return m?atomic_load_explicit(&m->bpm,memory_order_relaxed)*.1f:TECHNO_CRUISE_BPM;}
 uint64_t techno_frames(const Techno *m){return m?atomic_load_explicit(&m->frames,memory_order_relaxed):0;}
 void techno_render(Techno *m,float *out,unsigned int frames)
@@ -48,25 +52,31 @@ void techno_render(Techno *m,float *out,unsigned int frames)
     unsigned int control=atomic_load_explicit(&m->control,memory_order_relaxed);
     if(control&8192){memset(out,0,frames*2*sizeof(float));return;}
     float target=(control&4095)/4095.0f,active=(control&4096)?1:.35f;
+    unsigned int scene=atomic_load_explicit(&m->scene,memory_order_relaxed),variant=scene&7;
+    float warpTarget=(scene&8)?1:0;
     const float dt=1.0f/TECHNO_RATE;
     // F minor / Db / Ab / Eb; a 16-bar arrangement with fills and breakdowns.
-    const int roots[4]={29,25,32,27};
+    const int roots[5][4]={{29,25,32,27},{31,27,34,29},{27,30,34,25},{34,30,37,32},{24,27,31,22}};
+    const int accents[5]={0,3,5,7,11};
+    const float tempo[5]={0,4,2,6,8};
     const int acid[16]={0,0,12,7,0,3,10,7,0,12,3,7,10,7,3,12};
     const int arp[16]={0,7,12,15,7,12,19,15,0,7,10,15,12,7,19,22};
     for(unsigned int i=0;i<frames;i++) {
         m->drive+=(target-m->drive)*(1-expf(-dt/1.2f));
         m->gain+=(active-m->gain)*(1-expf(-dt/.05f));
-        float bpm=TECHNO_CRUISE_BPM+(TECHNO_BOOST_BPM-TECHNO_CRUISE_BPM)*m->drive;
+        m->warp+=(warpTarget-m->warp)*(1-expf(-dt/.08f));
+        float bpm=TECHNO_CRUISE_BPM+tempo[variant]+(TECHNO_BOOST_BPM-TECHNO_CRUISE_BPM)*m->drive+22*m->warp;
         int absoluteStep=(int)(m->beat*4),step=absoluteStep&15,bar=(absoluteStep/16)&15;
-        int root=roots[(absoluteStep/32)&3];
+        int root=roots[variant][(absoluteStep/32)&3];
+        int pattern=(step+accents[variant])&15;
         bool breakdown=bar==7||bar==15;
         if(absoluteStep!=m->step) {
             m->step=absoluteStep;
-            if(step%4==0 && (!breakdown||step==0||m->drive>.65f)){m->kickTime=0;m->kickPhase=0;}
+            if((step%4==0 || (m->warp>.6f&&step%2==0)) && (!breakdown||step==0||m->drive>.65f)){m->kickTime=0;m->kickPhase=0;}
             m->hatTime=0;
             if(step==4||step==12||((bar==3||bar==11)&&step>=14))m->clapTime=0;
-            m->bassTime=0;m->bassHz=note(root+acid[step]);
-            m->leadTime=0;m->leadHz=note(root+36+arp[(step+bar*2)&15]);
+            m->bassTime=0;m->bassHz=note(root+acid[pattern]);
+            m->leadTime=0;m->leadHz=note(root+36+arp[(pattern+bar*2)&15]);
             if(step==2||step==8||step==14){m->chordTime=0;m->chordHz[0]=note(root+24);m->chordHz[1]=note(root+27);m->chordHz[2]=note(root+31);}
         }
         float beatFrac=(float)(m->beat-floor(m->beat));
@@ -77,7 +87,7 @@ void techno_render(Techno *m,float *out,unsigned int frames)
         m->kickPhase+=TAU*(47+115*expf(-kt*36))*dt;
         float kick=(sinf(m->kickPhase)*expf(-kt*12)+bright*.12f*expf(-kt*170))*.70f;
         float offbeat=(step%4==2)?1:0;
-        float hat=bright*envelope(m->hatTime,.0007f,offbeat?.115f:.025f)*(.05f+.07f*m->drive+offbeat*.035f);
+        float hat=bright*envelope(m->hatTime,.0007f,offbeat?.115f:.025f)*(.05f+.07f*m->drive+offbeat*.035f+(variant==1||variant==4?.018f:0));
         float ct=m->clapTime;
         float clap=bright*(expf(-ct*27)+.65f*expf(-fabsf(ct-.013f)*180)+.5f*expf(-fabsf(ct-.028f)*160))*envelope(ct,.0008f,.18f)*.14f;
         float bassSaw=saw(&m->bassPhase,m->bassHz);
@@ -97,7 +107,7 @@ void techno_render(Techno *m,float *out,unsigned int frames)
         chord*=envelope(m->chordTime,.009f,.20f)*(.018f+.025f*m->drive)*duck;
         float lift=(bar%4==3)?bound((step-8)/8.0f,0,1):0;
         m->noiseLow+=(noise-m->noiseLow)*.025f;
-        float riser=(noise-m->noiseLow)*lift*m->drive*.025f;
+        float riser=(noise-m->noiseLow)*(lift*m->drive*.025f+m->warp*.055f);
         float center=kick+clap+bass;
         int tap=(m->delayHead+DELAY-(int)(TECHNO_RATE*60/bpm*.75f))%DELAY;
         float echoL=m->delay[0][tap],echoR=m->delay[1][tap];
@@ -110,13 +120,13 @@ void techno_render(Techno *m,float *out,unsigned int frames)
         m->beat+=bpm/(60.0*TECHNO_RATE);
         m->kickTime+=dt;m->hatTime+=dt;m->clapTime+=dt;m->bassTime+=dt;m->leadTime+=dt;m->chordTime+=dt;
     }
-    atomic_store_explicit(&m->bpm,(unsigned int)((TECHNO_CRUISE_BPM+(TECHNO_BOOST_BPM-TECHNO_CRUISE_BPM)*m->drive)*10+.5f),memory_order_relaxed);
+    atomic_store_explicit(&m->bpm,(unsigned int)((TECHNO_CRUISE_BPM+tempo[variant]+(TECHNO_BOOST_BPM-TECHNO_CRUISE_BPM)*m->drive+22*m->warp)*10+.5f),memory_order_relaxed);
     atomic_fetch_add_explicit(&m->frames,frames,memory_order_relaxed);
 }
 static void le(FILE *f,uint32_t v,int bytes){for(int i=0;i<bytes;i++)fputc((v>>(i*8))&255,f);}
-bool techno_preview(const char *file,uint64_t seed)
+bool techno_preview(const char *file,uint64_t seed,unsigned int mission)
 {
-    Techno *m=techno_create(seed);if(!m)return false;
+    Techno *m=techno_create(seed);if(!m)return false;techno_scene(m,mission,false);
     FILE *f=fopen(file,"wb");if(!f){techno_destroy(m);return false;}
     const unsigned int frames=TECHNO_RATE*24,bytes=frames*4;
     fwrite("RIFF",1,4,f);le(f,bytes+36,4);fwrite("WAVEfmt ",1,8,f);le(f,16,4);le(f,1,2);le(f,2,2);

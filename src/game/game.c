@@ -12,6 +12,8 @@
 typedef struct Game {
     CtTunnel *ct;
     Mission m;
+    uint64_t runSeed;
+    int startMission;
     ShaderLib shaders;
     int shader;
     Material material;
@@ -21,7 +23,7 @@ typedef struct Game {
     Sound engine, collect, hit, finish;
     AudioStream music;
     Techno *techno;
-    float uiTime, hitFlash, lastX, lastY;
+    float uiTime, hitFlash, lastX, lastY, transitionFlash;
     MissionPhase lastPhase;
     CtSceneView view;
 } Game;
@@ -90,10 +92,49 @@ static void laser_wall(Game *g,Matrix xf,const MissionEvent *e,bool emissive)
     }
     actor(g,g->targetRing,xf,(Vector3){e->x,e->y,-.10f},(Vector3){e->radius,e->radius,1},0,CYAN,2.2f);
 }
+static bool advanced_enemy(Game *g,const MissionEvent *e,Matrix xf,bool emissive)
+{
+    float a=mission_event_angle(e,g->m.elapsed);
+    if(e->kind==EVENT_ORBITER) {
+        actor(g,emissive?g->targetRing:g->ring,xf,(Vector3){0},(Vector3){1.25f,1.25f,.8f},a,(Color){255,86,143,255},emissive?1.6f:0);
+        if(!emissive){actor(g,g->sphere,xf,(Vector3){0},(Vector3){.7f,.7f,.6f},0,(Color){108,50,100,255},0);
+            for(int k=0;k<3;k++)actor(g,g->cube,xf,(Vector3){cosf(a+k*2*PI/3),sinf(a+k*2*PI/3),0},(Vector3){.5f,.18f,.3f},a+k*2*PI/3,HUD_RED,0);}
+        return true;
+    }
+    if(e->kind==EVENT_INTERCEPTOR) {
+        if(!emissive){actor(g,g->sphere,xf,(Vector3){0},(Vector3){.6f,.32f,1.2f},0,(Color){120,54,66,255},0);
+            for(int side=-1;side<=1;side+=2)actor(g,g->cube,xf,(Vector3){side*.95f,0,.4f},(Vector3){1.3f,.15f,.7f},side*.55f,(Color){180,70,82,255},0);}
+        else for(int side=-1;side<=1;side+=2)actor(g,g->sphere,xf,(Vector3){side*.6f,0,-.7f},(Vector3){.18f,.10f,.13f},0,HUD_RED,3);
+        return true;
+    }
+    if(e->kind==EVENT_ROTOR) {
+        actor(g,emissive?g->targetRing:g->sphere,xf,(Vector3){0},(Vector3){.6f,.6f,.6f},0,HUD_RED,emissive?2:0);
+        actor(g,g->cube,xf,(Vector3){0},(Vector3){13.2f,emissive?.09f:.17f,.12f},a,emissive?HUD_RED:(Color){92,41,68,255},emissive?2:0);
+        if(!emissive)for(int side=-1;side<=1;side+=2)actor(g,g->sphere,xf,(Vector3){side*6.4f*cosf(a),side*6.4f*sinf(a),0},(Vector3){.27f,.27f,.27f},0,HUD_RED,0);
+        return true;
+    }
+    if(e->kind==EVENT_PULSAR) {
+        float radius=mission_event_radius(e,g->m.elapsed);
+        actor(g,emissive?g->targetRing:g->ring,xf,(Vector3){0},(Vector3){radius,radius,.8f},0,(Color){255,72,153,255},emissive?2.2f:0);
+        if(emissive)actor(g,g->glowRing,xf,(Vector3){0,0,.13f},(Vector3){radius+.24f,radius+.24f,.8f},0,HUD_RED,.6f);
+        return true;
+    }
+    if(e->kind==EVENT_SPLITTER) {
+        float cx,cy;mission_event_position(e,g->m.elapsed,&cx,&cy);
+        for(int side=-1;side<=1;side+=2){float x,y;mission_event_split(e,g->m.elapsed,side,&x,&y);
+            Vector3 offset={x-cx,y-cy,0};
+            actor(g,emissive?g->targetRing:g->sphere,xf,offset,(Vector3){.8f,.8f,.65f},a,emissive?HUD_RED:(Color){128,45,76,255},emissive?2:0);
+            if(!emissive)actor(g,g->cube,xf,offset,(Vector3){1.5f,.16f,.2f},a,HUD_RED,0);}
+        if(emissive)actor(g,g->cube,xf,(Vector3){0},(Vector3){2*hypotf(e->amplitude*cosf(a),1.6f*sinf(a)),.025f,.025f},atan2f(1.6f*sinf(a),e->amplitude*cosf(a)),HUD_RED,.6f);
+        return true;
+    }
+    return false;
+}
 static void scene(void *user,const CtSceneView *view,bool emissive)
 {
     Game *g=user;
     if(!view->reflection) g->view=*view;
+    if(g->m.phase==MISSION_WARP)return;
     sl_v3(&g->shaders,g->shader,"uCamPos",view->camera.position);
     double ship=ct_ship_s(g->ct);
     for(int i=0;i<g->m.eventCount;i++) {
@@ -102,10 +143,12 @@ static void scene(void *user,const CtSceneView *view,bool emissive)
         float ex,ey;mission_event_position(e,g->m.elapsed,&ex,&ey);
         Matrix xf=basis(ct_path_sample(g->ct,e->s),event_pos(g,view,e->s,ex,ey));
         float pulse=1+.06f*sinf(g->uiTime*3+i);
-        if(e->kind==EVENT_BARRIER) {
+        if(mission_event_opening(e)) {
             Matrix wall=basis(ct_path_sample(g->ct,e->s),event_pos(g,view,e->s,0,0));
-            laser_wall(g,wall,e,emissive);continue;
+            MissionEvent moving=*e;moving.x=ex;moving.y=ey;
+            laser_wall(g,wall,&moving,emissive);continue;
         }
+        if(advanced_enemy(g,e,xf,emissive))continue;
         if(e->kind==EVENT_PACKET) {
             if(!emissive) {
                 actor(g,g->ring,xf,(Vector3){0},(Vector3){2.26f,2.26f,1},0,(Color){113,90,54,255},0);
@@ -149,7 +192,7 @@ static void scene(void *user,const CtSceneView *view,bool emissive)
     }
     if(MISSION_FINISH>=ship-8 && MISSION_FINISH<ship+360) {
         Matrix xf=basis(ct_path_sample(g->ct,MISSION_FINISH),event_pos(g,view,MISSION_FINISH,0,1.5f));
-        Color color=g->m.packets>=MISSION_REQUIRED?CYAN:AMBER;
+        Color color=g->m.packets>=g->m.required?CYAN:AMBER;
         actor(g,emissive?g->glowRing:g->ring,xf,(Vector3){0},(Vector3){4.35f,4.35f,2},0,color,emissive?3:0);
         if(emissive) actor(g,g->glowRing,xf,(Vector3){0,0,1},(Vector3){3.9f,3.9f,1},0,color,1.2f);
     }
@@ -182,17 +225,19 @@ static void audio_frame(Game *g)
     CtStats stats;ct_get_stats(g->ct,&stats);
     float base=ct_param_get(g->ct,"baseSpeed"),range=ct_param_get(g->ct,"boostSpeed")-base;
     float drive=clamp((stats.speed-base)/fmaxf(range,.01f),0,1);
-    techno_control(g->techno,g->m.phase==MISSION_RUNNING?drive:0,g->m.phase==MISSION_RUNNING,g->paused,g->mute);
+    bool warping=g->m.phase==MISSION_WARP;
+    techno_scene(g->techno,g->m.number,warping);
+    techno_control(g->techno,warping?1:g->m.phase==MISSION_RUNNING?drive:0,g->m.phase==MISSION_RUNNING||warping,g->paused,g->mute);
     if(g->mute || g->paused) {SetMasterVolume(0);return;}
     SetMasterVolume(.65f);
-    if(g->m.phase==MISSION_RUNNING) {
+    if(g->m.phase==MISSION_RUNNING||warping) {
         if(!IsSoundPlaying(g->engine))PlaySound(g->engine);
         SetSoundPitch(g->engine,1+.55f*drive);
         SetSoundVolume(g->engine,.12f);
     } else StopSound(g->engine);
     if(g->m.justCollected)PlaySound(g->collect);
     if(g->m.justHit)PlaySound(g->hit);
-    if(g->m.phase==MISSION_WON && g->lastPhase!=MISSION_WON)PlaySound(g->finish);
+    if(g->m.phase==MISSION_WARP && g->lastPhase!=MISSION_WARP)PlaySound(g->finish);
 }
 
 static MissionSample ship_sample(Game *g)
@@ -202,12 +247,31 @@ static MissionSample ship_sample(Game *g)
     Vector3 delta={(float)(p[0]-path.pos[0]),(float)(p[1]-path.pos[1]),(float)(p[2]-path.pos[2])};
     return (MissionSample){s,Vector3DotProduct(delta,path.binormal),Vector3DotProduct(delta,path.normal)};
 }
+static void configure_mission(Game *g)
+{
+    ct_preset_load(g->ct,ct_get_environment(g->ct)==CT_ENV_CITY?"mission":"mission_tunnel");
+    ct_param_set(g->ct,"baseSpeed",g->m.cruiseSpeed);ct_param_set(g->ct,"boostSpeed",g->m.boostSpeed);
+    float hue=mission_theme_hue(g->m.number);ct_param_set(g->ct,"themeHue",hue);
+    Color core=ColorFromHSV(fmodf(188+hue*360,360),.35f,1);
+    ct_param_set(g->ct,"coreR",core.r/255.0f);ct_param_set(g->ct,"coreG",core.g/255.0f);ct_param_set(g->ct,"coreB",core.b/255.0f);
+    ct_reset_route(g->ct,mission_route_seed(&g->m));ct_set_paused(g->ct,true);ct_set_input(g->ct,&(CtInput){0});
+    ct_set_whiteout(g->ct,0);g->lastX=g->lastY=0;g->boost=false;
+    if(g->techno)techno_scene(g->techno,g->m.number,false);
+}
 static void restart(Game *g,bool start)
 {
-    mission_reset(&g->m,ct_get_seed(g->ct));
-    ct_jump_to(g->ct,0);ct_set_paused(g->ct,true);ct_set_input(g->ct,&(CtInput){0});
-    g->paused=false;g->boost=false;g->lastX=g->lastY=0;g->hitFlash=0;
+    mission_reset_at(&g->m,g->runSeed,g->startMission);configure_mission(g);
+    g->paused=false;g->boost=false;g->lastX=g->lastY=0;g->hitFlash=0;g->transitionFlash=0;
     if(start)mission_start(&g->m);
+}
+static void warp_parameters(Game *g)
+{
+    float t=clamp(1-g->m.warpRemaining/MISSION_WARP_SECONDS,0,1),surge=sinf(PI*t);
+    ct_param_set(g->ct,"boostSpeed",fminf(g->m.boostSpeed*1.5f+290*surge,400));
+    ct_param_set(g->ct,"speedResponse",8);ct_param_set(g->ct,"fovBoost",22);
+    ct_param_set(g->ct,"zoomBlurOn",1);ct_param_set(g->ct,"zoomBlur",.10f+.14f*surge);
+    ct_param_set(g->ct,"coreIntensity",2.6f+3*surge);
+    ct_set_whiteout(g->ct,.32f*powf(t,8));
 }
 static bool select_route(Game *g,int environment)
 {
@@ -227,7 +291,7 @@ static CtInput bot(Game *g,MissionSample p,float dt)
         MissionEvent *e=&g->m.events[i];
         if(e->resolved||e->kind==EVENT_PACKET||e->s<=p.s||e->s-p.s>72)continue;
         float time=g->m.elapsed+(float)(e->s-p.s)/fmaxf(stats.speed,32);
-        if(e->kind==EVENT_BARRIER){x=e->x;y=e->y;break;}
+        if(mission_event_opening(e)){mission_event_position(e,time,&x,&y);break;}
         if(!mission_event_danger(e,time,x,y,1.1f))continue;
         float best=1e9f,bx=x,by=y;
         const float candidates[]={-4.4f,-3.4f,-1.7f,0,1.7f,3.4f,4.4f};
@@ -254,7 +318,7 @@ static void frame(Game *g,float dt,bool automated,bool idle)
 {
     dt=clamp(dt,0,.25f);g->uiTime+=dt;
     if(!automated) {
-        if(g->m.phase==MISSION_TITLE||g->m.phase>=MISSION_WON) {
+        if(g->m.phase==MISSION_TITLE||g->m.phase==MISSION_LOST) {
             float routeScale=fminf(GetScreenWidth()/1280.0f,GetScreenHeight()/720.0f);
             Vector2 mouse=GetMousePosition();
             float mx=(mouse.x-(GetScreenWidth()-1280*routeScale)*.5f)/routeScale;
@@ -268,18 +332,18 @@ static void frame(Game *g,float dt,bool automated,bool idle)
         if(IsKeyPressed(KEY_R))restart(g,true);
         if(IsKeyPressed(KEY_BACKSPACE))restart(g,false);
         if(IsKeyPressed(KEY_ESCAPE)) {
-            if(g->m.phase==MISSION_RUNNING||g->m.phase==MISSION_COUNTDOWN)g->paused=!g->paused;
+            if(g->m.phase==MISSION_RUNNING||g->m.phase==MISSION_COUNTDOWN||g->m.phase==MISSION_WARP)g->paused=!g->paused;
             else if(g->m.phase==MISSION_TITLE)g->quit=true;
             else restart(g,false);
         }
         if(IsKeyPressed(KEY_ENTER)) {
             if(g->paused)g->paused=false;
-            else if(g->m.phase==MISSION_TITLE||g->m.phase>=MISSION_WON)restart(g,true);
+            else if(g->m.phase==MISSION_TITLE||g->m.phase==MISSION_LOST)restart(g,true);
         }
         float scale=fminf(GetScreenWidth()/1280.0f,GetScreenHeight()/720.0f);
         Rectangle button={(GetScreenWidth()-1280*scale)*.5f+76*scale,(GetScreenHeight()-720*scale)*.5f+504*scale,332*scale,54*scale};
-        if((g->m.phase==MISSION_TITLE||g->m.phase>=MISSION_WON)&&IsMouseButtonPressed(MOUSE_BUTTON_LEFT)&&CheckCollisionPointRec(GetMousePosition(),button))restart(g,true);
-        if(!IsWindowFocused()&&(g->m.phase==MISSION_RUNNING||g->m.phase==MISSION_COUNTDOWN))g->paused=true;
+        if((g->m.phase==MISSION_TITLE||g->m.phase==MISSION_LOST)&&IsMouseButtonPressed(MOUSE_BUTTON_LEFT)&&CheckCollisionPointRec(GetMousePosition(),button))restart(g,true);
+        if(!IsWindowFocused()&&(g->m.phase==MISSION_RUNNING||g->m.phase==MISSION_COUNTDOWN||g->m.phase==MISSION_WARP))g->paused=true;
     }
     bool flying=g->m.phase==MISSION_RUNNING&&!g->paused;
     ct_set_paused(g->ct,!flying);
@@ -302,15 +366,24 @@ static void frame(Game *g,float dt,bool automated,bool idle)
     if(dt<=1e-6f)ct_update(g->ct,0.0f);
     for(float remaining=dt;remaining>1e-6f;) {
         float slice=fminf(remaining,1/60.0f);remaining-=slice;
-        ct_set_paused(g->ct,g->paused||g->m.phase!=MISSION_RUNNING);
-        ct_set_input(g->ct,&in);in.rollLeft=in.rollRight=false;
+        ct_set_paused(g->ct,g->paused||(g->m.phase!=MISSION_RUNNING&&g->m.phase!=MISSION_WARP));
+        CtInput stepInput=in;
+        if(g->m.phase==MISSION_WARP){
+            warp_parameters(g);MissionSample center=ship_sample(g);
+            stepInput=(CtInput){.boost=true,.steerX=clamp(-center.x*.8f,-1,1),.steerY=clamp(-center.y*.8f,-1,1)};
+        }
+        ct_set_input(g->ct,&stepInput);in.rollLeft=in.rollRight=false;
         ct_update(g->ct,slice);
         if(!g->paused){
+            int number=g->m.number;
             mission_tick(&g->m,slice,ship_sample(g),in.boost);
+            if(g->m.number!=number){configure_mission(g);g->transitionFlash=.35f;}
             collected+=g->m.justCollected;hit+=g->m.justHit;near+=g->m.justNear;
         }
     }
     g->m.justCollected=collected;g->m.justHit=hit;g->m.justNear=near;
+    if(!g->paused)g->transitionFlash=fmaxf(g->transitionFlash-dt,0);
+    if(g->m.phase!=MISSION_WARP)ct_set_whiteout(g->ct,g->transitionFlash);
     g->hitFlash=fmaxf(g->hitFlash-dt,0);
     if(hit)g->hitFlash=.4f;
     audio_frame(g);g->lastPhase=g->m.phase;
@@ -340,9 +413,10 @@ static void target_marker(Hud *h,const MissionEvent *e,bool packet,int width,int
     Vector2 p=GetWorldToScreenEx(pos,g->view.camera,width,height);
     if(p.x<20*h->s||p.x>width-20*h->s||p.y<h->oy+85*h->s||p.y>h->oy+640*h->s)return;
     CtPathSample path=ct_path_sample(g->ct,e->s);
-    Vector3 edge=Vector3Add(pos,Vector3Scale(path.binormal,e->radius));
+    float markerRadius=e->kind==EVENT_ROTOR?2:e->kind==EVENT_SPLITTER?e->amplitude:mission_event_radius(e,g->m.elapsed);
+    Vector3 edge=Vector3Add(pos,Vector3Scale(path.binormal,markerRadius));
     float r=clamp(Vector2Distance(p,GetWorldToScreenEx(edge,g->view.camera,width,height)),12*h->s,112*h->s)+6*h->s;
-    Color color=packet?AMBER:e->kind==EVENT_BARRIER?CYAN:HUD_RED;
+    Color color=packet?AMBER:mission_event_opening(e)?CYAN:HUD_RED;
     for(int sx=-1;sx<=1;sx+=2)for(int sy=-1;sy<=1;sy+=2) {
         Vector2 corner={p.x+sx*r,p.y+sy*r};
         Vector2 horizontal={corner.x-sx*12*h->s,corner.y},vertical={corner.x,corner.y-sy*12*h->s};
@@ -360,21 +434,21 @@ static void hud(Game *g,int w,int height)
     Hud h={g,fminf(w/1280.0f,height/720.0f),0,0,1280,720};
     h.ox=(w-1280*h.s)*.5f;h.oy=(height-720*h.s)*.5f;
     Mission *m=&g->m;
-    if(m->phase==MISSION_TITLE || m->phase>=MISSION_WON) {
+    if(m->phase==MISSION_TITLE || m->phase==MISSION_LOST) {
         DrawRectangleGradientH(0,0,w,height,(Color){3,11,20,235},(Color){3,11,20,0});
         rect(&h,76,72,36,3,CYAN);
         bool tunnel=ct_get_environment(g->ct)==CT_ENV_VORTEX;
         text_at(&h,tunnel?"DATA VORTEX   /   COURIER PROTOCOL 01":"GRID CITY   /   COURIER PROTOCOL 01",76,91,19,DIM);
-        bool result=m->phase>=MISSION_WON;
-        text_at(&h,result?(m->phase==MISSION_WON?"DELIVERY":"SIGNAL"):"DATA",72,146,112,HUD_WHITE);
-        text_at(&h,result?(m->phase==MISSION_WON?"CONFIRMED":"LOST"):"// RUN",72,243,112,result&&m->phase==MISSION_LOST?HUD_RED:AMBER);
+        bool result=m->phase==MISSION_LOST;
+        text_at(&h,result?"SIGNAL":"DATA",72,146,112,HUD_WHITE);
+        text_at(&h,result?"LOST":"// RUN",72,243,112,result&&m->phase==MISSION_LOST?HUD_RED:AMBER);
         if(!result) {
-            text_at(&h,"The network is closing. Make the uplink.",78,384,26,HUD_WHITE);
-            text_at(&h,"Collect 8 amber gates. Dodge drones, sweepers and mines.",78,426,20,DIM);
-            text_at(&h,"Aim through cyan laser openings. Reach the uplink in 90s.",78,456,20,DIM);
+            text_at(&h,"One delivery is only the beginning.",78,384,26,HUD_WHITE);
+            text_at(&h,"Collect amber data. Survive the security waves.",78,426,20,DIM);
+            text_at(&h,"Warp into the next mission. Ten enemy types unlock.",78,456,20,DIM);
         } else {
-            text_at(&h,m->phase==MISSION_WON?"Your payload made it beyond the firewall.":m->failure,78,386,25,HUD_WHITE);
-            text_at(&h,TextFormat("%06d   SCORE     %02d   DATA     %.1fs   TIME",m->score,m->packets,m->elapsed),78,436,26,DIM);
+            text_at(&h,m->failure,78,386,25,HUD_WHITE);
+            text_at(&h,TextFormat("%08lld   SCORE     %02d   MISSIONS CLEARED",(long long)m->score,m->completed),78,436,26,DIM);
         }
         float yy=504;
         bool hover=CheckCollisionPointRec(GetMousePosition(),(Rectangle){h.ox+76*h.s,h.oy+yy*h.s,332*h.s,54*h.s});
@@ -388,13 +462,21 @@ static void hud(Game *g,int w,int height)
         text_at(&h,tunnel?"01  /  VORTEX TRANSIT":"02  /  NIGHT TRANSIT",1045,663,16,DIM);
         return;
     }
+    if(m->phase==MISSION_WARP) {
+        readout(&h,"UPLINK ACCEPTED",512,220,30,CYAN);
+        readout(&h,"// WARP",481,280,80,HUD_WHITE);
+        readout(&h,TextFormat("MISSION %02d INBOUND",m->number+1),507,384,26,AMBER);
+        if(g->paused){DrawRectangle(0,0,w,height,(Color){3,10,18,190});readout(&h,"RUN PAUSED",473,270,50,HUD_WHITE);}
+        return;
+    }
     // Essential readouts float directly over the scene. Scoring and controls
     // live on the menu/result screens; target colors carry their meaning.
-    Color payload=m->packets>=MISSION_REQUIRED?CYAN:AMBER;
+    Color payload=m->packets>=m->required?CYAN:AMBER;
     DrawPoly((Vector2){h.ox+43*h.s,h.oy+44*h.s},4,7*h.s,0,payload);
-    readout(&h,TextFormat("%02d / 08",m->packets),60,28,29,payload);
-    int remaining=(int)ceilf(fmaxf(90-m->elapsed-.0001f,0));
-    readout(&h,TextFormat("%02d : %02d",remaining/60,remaining%60),593,28,29,m->elapsed>75?HUD_RED:HUD_WHITE);
+    readout(&h,TextFormat("%02d / %02d",m->packets,m->required),60,28,29,payload);
+    readout(&h,TextFormat("M%02d",m->number),220,32,23,DIM);
+    int remaining=(int)ceilf(fmaxf(m->duration-m->elapsed-.0001f,0));
+    readout(&h,TextFormat("%02d : %02d",remaining/60,remaining%60),593,28,29,m->duration-m->elapsed<15?HUD_RED:HUD_WHITE);
     for(int i=0;i<3;i++)rect(&h,1148+i*31,39,22,6,i<m->shield?CYAN:(Color){44,64,78,255});
     float progress=(float)clamp((float)(ct_ship_s(g->ct)/MISSION_FINISH),0,1);
     line(&h,390,693,890,693,(Color){54,85,98,150});
@@ -417,8 +499,10 @@ static void hud(Game *g,int w,int height)
     }
     if(g->hitFlash>0)DrawRectangle(0,0,w,height,Fade(HUD_RED,g->hitFlash*.23f));
     if(m->phase==MISSION_COUNTDOWN) {
-        text_at(&h,"UPLINK WINDOW OPENING",492,270,22,DIM);
-        text_at(&h,TextFormat("%d",(int)ceilf(m->countdown)),602,316,108,AMBER);
+        readout(&h,TextFormat("MISSION %02d / %02d ENEMY TYPES",m->number,m->enemyKinds),452,245,27,CYAN);
+        readout(&h,TextFormat("%d",(int)ceilf(m->countdown)),602,298,108,AMBER);
+        if(m->number<=5)readout(&h,TextFormat("NEW: %s + %s",mission_enemy_name((EventKind)(m->enemyKinds-1)),mission_enemy_name((EventKind)m->enemyKinds)),407,434,23,DIM);
+        else readout(&h,"ALL TEN ACTIVE / SECURITY ESCALATING",424,434,23,DIM);
     }
     if(g->paused) {
         DrawRectangle(0,0,w,height,(Color){3,10,18,190});
@@ -429,9 +513,12 @@ static void hud(Game *g,int w,int height)
     }
 }
 
-int game_run(CtTunnel *ct,bool hidden,double shotSeconds,bool autoplay,bool idleBot,bool audioCheck,bool startupCheck,const char *shotOut)
+int game_run(CtTunnel *ct,const GameOptions *options)
 {
-    Game g={.ct=ct};
+    bool hidden=options->hidden,autoplay=options->autoplay,idleBot=options->idleBot,audioCheck=options->audioCheck,startupCheck=options->startupCheck;
+    double shotSeconds=options->shotSeconds,transitionShot=options->transitionShot;
+    const char *shotOut=options->shotOut;int missionLimit=options->missions>0?options->missions:1;
+    Game g={.ct=ct,.runSeed=ct_get_seed(ct),.startMission=options->startMission>0?options->startMission:1};
     SetWindowTitle(ct_get_environment(ct)==CT_ENV_CITY?"DATA // RUN - Grid City":"DATA // RUN - Data Vortex");
     char dir[1024],fontPath[1024];
     snprintf(dir,sizeof(dir),"%s",ct_shader_directory(ct));
@@ -454,9 +541,9 @@ int game_run(CtTunnel *ct,bool hidden,double shotSeconds,bool autoplay,bool idle
         callbackMusic=g.techno;SetAudioStreamCallback(g.music,music_callback);SetAudioStreamVolume(g.music,.85f);
         techno_control(g.techno,0,false,false,g.mute);PlayAudioStream(g.music);
     }
-    ct_set_scene_draw(ct,scene,&g);restart(&g,shotSeconds>0||autoplay);
-    bool automated=shotSeconds>=0||autoplay;
-    int frames=0,result=0,boostGaps=0;
+    ct_set_scene_draw(ct,scene,&g);restart(&g,shotSeconds>0||autoplay||transitionShot>=0);
+    bool automated=shotSeconds>=0||autoplay||transitionShot>=0;
+    int frames=0,result=0,boostGaps=0,cleared=0;double transitionTime=-1;
     float minimumSpeed=1000;double maxStreamingMs=0;
     if(audioCheck) {
         bool loaded=g.audio&&g.engine.frameCount&&g.techno&&g.music.buffer&&g.collect.frameCount&&g.hit.frameCount&&g.finish.frameCount;
@@ -465,6 +552,11 @@ int game_run(CtTunnel *ct,bool hidden,double shotSeconds,bool autoplay,bool idle
     }
     while(!WindowShouldClose()&&!g.quit) {
         frame(&g,startupCheck&&frames==0?0.0f:automated?1/60.0f:GetFrameTime(),automated,idleBot);
+        if(transitionTime>=0)transitionTime+=1/60.0;
+        if(g.m.completed>cleared){
+            cleared=g.m.completed;if(transitionTime<0)transitionTime=0;
+            printf("mission %d cleared: %d enemy kinds, shield %d, total score %lld\n",g.m.number,g.m.enemyKinds,g.m.shield,(long long)g.m.score);
+        }
         if(autoplay&&!idleBot&&g.m.phase==MISSION_RUNNING&&g.m.elapsed>2) {
             CtStats stats;ct_get_stats(ct,&stats);
             minimumSpeed=fminf(minimumSpeed,stats.speed);
@@ -472,8 +564,8 @@ int game_run(CtTunnel *ct,bool hidden,double shotSeconds,bool autoplay,bool idle
             maxStreamingMs=fmax(maxStreamingMs,stats.lastStreamFrameMs);
         }
         frames++;
-        bool done=autoplay&&g.m.phase>=MISSION_WON;
-        bool screenshot=shotSeconds>=0&&frames>=8&&(shotSeconds==0||g.m.elapsed>=shotSeconds||g.m.phase>=MISSION_WON);
+        bool done=autoplay&&(g.m.phase==MISSION_LOST||g.m.completed>=missionLimit);
+        bool screenshot=frames>=8&&((shotSeconds>=0&&(shotSeconds==0||g.m.elapsed>=shotSeconds||g.m.phase==MISSION_LOST||g.m.completed>0))||(transitionShot>=0&&(transitionTime>=transitionShot||g.m.phase==MISSION_LOST)));
         if(!automated||frames%4==0||done||screenshot) {
             BeginDrawing();
             if(screenshot) {
@@ -499,6 +591,7 @@ int game_run(CtTunnel *ct,bool hidden,double shotSeconds,bool autoplay,bool idle
             EndDrawing();
         }
         if(screenshot) {
+            if(transitionShot>=0&&g.m.phase==MISSION_LOST)result=1;
             break;
         }
         if(done)break;
@@ -509,11 +602,11 @@ int game_run(CtTunnel *ct,bool hidden,double shotSeconds,bool autoplay,bool idle
             if(!ready)result=3;
             break;
         }
-        if(automated&&frames>5800){result=3;break;}
+        if(automated&&frames>(missionLimit+1)*60*110){result=3;break;}
     }
     if(automated) {
-        printf("mission: phase=%d time=%.3f distance=%.2f data=%d shield=%d score=%d misses=%d near=%d\n",g.m.phase,g.m.elapsed,ct_ship_s(ct),g.m.packets,g.m.shield,g.m.score,g.m.misses,g.m.nearMisses);
-        if(autoplay&&g.m.phase!=MISSION_WON)result=1;
+        printf("mission: number=%d cleared=%d phase=%d time=%.3f distance=%.2f data=%d shield=%d score=%lld misses=%d near=%d\n",g.m.number,g.m.completed,g.m.phase,g.m.elapsed,ct_ship_s(ct),g.m.packets,g.m.shield,(long long)g.m.score,g.m.misses,g.m.nearMisses);
+        if(autoplay&&g.m.completed<missionLimit)result=1;
         if(autoplay&&!idleBot) {
             printf("flight: minimum after acceleration %.2f m/s, boost interruptions %d, max streaming %.3f ms\n",minimumSpeed,boostGaps,maxStreamingMs);
             if(g.m.misses==0&&boostGaps>0)result=3;
@@ -521,7 +614,7 @@ int game_run(CtTunnel *ct,bool hidden,double shotSeconds,bool autoplay,bool idle
     }
     if(autoplay) {
         // Exercise the actual game input/update path with no pickup refills.
-        restart(&g,true);g.m.phase=MISSION_RUNNING;g.m.eventCount=0;g.m.packets=MISSION_REQUIRED;
+        restart(&g,true);g.m.phase=MISSION_RUNNING;g.m.eventCount=0;g.m.packets=g.m.required;
         float noPickupMinimum=1000;int noPickupGaps=0;
         for(int i=0;i<60*90&&g.m.phase==MISSION_RUNNING;i++) {
             frame(&g,1/60.0f,true,false);
@@ -530,7 +623,7 @@ int game_run(CtTunnel *ct,bool hidden,double shotSeconds,bool autoplay,bool idle
                 if(!g.boost)noPickupGaps++;
             }
         }
-        bool heldCorrect=g.m.phase==MISSION_WON&&noPickupMinimum>64.7f&&noPickupGaps==0;
+        bool heldCorrect=g.m.phase==MISSION_WARP&&noPickupMinimum>64.7f&&noPickupGaps==0;
         printf("held boost without pickups: %.2f m/s minimum, %d interruptions (%s)\n",noPickupMinimum,noPickupGaps,heldCorrect?"passed":"FAILED");
         if(!heldCorrect)result=3;
         restart(&g,true);g.m.phase=MISSION_RUNNING;g.m.eventCount=0;
@@ -539,9 +632,9 @@ int game_run(CtTunnel *ct,bool hidden,double shotSeconds,bool autoplay,bool idle
         printf("frame timing: 120 ms frame advanced %.3f seconds and %.2f metres (%s)\n",g.m.elapsed,ct_ship_s(ct),timingCorrect?"passed":"FAILED");
         if(!timingCorrect)result=3;
         restart(&g,true);
-        for(int i=0;i<245;i++)frame(&g,1/60.0f,true,false);
+        for(int i=0;i<325;i++)frame(&g,1/60.0f,true,false);
         g.paused=true;
-        double distance=ct_ship_s(ct);float elapsed=g.m.elapsed;int score=g.m.score;
+        double distance=ct_ship_s(ct);float elapsed=g.m.elapsed;int64_t score=g.m.score;
         for(int i=0;i<120;i++)frame(&g,1/60.0f,true,false);
         bool correct=distance==ct_ship_s(ct)&&elapsed==g.m.elapsed&&score==g.m.score;
         g.paused=false;frame(&g,1/60.0f,true,false);
@@ -552,10 +645,35 @@ int game_run(CtTunnel *ct,bool hidden,double shotSeconds,bool autoplay,bool idle
         if(!correct)result=3;
         int original=ct_get_environment(ct);
         bool routeCorrect=select_route(&g,original==CT_ENV_CITY?CT_ENV_VORTEX:CT_ENV_CITY);
-        routeCorrect=routeCorrect&&g.m.phase==MISSION_TITLE&&ct_ship_s(ct)==0&&ct_param_get(ct,"baseSpeed")==32;
+        routeCorrect=routeCorrect&&g.m.phase==MISSION_TITLE&&ct_ship_s(ct)==0&&ct_param_get(ct,"baseSpeed")==g.m.cruiseSpeed;
         routeCorrect=select_route(&g,original)&&routeCorrect&&ct_get_environment(ct)==original&&g.m.score==0;
         printf("mission routes: tunnel/city selection %s\n",routeCorrect?"passed":"FAILED");
         if(!routeCorrect)result=3;
+        // Pause through both parts of an actual engine transition. The route,
+        // mission clock and cumulative score must survive the new mission.
+        restart(&g,true);g.m.phase=MISSION_WARP;g.m.completed=1;
+        g.m.warpRemaining=MISSION_WARP_SECONDS;g.m.score=5000000000ll;
+        int nextMission=g.m.number+1;
+        frame(&g,1/60.0f,true,false);g.paused=true;
+        distance=ct_ship_s(ct);float warpRemaining=g.m.warpRemaining;
+        for(int i=0;i<120;i++)frame(&g,1/60.0f,true,false);
+        bool transitionCorrect=g.m.phase==MISSION_WARP&&g.m.warpRemaining==warpRemaining&&ct_ship_s(ct)==distance;
+        g.paused=false;
+        for(int i=0;i<180&&g.m.phase==MISSION_WARP;i++)frame(&g,1/60.0f,true,false);
+        transitionCorrect=transitionCorrect&&g.m.phase==MISSION_COUNTDOWN&&g.m.number==nextMission&&g.m.countdown==5&&ct_ship_s(ct)==0;
+        transitionCorrect=transitionCorrect&&g.m.score==5000000000ll;
+        if(ct_get_environment(ct)==CT_ENV_VORTEX)
+            transitionCorrect=transitionCorrect&&fabsf(ct_param_get(ct,"themeHue")-mission_theme_hue(nextMission))<.0001f;
+        g.paused=true;
+        for(int i=0;i<120;i++)frame(&g,1/60.0f,true,false);
+        transitionCorrect=transitionCorrect&&g.m.countdown==5&&g.m.elapsed==0&&ct_ship_s(ct)==0;
+        g.paused=false;int countdownFrames=0;
+        while(g.m.phase==MISSION_COUNTDOWN&&countdownFrames<302){frame(&g,1/60.0f,true,false);countdownFrames++;}
+        transitionCorrect=transitionCorrect&&countdownFrames>=300&&countdownFrames<=301&&g.m.phase==MISSION_RUNNING&&g.m.elapsed==0;
+        frame(&g,1/60.0f,true,false);
+        transitionCorrect=transitionCorrect&&g.m.elapsed>0&&ct_ship_s(ct)>0;
+        printf("mission transition: warp/countdown pause, five-second countdown, score and theme %s\n",transitionCorrect?"passed":"FAILED");
+        if(!transitionCorrect)result=3;
     }
     ct_set_scene_draw(ct,NULL,NULL);
     if(g.audio){

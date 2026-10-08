@@ -31,5 +31,15 @@ int main(void)
     techno_render(base,x,4096);for(int i=0;i<4096;i+=128)techno_render(boost,y+i*2,128);
     CHECK(!memcmp(x,y,sizeof(x)));
     techno_destroy(base);techno_destroy(boost);
+    // New mission arrangements are audible, bounded, and switch atomically.
+    base=techno_create(83);boost=techno_create(83);techno_scene(boost,2,false);
+    techno_control(base,1,true,false,false);techno_control(boost,1,true,false,false);
+    techno_render(base,x,4096);techno_render(boost,y,4096);CHECK(memcmp(x,y,sizeof(x))!=0);
+    for(unsigned int mission=1;mission<=8;mission++){
+        techno_scene(boost,mission,false);CHECK(exercise(boost,1,.6f)>.04);
+    }
+    techno_scene(boost,1,true);exercise(boost,2,1);CHECK(techno_bpm(boost)>185);
+    techno_scene(boost,1,false);exercise(boost,2,1);CHECK(techno_bpm(boost)<167);
+    techno_destroy(base);techno_destroy(boost);
     printf("music: %d checks, %d failures\n",checks,failures);return failures?1:0;
 }

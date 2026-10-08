@@ -377,6 +377,10 @@ void ct_reseed(CtTunnel *ct, uint64_t seed)
 }
 
 uint64_t ct_get_seed(const CtTunnel *ct) { return ct->seed; }
+void ct_reset_route(CtTunnel *ct,uint64_t seed)
+{
+    ct->seed=seed;ct->env->reseed(ct->env,seed);reset_world(ct,0,true);
+}
 const char *ct_shader_directory(const CtTunnel *ct) { return ct->shaderDir; }
 const char *ct_asset_directory(const CtTunnel *ct) { return ct->assetDir; }
 

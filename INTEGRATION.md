@@ -123,6 +123,7 @@ The game is responsible for bloom/tonemapping. Useful inputs for a game-side pos
 | `ct_ship_s`, `ct_ship_world` | ship arc length / world position |
 | `ct_jump_to(ct, s)` | teleport (regenerates path from 0 if jumping backwards past the cached window) |
 | `ct_reseed(ct, seed)` | new world |
+| `ct_reset_route(ct, seed)` | regenerate a new route at arc length zero, reset flight and prime the render context; used between endless missions |
 | `ct_param_set/get(ct, name, v)` | any parameter from the table below |
 | `ct_preset_load/save(ct, name)` | `presets/<name>.ini` or an explicit path |
 

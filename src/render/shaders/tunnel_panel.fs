@@ -3,6 +3,7 @@ in vec3 fPos,fNormal;
 in vec2 fUV;
 out vec4 finalColor;
 uniform vec3 uCamPos;
+uniform vec3 uTheme;
 void main(){
     vec3 n=normalize(fNormal),v=normalize(uCamPos-fPos);
     if(dot(n,v)<0.0)n=-n;
@@ -16,7 +17,7 @@ void main(){
     vec3 metal=vec3(.045,.079,.105)*(1-seam*.65)*(1-vent*slats*.6);
     metal+=vec3(.07,.10,.14)*(bolt*.4+strut*.3);
     vec3 col=metal*(.7+.5*max(dot(n,normalize(vec3(-.4,.8,.3))),0.0));
-    col+=vec3(.025,.22,.30)*edge*.5;
+    col+=uTheme*edge*.16;
     float fog=exp(-max(length(uCamPos-fPos)-20,0.0)*.009);
-    finalColor=vec4(mix(vec3(.004,.014,.025),col,fog),1);
+    finalColor=vec4(mix(uTheme*.017,col,fog),1);
 }

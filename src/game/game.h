@@ -1,6 +1,12 @@
 #ifndef DATARUN_GAME_H
 #define DATARUN_GAME_H
 #include "cybertunnel.h"
-// shotSeconds < 0: interactive; zero: title; positive: reproducible bot screenshot.
-int game_run(CtTunnel *ct, bool hidden, double shotSeconds, bool autoplay, bool idleBot, bool audioCheck, bool startupCheck, const char *shotOut);
+typedef struct GameOptions {
+    bool hidden, autoplay, idleBot, audioCheck, startupCheck;
+    int missions, startMission;
+    double shotSeconds, transitionShot;
+    const char *shotOut;
+} GameOptions;
+// Interactive runs are endless. Mission limits/start overrides are QA tools.
+int game_run(CtTunnel *ct, const GameOptions *options);
 #endif

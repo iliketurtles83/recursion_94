@@ -153,6 +153,8 @@ endif()
 add_test(NAME data_run_techno COMMAND music_tests)
 add_test(NAME data_run_ship COMMAND ship_tests)
 if(WIN32)
+  add_test(NAME data_run_endless COMMAND cybertunnel --hidden --autoplay --missions 6 --seed 83)
+  set_tests_properties(data_run_endless PROPERTIES TIMEOUT 60)
   add_test(NAME data_run_startup COMMAND cybertunnel --hidden --startup-check)
   set_tests_properties(data_run_startup PROPERTIES TIMEOUT 20)
   add_test(NAME data_run_standalone COMMAND ${CMAKE_COMMAND}

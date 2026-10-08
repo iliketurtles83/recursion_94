@@ -11,8 +11,9 @@ typedef struct Techno Techno;
 Techno *techno_create(uint64_t seed);
 void techno_destroy(Techno *m);
 void techno_control(Techno *m, float speed, bool running, bool paused, bool muted);
+void techno_scene(Techno *m, unsigned int mission, bool warping);
 void techno_render(Techno *m, float *stereo, unsigned int frames);
 float techno_bpm(const Techno *m);
 uint64_t techno_frames(const Techno *m);
-bool techno_preview(const char *file, uint64_t seed);
+bool techno_preview(const char *file, uint64_t seed, unsigned int mission);
 #endif

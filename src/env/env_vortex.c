@@ -76,7 +76,7 @@ typedef struct VortexParams {
     float coreIntensity, coreSize, coreStreak, coreRays, bgGlow, dust;
     // pacing
     bool  pacing;
-    float curveDetail;
+    float curveDetail, themeHue;
     bool showPanels;
     // layer toggles
     bool  showRings, showRibbons, showStreaks, showDebris, showHolo, showCore, showBackground;
@@ -100,6 +100,18 @@ static const Color COL_PALE = { 0xC8, 0xF6, 0xFF, 255 };
 static const Color COL_ICE  = { 0x8A, 0xD8, 0xFF, 255 };
 static const Color COL_PURPLE = { 0x7A, 0x5C, 0xFF, 255 };
 static const Color COL_BLUE = { 0x3A, 0x7B, 0xFF, 255 };
+
+static Color theme_color(const VortexParams *p,Color color)
+{
+    if(p->themeHue==0)return color;
+    Vector3 hsv=ColorToHSV(color);
+    float primary=fmodf(188+p->themeHue*360,360);
+    float hue=hsv.x+p->themeHue*360;
+    // Warm tunnels keep cool ribbons and a dark blue background. Rotating
+    // every source hue together made the gold theme's backdrop muddy green.
+    if(primary>25&&primary<80&&hsv.x>195)hue=primary+180+(hsv.x-220)*.3f;
+    return ColorFromHSV(fmodf(hue,360),hsv.y,hsv.z);
+}
 
 // ---------------------------------------------------------------------------
 // Parameters
@@ -184,7 +196,7 @@ static void vortex_register(Environment *env, ParamRegistry *reg)
     params_float(reg, g, "streakInnerRadius", &p->streaks.cylinderInner, 0.2f, 0.0f, 1.2f);
     params_float(reg, g, "streakCenterClear", &p->streaks.centerClear, 0.0f, 0.0f, 1.0f);
     p->streaks.colMain = (Color){ 0xD8, 0xF8, 0xFF, 255 };
-    p->streaks.colAccent = COL_PURPLE;
+    p->streaks.colAccent = theme_color(&st->p,COL_PURPLE);
 
     g = "Debris";
     params_bool(reg, g, "showDebris", &p->showDebris, true);
@@ -220,6 +232,7 @@ static void vortex_register(Environment *env, ParamRegistry *reg)
     g="Tunnel detail";
     params_float(reg,g,"curveDetail",&p->curveDetail,1.0f,1.0f,4.0f);
     params_bool(reg,g,"showPanels",&p->showPanels,false);
+    params_float(reg,g,"themeHue",&p->themeHue,0,0,1);
 }
 
 static PathStyle vortex_path_style(const Environment *env)
@@ -293,12 +306,12 @@ static void set_u(ChunkCpu *c, int slot, Vector3 v, float w)
     c->uniforms[slot][0] = v.x; c->uniforms[slot][1] = v.y; c->uniforms[slot][2] = v.z; c->uniforms[slot][3] = w;
 }
 
-static Color pick_ring_color(Pcg32 *r)
+static Color pick_ring_color(const VortexState *st,Pcg32 *r)
 {
     float x = pcg32_float(r);
-    if (x < 0.40f) return COL_CYAN;
-    if (x < 0.90f) return COL_PALE;
-    return COL_ICE;
+    if (x < 0.40f) return theme_color(&st->p,COL_CYAN);
+    if (x < 0.90f) return theme_color(&st->p,COL_PALE);
+    return theme_color(&st->p,COL_ICE);
 }
 
 static void build_layer(const VortexState *st, LineGeo *g, Pcg32 *r, float radius, float R, int style,
@@ -402,7 +415,7 @@ static void build_ring(const VortexState *st, ChunkCpu *c, const PathSystem *pat
         float radius = R * (rMin + (rMax - rMin) * t);
         int style = pcg32_weighted(r, weights, STYLE_COUNT);
         float sign = (li & 1) ? -1.0f : 1.0f;
-        LineAttr base = { pick_ring_color(r), ringBright, 0.0f, 0.0f, (float)slot, sign * pcg32_range(r, 0.0f, p->angVelMax) };
+        LineAttr base = { pick_ring_color(st,r), ringBright, 0.0f, 0.0f, (float)slot, sign * pcg32_range(r, 0.0f, p->angVelMax) };
         build_layer(st, g, r, radius, R, style, ap->gapMul, base);
         if (radius < rInner) rInner = radius;
         if (radius > rOuter) rOuter = radius;
@@ -413,7 +426,7 @@ static void build_ring(const VortexState *st, ChunkCpu *c, const PathSystem *pat
     float scale = R / 12.0f;
     for (int i = 0; i < spokes; i++) {
         float a = pcg32_float(r) * TAU_F;
-        LineAttr at = { COL_CYAN, ringBright * 0.8f, pcg32_float(r), 0.0f, (float)slot, 0.0f };
+        LineAttr at = { theme_color(&st->p,COL_CYAN), ringBright * 0.8f, pcg32_float(r), 0.0f, (float)slot, 0.0f };
         lg_planar_radial(g, rInner, rOuter, a, 0.0f, 0.045f * scale, at);
         float pad = 0.16f * scale;
         lg_planar_arc(g, rInner, a - pad / rInner, a + pad / rInner, 0.0f, pad, 3.0f * DEG, at);
@@ -467,7 +480,7 @@ static void build_rails(const VortexState *st, ChunkCpu *c, const PathSystem *pa
                 Vector3 l = env_local(w, c->origin);
                 if (k > 0) {
                     float ia = bright * (k == 1 ? 0.0f : 1.0f), ib = bright * (k == steps ? 0.0f : 1.0f);
-                    LineAttr at = { COL_PALE, 1.0f, ct_hash01(rh + 3), 0.0f, -1.0f, 0.0f };
+                    LineAttr at = { theme_color(&st->p,COL_PALE), 1.0f, ct_hash01(rh + 3), 0.0f, -1.0f, 0.0f };
                     lg_facing_segment(g, prev, l, 0.045f, 0.045f, ia, ib, at);
                 }
                 prev = l;
@@ -490,7 +503,7 @@ static void build_ribbons(const VortexState *st, ChunkCpu *c, const PathSystem *
         double omega = (p->ribbonOmegaMin + (p->ribbonOmegaMax - p->ribbonOmegaMin) * ct_hash01(h + 1)) * ((i & 1) ? -1.0 : 1.0);
         double rf = p->ribbonRMin + (p->ribbonRMax - p->ribbonRMin) * ct_hash01(h + 2);
         float hw = 0.5f * (p->ribbonWMin + (p->ribbonWMax - p->ribbonWMin) * ct_hash01(h + 3));
-        Color col = (i & 1) ? COL_BLUE : COL_PURPLE;
+        Color col = (i & 1) ? theme_color(&st->p,COL_BLUE) : theme_color(&st->p,COL_PURPLE);
         int b = lg_reserve(g, (n + 1) * 2, n * 6);
         for (int k = 0; k <= n; k++) {
             double s = c->s0 + CHUNK_LEN * k / n;
@@ -552,8 +565,8 @@ static void build_debris(const VortexState *st, ChunkCpu *c, const PathSystem *p
         set_u(c, U_OBJ_A + g, env_local(ctr, c->origin), size);
         set_u(c, U_OBJ_B + g, axis, spd);
         set_u(c, U_OBJ_C + g, (Vector3){ pcg32_float(&r) * TAU_F, 0, 0 }, 0.0f);
-        LineAttr e = { COL_PALE, p->edgeIntensity * pcg32_range(&r, 0.8f, 1.2f), pcg32_float(&r), 0.0f, (float)g, 0.0f };
-        LineAttr f = { COL_CYAN, p->faceIntensity, pcg32_float(&r), 0.0f, (float)g, 0.0f };
+        LineAttr e = { theme_color(&st->p,COL_PALE), p->edgeIntensity * pcg32_range(&r, 0.8f, 1.2f), pcg32_float(&r), 0.0f, (float)g, 0.0f };
+        LineAttr f = { theme_color(&st->p,COL_CYAN), p->faceIntensity, pcg32_float(&r), 0.0f, (float)g, 0.0f };
         float w = p->edgeWidth * (0.7f + 0.3f * size / p->debrisSizeMax);
         if (octa) shape_octa(&c->geo[B_EDGES], &c->geo[B_FACES], h, e, f, w);
         else shape_cube(&c->geo[B_EDGES], &c->geo[B_FACES], h, e, f, w);
@@ -590,7 +603,7 @@ static void build_holo(const VortexState *st, ChunkCpu *c, const PathSystem *pat
         int rings = pcg32_int(&r, 1, 3);
         for (int k = 0; k < rings; k++) {
             float rk = rad * (1.0f - 0.14f * (float)k);
-            LineAttr at = { k == 0 ? COL_CYAN : COL_ICE, p->holoIntensity * (k == 0 ? 1.0f : 0.7f), pcg32_float(&r), 0.0f, (float)g, 0.0f };
+            LineAttr at = { k == 0 ? theme_color(&st->p,COL_CYAN) : theme_color(&st->p,COL_ICE), p->holoIntensity * (k == 0 ? 1.0f : 0.7f), pcg32_float(&r), 0.0f, (float)g, 0.0f };
             const int segs = (int)(48*p->curveDetail);
             Vector3 prev = { 0 };
             float gapStart = pcg32_float(&r) * TAU_F, gapLen = pcg32_chance(&r, 0.5f) ? pcg32_range(&r, 0.3f, 1.2f) : 0.0f;
@@ -729,8 +742,8 @@ static void vortex_draw_background(Environment *env, const FrameContext *ctx)
     sl_v3(sl, sh, "uCamUp", up);
     sl_v3(sl, sh, "uCamFwd", fwd);
     sl_f1(sl, sh, "uTanHalf", tanf(ctx->fovy * 0.5f * DEG));
-    sl_v3(sl, sh, "uBgColor", ct_srgb_to_linear((Color){ 0x03, 0x06, 0x0C, 255 }));
-    sl_v3(sl, sh, "uGlowColor", ct_srgb_to_linear((Color){ 0x2A, 0x7A, 0xB0, 255 }));
+    sl_v3(sl, sh, "uBgColor", ct_srgb_to_linear(theme_color(&st->p,(Color){ 0x03, 0x06, 0x0C, 255 })));
+    sl_v3(sl, sh, "uGlowColor", ct_srgb_to_linear(theme_color(&st->p,(Color){ 0x2A, 0x7A, 0xB0, 255 })));
     sl_f1(sl, sh, "uGlow", st->p.bgGlow * (0.6f + 0.8f * ctx->intensity));
     sl_f1(sl, sh, "uDust", st->p.dust);
     pipe_fullscreen_quad();
@@ -745,6 +758,7 @@ static void vortex_draw_opaque(Environment *env, const FrameContext *ctx, const 
     VortexState *st=env->state;
     if(!st->p.showPanels)return;
     sl_v3(st->sl,st->shPanel,"uCamPos",ctx->camera.position);
+    sl_v3(st->sl,st->shPanel,"uTheme",ct_srgb_to_linear(theme_color(&st->p,COL_CYAN)));
     for(int i=0;i<n;i++)for(int j=0;j<chunks[i]->meshCount;j++)if(chunks[i]->meshBatch[j]==B_STRUCTURE)
         draw_mesh(st,ctx,st->shPanel,chunks[i]->meshes[j],env_chunk_transform(chunks[i],ctx->renderOrigin));
 }
@@ -789,8 +803,8 @@ static void vortex_draw_emissive(Environment *env, const FrameContext *ctx, cons
     sl_f1(sl, st->shRing, "uPulseSpeed", p->pulseSpeed);
     env_set_common_uniforms(sl, st->shRibbon, ctx);
     sl_f1(sl, st->shRibbon, "uPeriod", (float)RIBBON_PERIOD);
-    sl_v3(sl, st->shRibbon, "uColorA", ct_srgb_to_linear(COL_PURPLE));
-    sl_v3(sl, st->shRibbon, "uColorB", ct_srgb_to_linear(COL_BLUE));
+    sl_v3(sl, st->shRibbon, "uColorA", ct_srgb_to_linear(theme_color(&st->p,COL_PURPLE)));
+    sl_v3(sl, st->shRibbon, "uColorB", ct_srgb_to_linear(theme_color(&st->p,COL_BLUE)));
     sl_f1(sl, st->shRibbon, "uScroll", p->ribbonScroll);
     env_set_common_uniforms(sl, st->shObject, ctx);
     sl_f3(sl, st->shObject, "uEdgeColor", 0, 0, 0);

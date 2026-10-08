@@ -119,6 +119,7 @@ void ct_trigger_whiteout(CtTunnel *ct);
 void ct_set_whiteout(CtTunnel *ct, float whiteout);     // manual override, < 0 = animation
 void ct_jump_to(CtTunnel *ct, double s);
 void ct_reseed(CtTunnel *ct, uint64_t seed);
+void ct_reset_route(CtTunnel *ct, uint64_t seed); // New route, starting at zero.
 uint64_t ct_get_seed(const CtTunnel *ct);
 const char *ct_shader_directory(const CtTunnel *ct);
 const char *ct_asset_directory(const CtTunnel *ct);
