@@ -159,17 +159,19 @@ static void update_trail_mesh(CtTunnel *ct)
     Color cyan = { 0x9F, 0xF4, 0xFF, 255 };
     LineAttr ta = { cyan, 1.0f, 0.0f, 0.0f, -1.0f, 0.0f };
     Vector3 eng[2];
-    flight_engine_offsets(eng);
     const FlightView *v = &ct->view;
     float boost=flight_speed_norm(&ct->fp,v->speed);
+    for(int e=0;e<2;e++)eng[e]=flight_exhaust_offset(e,v->gimbal[e],.48f+2.6f*boost);
     float w0 = ct->core.trailWidth*(1+.8f*boost), i0 = ct->core.trailIntensity*(.5f+.5f*boost);
     for (int e = 0; e < 2; e++) {
         DVec3 head = dv_add(v->shipPos, dv_add(dv_add(dv_scale(v->shipRight, eng[e].x), dv_scale(v->shipUp, eng[e].y)), dv_scale(v->shipFwd, eng[e].z)));
         Vector3 prev = dv_to_v3(dv_sub(head, ct->renderOrigin));
         float tPrev = 0.0f;
         for (int k = 0; k < FLIGHT_TRAIL_LEN; k++) {
-            if (k < st->trailCount) {
-                int idx = (st->trailHead - 1 - k + 2 * FLIGHT_TRAIL_LEN) % FLIGHT_TRAIL_LEN;
+            // The head uses the interpolated flame tip. Start history one
+            // physics step earlier so the wake never folds forward into it.
+            if (k < st->trailCount-1) {
+                int idx = (st->trailHead - 2 - k + 2 * FLIGHT_TRAIL_LEN) % FLIGHT_TRAIL_LEN;
                 Vector3 p = dv_to_v3(dv_sub(st->trail[e][idx], ct->renderOrigin));
                 float tk = (float)(k + 1) / (float)FLIGHT_TRAIL_LEN;
                 float fa = 1.0f - tPrev, fb = 1.0f - tk;
@@ -211,6 +213,8 @@ static void draw_ship_opaque(CtTunnel *ct, const FrameContext *ctx)
     sl_f1(&ct->sl, ct->shShip, "uBoost", ctx->speedNorm);
     sl_f2(&ct->sl,ct->shShip,"uSteer",v->controlX,v->controlY);
     sl_f1(&ct->sl,ct->shShip,"uDamage",ct->shipDamage);
+    sl_f2(&ct->sl,ct->shShip,"uGimbalLeft",v->gimbal[0].x,v->gimbal[0].y);
+    sl_f2(&ct->sl,ct->shShip,"uGimbalRight",v->gimbal[1].x,v->gimbal[1].y);
     Texture2D previousTexture=ct->mat.maps[MATERIAL_MAP_ALBEDO].texture;
     if(ct->shipSkin.id)ct->mat.maps[MATERIAL_MAP_ALBEDO].texture=ct->shipSkin;
     draw_mesh(ct, ct->shShip, ct->shipHull, xf);
@@ -239,6 +243,8 @@ static void draw_ship_emissive(CtTunnel *ct, const FrameContext *ctx)
     sl_v3(sl,ct->shAfterburner,"uCamPos",ctx->camera.position);
     sl_f1(sl,ct->shAfterburner,"uBoost",ctx->speedNorm);
     sl_f1(sl,ct->shAfterburner,"uPower",fminf(ct->core.engineIntensity*.22f,2.0f));
+    sl_f2(sl,ct->shAfterburner,"uGimbalLeft",v->gimbal[0].x,v->gimbal[0].y);
+    sl_f2(sl,ct->shAfterburner,"uGimbalRight",v->gimbal[1].x,v->gimbal[1].y);
     draw_mesh(ct,ct->shAfterburner,ct->shipFlames,xf);
     Vector3 mag = ct_srgb_to_linear((Color){ 0x65, 0xCE, 0xF5, 255 });
     sl_v3(sl, sh, "uEdgeColor", mag);

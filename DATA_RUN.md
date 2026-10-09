@@ -125,6 +125,37 @@ as well. The window opens at 1600 ×
 900, supports resizing down to 800 × 450, and renders at the current window or
 fullscreen resolution.
 
+## Afterburner thrust vectoring
+
+Hold Shift/Space and steer normally. At boost speed, both aft nozzles gimbal
+within a **14-degree cone**, generating lateral reaction forces that sharpen
+turns, climbs and dives. The flight computer converts the desired tunnel-plane
+direction into the banking ship's local frame, so steering stays consistent
+during rolls. Gimbal positions use damped servos; authority ramps with actual
+boost speed and centers smoothly when afterburner is released.
+
+Opposing vertical deflections add a roll couple for banking and Q/E barrel
+rolls. Differential deflection accelerates the first half of a barrel roll and
+reverses during the second half to assist braking. Bank assist is capped at six
+degrees. Forward boost speed is maintained: vectoring adds lateral force while
+the existing axial speed controller continues the flight.
+
+The nozzles rotate around fitted spherical swivel sockets. Both flame layers,
+surface normals and floor reflections receive the same gimbal pose. The wake
+starts at the moving outer-flame tip, using prior physics samples to keep it
+behind the interpolated plume. Material coordinates stay attached to the nozzle.
+The sockets add 1,536 hull vertices and **96,768 bytes (94.5 KiB)** of geometry.
+
+A focused benchmark warms the ship to full boost, then holds one steering
+direction for 0.6 seconds. It travels 3.77 metres laterally versus 3.20 metres
+with vectoring disabled, about **18% more movement**, with identical forward
+speed and distance. Unboosted steering is unchanged. The 61 vectoring checks
+cover all four directions, diagonal cone limits, coast-down recentering,
+opposed roll jets, braking, nozzle/wake alignment, preserved aperture radius,
+interpolation, and identical results at 30/60/144 Hz with constant input.
+`vectoringStrength=.90` and `vectoringAngleDeg=14` in both mission presets
+control the assist and limit; setting strength to zero disables vectoring.
+
 ## Techno, afterburners and challenges
 
 The soundtrack is synthesized live at 48 kHz in stereo. Its sequencer builds a
@@ -173,7 +204,7 @@ Successful laser openings award bonus points.
 ## Visual changes
 
 - Smooth procedural courier mesh: 64-sided cross-sections with interpolated
-  hull/canopy/pod profiles, smooth surface normals and 32,900 hull vertices. Beveled
+  hull/canopy/pod profiles, smooth surface normals and 34,436 hull vertices. Beveled
   wing armor, intake slats, fitted canopy rails, fins, twin engine pods,
   articulated nozzles, recessed dark rear bulkhead and navigation lights.
   The preceding pass added four raised service hatches, sixteen cooling louvers,
@@ -311,13 +342,14 @@ with the dynamic ship mesh test. Mission checks include progression through
 thirty-two transitions, difficulty bounds through mission 100, all ten collision
 shapes, deterministic layouts, a mission 10,000
 layout, score above five billion, shield recovery, and the full protected countdown.
-On Windows there are nine CTest suites, including a six-mission engine run,
+On Windows there are ten CTest suites, including a six-mission engine run,
 interactive startup with a forced zero-time first frame, and standalone startup
 from a folder containing only the EXE, live-menu checks for both modes, and
-the ship/repair rendering check. Repair tests sample 2,048 deterministic
+the ship/repair rendering check and a separate thrust-vector physics suite. Repair tests sample 2,048 deterministic
 missions (273 contained a kit), verify the one-kit limit, swept pickup position,
 health cap, missed-kit combo behavior, immunity, and damage/repair ordering.
-The engine test renders four steering poses and three damage states, freezes
+The engine test renders four steering poses, two vectored roll poses and three
+damage states, freezes
 collection during pause, and collects two kits without data/score changes or
 boost interruptions.
 The live-menu regression waits through long previews, renders scenery blending,
@@ -336,8 +368,9 @@ unit normals, index limits, materials and clearance from the player lane.
 Autoplay also checks held boost without any
 pickup events and verifies full movement time across a 120 ms frame. It reports
 speed and boost interruptions after acceleration. Seeds 17 and 83 clear six
-consecutive missions. Seed 17 clears mission 10 with two shield points; the same
-simple QA bot loses its shield at missions 11, 20 and 21. Those are expected
+consecutive missions. With vectoring, seed 17 clears mission 10 with two
+shield points and mission 20 with one (26/34 data); the simple QA bot loses its
+shield at missions 11 and 21. Those are expected
 gameplay losses, rather than executable crashes. Late-mission flight and loss
 paths, warp, multiplier countdown, and 800 × 450 / 3840 × 2160 captures were
 also exercised and visually inspected. Difficulty still needs human playtesting
@@ -353,7 +386,10 @@ mode. The ship and shared city shaders also improve the sandbox rendering.
 `ct_set_ship_damage()` accepts a cosmetic 0..1 severity. Gameplay maps shield
 values 3/2/1 to 0/.5/1 after each frame. `FlightState` and `FlightView` carry
 smoothed/interpolated effective controls; `ship_articulation.glsl` transforms
-the signed wing, winglet and flap tags in UV2.y. The fixed hull uses tag zero.
+the signed wing, winglet and flap tags in UV2.y. The fixed hull uses tag zero. Nozzle tag ±4 selects `thrust_vectoring.glsl`,
+using the same Rx-then-Ry pivot convention as the pure flight helper. Opaque
+nozzles and emissive jets receive interpolated left/right pitch/yaw angles;
+the physics uses their mean reaction force and differential roll couple.
 The shared line shader enables articulation only for attached ship lights,
 then disables it before drawing world-space trails.
 

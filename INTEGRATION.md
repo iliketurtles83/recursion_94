@@ -96,6 +96,17 @@ The game is responsible for bloom/tonemapping. Useful inputs for a game-side pos
 - `ct_vanishing_point(ct)` – uv (y up) of the tunnel's vanishing point for radial blur.
 - `CtStats.speed` / `CtStats.intensity` – to drive blur strength.
 
+## Afterburner vectoring
+
+The host enables boost through `ct_set_input()` as usual. The fixed-step flight
+model blends thrust authority with actual boost speed. Two nozzle servos
+generate lateral reaction forces and a bounded differential roll assist.
+`vectoringStrength` and `vectoringAngleDeg` are registered Flight parameters;
+the mission defaults are .90 and 14 degrees. Strength zero disables the assist.
+No additional controls are required. Axial speed remains under the existing
+speed controller. The opaque and afterburner shaders share the nozzle pose,
+and the wake attachment uses the matching CPU gimbal rotation.
+
 ## 7. Camera ownership
 
 - `cfg.ownCamera = true` (default): the module runs the chase camera.

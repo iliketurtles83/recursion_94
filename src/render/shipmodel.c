@@ -99,6 +99,21 @@ static void fastener(LineGeo *g,float x,float y,float z)
             (Vector3){0,1,0},(Color){20,28,35,255},2);
     }
 }
+static void swivel_collar(LineGeo *g,float cx)
+{
+    // A spherical socket covers the seam as the entire aft nozzle gimbals.
+    const float radius=.188f;
+    for(int j=0;j<6;j++)for(int k=0;k<32;k++) {
+        int base=lg_reserve(g,4,6);const int dj[4]={0,1,1,0},dk[4]={0,0,1,1};
+        for(int n=0;n<4;n++){
+            float a=(k+dk[n])*2*PI/32,t=PI*.5f-.36f+(j+dj[n])*.12f;
+            Vector3 normal={cosf(a)*sinf(t),sinf(a)*sinf(t),cosf(t)};
+            Vector3 p={cx+radius*normal.x,-.05f+radius*normal.y,-1.40f+radius*normal.z};
+            lg_vertex(g,p,(Vector2){0},(Vector2){3,0},normal,(Vector4){0},(Color){132,147,157,255});
+        }
+        lg_quad(g,base,0,1,2,3);
+    }
+}
 static void service_hatch(LineGeo *g,float x,float y,float z)
 {
     Vector3 edge[4]={{x-.115f,y,z-.135f},{x+.115f,y,z-.135f},{x+.115f,y,z+.135f},{x-.115f,y,z+.135f}},top[4];
@@ -181,6 +196,7 @@ void shipmodel_build(LineGeo *hull, LineGeo *lights, float engineIntensity)
         const Section pod[]={{.10f,.10f,.10f,-.07f},{-.15f,.16f,.15f,-.06f},{-.50f,.21f,.20f,-.05f},{-.90f,.22f,.20f,-.05f},{-1.20f,.20f,.18f,-.05f},{-1.42f,.18f,.17f,-.05f}};
         loft(hull,pod,6,side*.48f,(Color){154,161,166,255},3);
         collar(hull,side*.48f,-1.24f,.205f);
+        swivel_collar(hull,side*.48f);
         for(int k=0;k<5;k++)radiator(hull,side*.48f,-.46f-k*.12f);
         Vector3 hose[9];
         for(int k=0;k<9;k++) {
@@ -251,6 +267,7 @@ void shipmodel_nozzles(LineGeo *g,float boost)
     lg_clear(g);boost=fminf(fmaxf(boost,0),1);
     float opening=.115f+.095f*boost;
     for(int side=-1;side<=1;side+=2)for(int k=0;k<24;k++) {
+        int first=g->vcount;
         float a=(k+.06f)*2*PI/24,b=(k+.94f)*2*PI/24;
         Vector3 p[4]={{side*.48f+.18f*cosf(a),-.05f+.18f*sinf(a),-1.40f},
                       {side*.48f+.18f*cosf(b),-.05f+.18f*sinf(b),-1.40f},
@@ -271,6 +288,7 @@ void shipmodel_nozzles(LineGeo *g,float boost)
             face(g,h1,t1,Vector3Add(t1,out),Vector3Add(h1,out),Vector3Negate(across),(Color){69,78,86,255},3);
             face(g,h2,Vector3Add(h2,out),Vector3Add(t2,out),t2,across,(Color){69,78,86,255},3);
         }
+        tag_part(g,first,side*4.0f);
     }
 }
 void shipmodel_flames(LineGeo *g)

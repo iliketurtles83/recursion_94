@@ -22,6 +22,7 @@ typedef struct FlightParams {
     float baseSpeed, boostSpeed, speedResponse;
     float steerLimit;        // fraction of R
     float steerAccel, steerDamping;
+    float vectoringStrength, vectoringAngleDeg;
     float maxBankDeg, maxPitchDeg;
     float camDistance, camHeight, camStiffness, camUpStiffness;
     float camFollowLateral;  // how much the camera follows ship offset
@@ -39,6 +40,8 @@ typedef struct FlightState {
     float  x, y, vx, vy;     // cross-section offset (right, up) and velocity
     float  bank, tilt;       // radians
     float  controlX, controlY; // damped steering command for articulated surfaces
+    float  vectorPower;       // boost-gated, speed-dependent thrust authority
+    Vector2 gimbal[2];        // actual left/right nozzle pitch and yaw, radians
     float  barrel;           // extra roll from barrel roll (radians)
     float  barrelT;          // 0..1 progress, <0 idle
     int    barrelDir;
@@ -63,6 +66,8 @@ typedef struct FlightView {
     double s;
     float speed;
     float controlX, controlY;
+    float vectorPower;
+    Vector2 gimbal[2];
 } FlightView;
 
 void flight_register_params(FlightParams *p, ParamRegistry *reg);
@@ -77,5 +82,8 @@ FlightView flight_interpolate(const FlightState *a, const FlightState *b, float 
 float flight_speed_norm(const FlightParams *p, float speed);
 // Engine attach points in ship-local space (right, up, fwd).
 void flight_engine_offsets(Vector3 out[2]);
+// Shared nozzle rotation/attachment math for reaction forces and exhaust wake.
+Vector3 flight_gimbal_rotate(Vector3 p, Vector2 angles);
+Vector3 flight_exhaust_offset(int engine, Vector2 angles, float plumeLength);
 
 #endif

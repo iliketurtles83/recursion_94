@@ -14,6 +14,8 @@ void flight_register_params(FlightParams *p, ParamRegistry *reg)
     params_float(reg, g, "steerLimit", &p->steerLimit, 0.55f, 0.0f, 0.9f);
     params_float(reg, g, "steerAccel", &p->steerAccel, 60.0f, 1.0f, 300.0f);
     params_float(reg, g, "steerDamping", &p->steerDamping, 5.0f, 0.1f, 30.0f);
+    params_float(reg,g,"vectoringStrength",&p->vectoringStrength,.90f,0,2);
+    params_float(reg,g,"vectoringAngleDeg",&p->vectoringAngleDeg,14,0,22);
     params_float(reg, g, "maxBankDeg", &p->maxBankDeg, 35.0f, 0.0f, 80.0f);
     params_float(reg, g, "maxShipPitchDeg", &p->maxPitchDeg, 15.0f, 0.0f, 45.0f);
     params_bool(reg, g, "autopilot", &p->autopilot, false);
@@ -46,6 +48,17 @@ void flight_engine_offsets(Vector3 out[2])
     out[1] = (Vector3){ 0.48f, -0.05f, -1.56f };
 }
 
+Vector3 flight_gimbal_rotate(Vector3 p,Vector2 a)
+{
+    float cx=cosf(a.x),sx=sinf(a.x),cy=cosf(a.y),sy=sinf(a.y);
+    Vector3 q={p.x,cx*p.y-sx*p.z,sx*p.y+cx*p.z};
+    return (Vector3){cy*q.x+sy*q.z,q.y,-sy*q.x+cy*q.z};
+}
+Vector3 flight_exhaust_offset(int engine,Vector2 angles,float plumeLength)
+{
+    Vector3 p=flight_gimbal_rotate((Vector3){0,0,-.385f-plumeLength},angles);
+    p.x+=engine?.48f:-.48f;p.y-=.05f;p.z-=1.40f;return p;
+}
 static float clampf(float x, float lo, float hi) { return x < lo ? lo : (x > hi ? hi : x); }
 
 // Implicit critically damped spring step.
@@ -132,8 +145,32 @@ void flight_step(FlightState *st, const FlightParams *p, const PathSystem *path,
     float servo = 1.0f - expf(-12.0f * fdt);
     st->controlX += (clampf(sx,-1,1) - st->controlX) * servo;
     st->controlY += (clampf(sy,-1,1) - st->controlY) * servo;
-    st->vx += (sx * p->steerAccel - st->vx * p->steerDamping) * fdt;
-    st->vy += (sy * p->steerAccel - st->vy * p->steerDamping) * fdt;
+    float authority=in->boost&&p->vectoringStrength>0?flight_speed_norm(p,st->speed):0;
+    st->vectorPower+=(authority-st->vectorPower)*(1-expf(-8*fdt));
+    float maxAngle=p->vectoringAngleDeg*PI_F/180;
+    // Flight computer holds the requested tunnel-plane direction while the
+    // body banks/rolls. The exhaust points opposite the desired lateral force.
+    DVec3 desired=dv_add(dv_scale(ps.B,clampf(sx,-1,1)),dv_scale(ps.N,clampf(sy,-1,1)));
+    float localX=(float)dv_dot(desired,st->shipRight),localY=(float)dv_dot(desired,st->shipUp);
+    float rollCommand=.35f*clampf(sx,-1,1);
+    if(st->barrelT>=0)rollCommand+=.65f*st->barrelDir*sinf(2*PI_F*st->barrelT);
+    rollCommand=clampf(rollCommand,-1,1);
+    Vector3 reaction={0};
+    for(int e=0;e<2;e++) {
+        float side=e?1:-1;
+        Vector2 goal={(-localY+side*.42f*rollCommand)*maxAngle*st->vectorPower,
+                      localX*maxAngle*st->vectorPower};
+        float cone=hypotf(goal.x,goal.y);
+        if(cone>maxAngle&&cone>0){goal.x*=maxAngle/cone;goal.y*=maxAngle/cone;}
+        st->gimbal[e].x+=(goal.x-st->gimbal[e].x)*servo;
+        st->gimbal[e].y+=(goal.y-st->gimbal[e].y)*servo;
+        Vector3 jet=flight_gimbal_rotate((Vector3){0,0,-1},st->gimbal[e]);
+        reaction.x-=jet.x*.5f;reaction.y-=jet.y*.5f;
+    }
+    DVec3 force=dv_add(dv_scale(st->shipRight,reaction.x),dv_scale(st->shipUp,reaction.y));
+    float thrust=p->steerAccel*p->vectoringStrength*st->vectorPower;
+    st->vx += (sx*p->steerAccel+thrust*(float)dv_dot(force,ps.B)-st->vx*p->steerDamping)*fdt;
+    st->vy += (sy*p->steerAccel+thrust*(float)dv_dot(force,ps.N)-st->vy*p->steerDamping)*fdt;
     st->x += st->vx * fdt;
     st->y += st->vy * fdt;
     float r = sqrtf(st->x * st->x + st->y * st->y);
@@ -158,6 +195,11 @@ void flight_step(FlightState *st, const FlightParams *p, const PathSystem *path,
     float vmax = p->steerAccel / p->steerDamping;
     float bankTarget = clampf(st->vx / vmax, -1.0f, 1.0f) * p->maxBankDeg * PI_F / 180.0f;
     float tiltTarget = clampf(st->vy / vmax, -1.0f, 1.0f) * p->maxPitchDeg * PI_F / 180.0f;
+    // Opposing vertical jets generate a roll couple. This supplements the
+    // normal attitude controller; it is bounded to six degrees of bank assist.
+    float rollJet=(sinf(st->gimbal[1].x)-sinf(st->gimbal[0].x))*.5f;
+    float rollTorque=clampf(rollJet/fmaxf(sinf(maxAngle*.42f),.001f),-1,1);
+    bankTarget+=rollTorque*st->vectorPower*6*PI_F/180;
     float k = 1.0f - expf(-8.0f * fdt);
     st->bank += (bankTarget - st->bank) * k;
     st->tilt += (tiltTarget - st->tilt) * k;
@@ -180,7 +222,8 @@ void flight_step(FlightState *st, const FlightParams *p, const PathSystem *path,
 
     // Engine trail history.
     Vector3 eng[2];
-    flight_engine_offsets(eng);
+    float plumeLength=.48f+2.6f*flight_speed_norm(p,st->speed);
+    for(int e=0;e<2;e++)eng[e]=flight_exhaust_offset(e,st->gimbal[e],plumeLength);
     for (int e = 0; e < 2; e++) {
         DVec3 w = dv_add(st->shipPos, dv_add(dv_add(dv_scale(st->shipRight, eng[e].x), dv_scale(st->shipUp, eng[e].y)), dv_scale(st->shipFwd, eng[e].z)));
         st->trail[e][st->trailHead] = w;
@@ -223,5 +266,7 @@ FlightView flight_interpolate(const FlightState *a, const FlightState *b, float 
     v.speed = a->speed + (b->speed - a->speed) * alpha;
     v.controlX = a->controlX + (b->controlX-a->controlX)*alpha;
     v.controlY = a->controlY + (b->controlY-a->controlY)*alpha;
+    v.vectorPower=a->vectorPower+(b->vectorPower-a->vectorPower)*alpha;
+    for(int e=0;e<2;e++)v.gimbal[e]=(Vector2){a->gimbal[e].x+(b->gimbal[e].x-a->gimbal[e].x)*alpha,a->gimbal[e].y+(b->gimbal[e].y-a->gimbal[e].y)*alpha};
     return v;
 }

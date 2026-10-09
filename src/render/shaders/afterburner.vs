@@ -8,6 +8,7 @@ uniform vec3 uCamPos;
 uniform float uBoost, uTime;
 out vec2 fUV;
 out float fLayer, fFacing;
+#include "thrust_vectoring.glsl"
 void main() {
     fUV=vertexTexCoord;
     fLayer=vertexTexCoord2.y;
@@ -20,8 +21,10 @@ void main() {
     if(fLayer>.5){r*=.46;length*=.90;}
     vec3 p=vec3(vertexTexCoord2.x*.48+cos(a)*r,-.05+sin(a)*r,-1.785-u*length);
     p.xy+=vec2(sin(u*21.0-uTime*25.0),cos(u*17.0-uTime*22.0))*.023*u*u*uBoost;
+    vec3 normal=vec3(cos(a),sin(a),.14);
+    nozzle_pose(p,normal,vertexTexCoord2.x);
     vec3 wp=(matModel*vec4(p,1.0)).xyz;
-    vec3 n=normalize(mat3(matModel)*vec3(cos(a),sin(a),.14));
+    vec3 n=normalize(mat3(matModel)*normal);
     fFacing=abs(dot(n,normalize(uCamPos-wp)));
     gl_Position=mvp*vec4(p,1.0);
 }

@@ -28,6 +28,7 @@ typedef struct Game {
     RenderTexture2D routeSnapshot;
     bool poseOverride; // screenshot/QA controls, never enabled during play
     Vector2 pose;
+    int poseRoll;
     MissionPhase lastPhase;
     CtSceneView view;
 } Game;
@@ -422,7 +423,7 @@ static void frame(Game *g,float dt,bool automated,bool idle)
         }
         in.boost=in.boost&&mission_can_boost(&g->m);
     }
-    if(g->poseOverride&&automated&&!g->paused){in.steerX=g->pose.x;in.steerY=g->pose.y;}
+    if(g->poseOverride&&automated&&!g->paused){in.steerX=g->pose.x;in.steerY=g->pose.y;in.rollLeft=g->poseRoll<0;in.rollRight=g->poseRoll>0;g->poseRoll=0;}
     g->lastX=p.x;g->lastY=p.y;g->boost=in.boost;
     // Consume the whole rendered frame in safe slices. The previous 50 ms cap
     // made a 120 ms frame advance only 50 ms of flight: visible slow motion.
@@ -682,8 +683,15 @@ static bool check_ship_systems(Game *g,const char *prefix)
         for(int i=0;i<60;i++)frame(g,1/60.0f,true,false);
         valid=ship_capture(g,prefix,names[d])&&valid;
     }
+    g->pose=(Vector2){0};
+    for(int side=-1;side<=1;side+=2){
+        g->poseRoll=side;
+        for(int i=0;i<12;i++)frame(g,1/60.0f,true,false);
+        valid=ship_capture(g,prefix,side<0?"roll-left":"roll-right")&&valid;
+        for(int i=0;i<48;i++)frame(g,1/60.0f,true,false);
+    }
     g->poseOverride=false;
-    printf("ship systems: four steering poses rendered, paused kit protected, two repairs, data/score unchanged, %d boost gaps: %s\n",gaps,valid?"PASS":"FAIL");
+    printf("ship systems: four steering and two vectored roll poses rendered, paused kit protected, two repairs, data/score unchanged, %d boost gaps: %s\n",gaps,valid?"PASS":"FAIL");
     return valid;
 }
 int game_run(CtTunnel *ct,const GameOptions *options)

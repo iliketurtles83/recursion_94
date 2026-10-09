@@ -12,6 +12,12 @@ int main(void)
     if(capacity!=nozzle.vcount || nozzle.batchCount!=1)failures++;
     for(int i=0;i<nozzle.vcount;i++)if(nozzle.pos[i*3+2]<-1.7f){float x=nozzle.pos[i*3],y=nozzle.pos[i*3+1];float center=x>0?.48f:-.48f;open=fmaxf(open,hypotf(x-center,y+.05f));}
     if(open<closed*1.7f)failures++;
+    int nozzleParts[2]={0};
+    for(int i=0;i<nozzle.vcount;i++){
+        float part=nozzle.uv2[i*2+1];
+        if(fabsf(part)!=4)failures++;else nozzleParts[part>0]++;
+    }
+    if(!nozzleParts[0]||nozzleParts[0]!=nozzleParts[1])failures++;
     LineGeo *all[]={&hull,&lights,&nozzle,&flame};
     for(int g=0;g<4;g++){if(all[g]->batchCount!=1)failures++;for(int i=0;i<all[g]->vcount*3;i++)if(!isfinite(all[g]->pos[i])||!isfinite(all[g]->nrm[i]))failures++;}
     // Retain the prior geometry upgrade and keep within one indexed mesh.
