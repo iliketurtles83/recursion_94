@@ -160,6 +160,8 @@ if(WIN32)
   set_tests_properties(data_run_startup PROPERTIES TIMEOUT 20)
   add_test(NAME data_run_live_menu COMMAND cybertunnel --hidden --menu-check --seed 83)
   set_tests_properties(data_run_live_menu PROPERTIES TIMEOUT 30)
+  add_test(NAME data_run_ship_systems COMMAND cybertunnel --hidden --ship-check --seed 83)
+  set_tests_properties(data_run_ship_systems PROPERTIES TIMEOUT 20)
   add_test(NAME data_run_standalone COMMAND ${CMAKE_COMMAND}
     "-DEXECUTABLE=$<TARGET_FILE:cybertunnel>" "-DCHECK_DIR=${CMAKE_CURRENT_BINARY_DIR}/standalone-check"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_standalone.cmake")

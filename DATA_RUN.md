@@ -76,6 +76,32 @@ after acceleration with zero unrequested boost interruptions. Long frames now
 consume their full elapsed time in small simulation steps instead of discarding
 time beyond 50 ms. A 120 ms regression advances the full 120 ms.
 
+## Steering surfaces, damage and repair kits
+
+Both wings bank and pitch in response to steering. Each winglet has additional
+lean/yaw movement, and each trailing flap deflects for turning and vertical
+steering. Commands settle with a damped servo response and return to neutral
+when steering is released. These surfaces also move during menu autopilot.
+Hull plating, engines and canopy stay rigid. GPU articulation rotates positions
+and normals around physical hinges; attached navigation strips use the same
+pose in the main camera and floor reflections. Rest-space material coordinates
+keep the metal texture and damage marks attached to the moving surfaces.
+
+At two shields, plating on one wing and the aft hull becomes scorched and the
+canopy cracks. At one shield, damage spreads to the other wing, with darkened
+plating, rough exposed metal and a few dim glowing tears. The effect adds no
+smoke or large bloom that obscures targets. Repairs reduce the damage stage.
+
+Each deterministic mission has a **12.5% chance of one green repair kit**, with
+an independent random stream that preserves existing enemy/data layouts.
+The kit sits just beyond a data gate after several encounters, aligned with
+that gate's lane. Its solid green crate has metal corners and a luminous
+medical cross; green brackets appear when a damaged ship approaches it.
+Flying within 1.35 metres restores one shield point, capped at three, with a
+short rising sound. Full-shield pickups are consumed harmlessly. Missing a kit
+keeps the combo intact. Repairs preserve speed, data, score and hit immunity,
+and cannot revive a ship already disabled earlier in the same frame.
+
 ## Controls
 
 | Key | Action |
@@ -147,7 +173,7 @@ Successful laser openings award bonus points.
 ## Visual changes
 
 - Smooth procedural courier mesh: 64-sided cross-sections with interpolated
-  hull/canopy/pod profiles, smooth surface normals and 30,026 hull vertices. Beveled
+  hull/canopy/pod profiles, smooth surface normals and 32,900 hull vertices. Beveled
   wing armor, intake slats, fitted canopy rails, fins, twin engine pods,
   articulated nozzles, recessed dark rear bulkhead and navigation lights.
   The preceding pass added four raised service hatches, sixteen cooling louvers,
@@ -156,7 +182,10 @@ Successful laser openings award bonus points.
   bytes (178 KiB)** of actual vertex/index data across the hull, nozzle and flame
   meshes, generated at startup. The new pass adds ten solid engine cooling fins,
   two tubular canopy arches and two curved engine hoses, adding another
-  **203,952 bytes (199.2 KiB)** of geometry. The existing texture is retained.
+  **203,952 bytes (199.2 KiB)** of geometry. This revision adds six articulated
+  surfaces with solid bevels, flush rivet rows, dark panel seams, wing-root pivot
+  barrels, flap/winglet hinge pins, actuator links and fin spines: another
+  **179,868 bytes (175.7 KiB)**. The existing native texture is retained.
 - Native 1254 × 1254 generated aircraft-metal albedo texture, with panel seams,
   rivets, machining and worn paint. Triplanar mapping, mipmaps and anisotropic
   filtering keep detail stable at different distances. A GGX lighting shader
@@ -172,7 +201,7 @@ only mission number, payload count, time, shield bars, speed, a thin progress li
   afterburner chevrons. Instructions, score and buttons belong to the menu,
   pause and outcome screens. Flight labels, black panels and pickup toasts
   have been removed.
-- Original procedural techno, engine, collection, damage and success sounds.
+- Original procedural techno, engine, collection, damage, repair and success sounds.
   The Rajdhani font is included under the SIL Open Font License.
 - Speed streaks are sparse, thin and faint, restricted to the tunnel perimeter
   and faded out over the center of the screen. Comet flashes, boost zoom blur,
@@ -245,6 +274,10 @@ cybertunnel --hidden --autoplay --env 2
 cybertunnel --hidden --autoplay --bot-idle
 cybertunnel --hidden --autoplay --missions 6 --audio-check --seed 83
 cybertunnel --hidden --startup-check
+cybertunnel --hidden --ship-check --audio-check --seed 83
+cybertunnel --hidden --ship-check --w 3840 --h 2160 --out ship-detail --seed 83
+cybertunnel --hidden --mission-shot .2 --bot-idle --shot-shield 1 --out critical.png --seed 83
+cybertunnel --hidden --mission-shot .2 --shot-steer 1,0 --out right-turn.png --seed 83
 cybertunnel --hidden --mission-shot 0 --out title.png
 cybertunnel --hidden --mission-shot 25 --out gameplay.png
 cybertunnel --hidden --mission-shot 7.3 --w 1920 --h 1080 --out full-hd.png
@@ -263,7 +296,7 @@ for QA, and `--transition-shot` captures seconds after the first successful
 delivery. A bot that clears its requested missions returns 0; a loss returns 1.
 The idle bot intentionally returns 1.
 `--audio-check` opens the device and verifies the stereo synthesis callback and
-four generated effects while muted. It fails if no music frames were generated.
+five generated effects while muted. It fails if no music frames were generated.
 `--music-preview` writes a 24-second stereo WAV before opening any window. It
 starts at cruise and ramps to boost from second eight, using the live synthesizer.
 Mission screenshots render into an offscreen texture, so requested resolutions
@@ -273,14 +306,20 @@ Mission unit tests cover deterministic layout, swept crossings, scoring, missed
 gates, damage immunity, near misses, continuously available boost, deadline
 ordering, portal entry, loss conditions, sustained boost with and without
 pickups, enemy motion at crossing time, laser openings and restart.
-The 96 core checks, 20,123 mission checks and 32 music checks pass, along
+The 96 core checks, 23,329 mission checks and 32 music checks pass, along
 with the dynamic ship mesh test. Mission checks include progression through
 thirty-two transitions, difficulty bounds through mission 100, all ten collision
 shapes, deterministic layouts, a mission 10,000
 layout, score above five billion, shield recovery, and the full protected countdown.
-On Windows there are eight CTest suites, including a six-mission engine run,
+On Windows there are nine CTest suites, including a six-mission engine run,
 interactive startup with a forced zero-time first frame, and standalone startup
-from a folder containing only the EXE, and live-menu checks for both modes.
+from a folder containing only the EXE, live-menu checks for both modes, and
+the ship/repair rendering check. Repair tests sample 2,048 deterministic
+missions (273 contained a kit), verify the one-kit limit, swept pickup position,
+health cap, missed-kit combo behavior, immunity, and damage/repair ordering.
+The engine test renders four steering poses and three damage states, freezes
+collection during pause, and collects two kits without data/score changes or
+boost interruptions.
 The live-menu regression waits through long previews, renders scenery blending,
 verifies unchanged ship coordinates, camera, speed and seed when starting,
 and observes about 160 metres of protected movement during the five-second
@@ -290,8 +329,9 @@ These exercise actual rendering, audio
 and embedded-resource extraction. Music checks cover non-silent bounded output,
 tempo endpoints, pause/mute, and identical synthesis across different device
 buffer sizes, five arrangements, and warp tempo. The ship test checks finite geometry, stable dynamic buffer size
-and exhaust aperture expansion, both exhaust layers, and the additional ~200 KiB
-ship budget. Core tests check the tunnel hardware budget, determinism, finite
+and exhaust aperture expansion, both exhaust layers, six surface tags, attached
+lights, rigid fuselage regions, servo settling/reversal and interpolated controls.
+It preserves the previous geometry upgrade and the single-mesh index limit. Core tests check the tunnel hardware budget, determinism, finite
 unit normals, index limits, materials and clearance from the player lane.
 Autoplay also checks held boost without any
 pickup events and verifies full movement time across a 120 ms frame. It reports
@@ -309,6 +349,13 @@ Existing `--shot`, `--bench`, parameter and preset tools continue to use sandbox
 mode. The ship and shared city shaders also improve the sandbox rendering.
 
 ## Integration
+
+`ct_set_ship_damage()` accepts a cosmetic 0..1 severity. Gameplay maps shield
+values 3/2/1 to 0/.5/1 after each frame. `FlightState` and `FlightView` carry
+smoothed/interpolated effective controls; `ship_articulation.glsl` transforms
+the signed wing, winglet and flap tags in UV2.y. The fixed hull uses tag zero.
+The shared line shader enables articulation only for attached ship lights,
+then disables it before drawing world-space trails.
 
 The game stores `missionOrigin` independently of the streaming world's distance.
 Starting a countdown predicts its cruise-in distance, including the decay from

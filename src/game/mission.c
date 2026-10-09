@@ -27,8 +27,8 @@ float mission_theme_hue(int number)
 const char *mission_enemy_name(EventKind kind)
 {
     const char *names[]={"DATA", "GUARD DRONE", "SWEEPER", "PAIRED MINES", "LASER WALL",
-        "ORBITER", "MOVING SHUTTER", "INTERCEPTOR", "LASER ROTOR", "PULSAR", "SPLITTER"};
-    return kind>=EVENT_PACKET&&kind<=EVENT_SPLITTER?names[kind]:"UNKNOWN";
+        "ORBITER", "MOVING SHUTTER", "INTERCEPTOR", "LASER ROTOR", "PULSAR", "SPLITTER", "REPAIR KIT"};
+    return kind>=EVENT_PACKET&&kind<=EVENT_REPAIR?names[kind]:"UNKNOWN";
 }
 static void layout(Mission *m)
 {
@@ -87,6 +87,17 @@ static void layout(Mission *m)
                 .phase=pcg32_range(&rng,0,6.2831853f)};
         }
     }
+    // Independent RNG keeps existing enemy/data layouts stable. One kit in
+    // roughly one mission out of eight, just beyond an ordinary data gate.
+    Pcg32 repairRng=pcg32_seed(ct_hash64_2(mission_route_seed(m),0x524550414952ull));
+    if(pcg32_float(&repairRng)<.125f) {
+        int leg=6+(int)(pcg32_float(&repairRng)*(m->packetCount-10));
+        MissionEvent kit={.s=100+(leg+.13)*spacing,.radius=1.35f,.kind=EVENT_REPAIR};
+        for(int i=0;i<m->eventCount;i++)if(m->events[i].kind==EVENT_PACKET&&fabs(m->events[i].s-(100+leg*spacing))<.01){kit.x=m->events[i].x;kit.y=m->events[i].y+.30f;break;}
+        int slot=m->eventCount++;
+        while(slot>0&&m->events[slot-1].s>kit.s){m->events[slot]=m->events[slot-1];slot--;}
+        m->events[slot]=kit;
+    }
 }
 void mission_reset_at(Mission *m,uint64_t seed,int number)
 {
@@ -114,6 +125,7 @@ bool mission_can_boost(const Mission *m)
 }
 
 bool mission_event_opening(const MissionEvent *e){return e->kind==EVENT_BARRIER||e->kind==EVENT_SHUTTER;}
+bool mission_event_pickup(const MissionEvent *e){return e->kind==EVENT_PACKET||e->kind==EVENT_REPAIR;}
 float mission_event_angle(const MissionEvent *e,float time){return time*e->frequency+e->phase;}
 float mission_event_radius(const MissionEvent *e,float time)
 {
@@ -136,7 +148,7 @@ bool mission_event_danger(const MissionEvent *e,float time,float x,float y,float
 {
     float ex,ey;mission_event_position(e,time,&ex,&ey);
     float dx=x-ex,dy=y-ey,distance=hypotf(dx,dy);
-    if(e->kind==EVENT_PACKET)return false;
+    if(mission_event_pickup(e))return false;
     if(mission_event_opening(e))return distance>fmaxf(e->radius-clearance,0);
     if(e->kind==EVENT_ROTOR) {
         float a=mission_event_angle(e,time),along=dx*cosf(a)+dy*sinf(a),across=-dx*sinf(a)+dy*cosf(a);
@@ -152,7 +164,7 @@ bool mission_event_danger(const MissionEvent *e,float time,float x,float y,float
 
 void mission_tick(Mission *m, float dt, MissionSample p, bool boosting)
 {
-    m->justCollected = m->justHit = m->justNear = 0;
+    m->justCollected = m->justHit = m->justNear = m->justRepaired = 0;
     if (dt < 0) dt = 0;
     if(m->phase==MISSION_WARP){
         m->warpRemaining=fmaxf(m->warpRemaining-dt,0);
@@ -202,6 +214,11 @@ void mission_tick(Mission *m, float dt, MissionSample p, bool boosting)
                 if (m->combo < 6) m->combo++;
                 m->justCollected++;
             } else { m->misses++; m->combo = 1; }
+        } else if(e->kind==EVENT_REPAIR) {
+            if(distance<e->radius) {
+                e->collected=true;
+                if(m->shield>0&&m->shield<3){m->shield++;m->justRepaired++;}
+            }
         } else if (mission_event_danger(e,eventTime,px,py,.55f)) {
             e->hit = true;
             if (immuneUntil <= step*t) {

@@ -22,7 +22,9 @@ typedef struct Cli {
     const char *writePreset;
     const char *musicPreview;
     bool   listParams;
-    bool   sandbox, autoplay, idleBot, audioCheck, startupCheck, menuCheck;
+    bool   sandbox, autoplay, idleBot, audioCheck, startupCheck, menuCheck, shipCheck, shotSteer;
+    float shotSteerX, shotSteerY;
+    int shotShield;
     double missionShot, transitionShot, menuShot, introShot;
     const char *sets[32];        // --set name=value, applied after --preset
     int    setCount;
@@ -35,12 +37,13 @@ static void usage(void)
            "            [--set NAME=VALUE ...] [--hidden] [--sandbox]\n"
            "            [--mission-shot SECONDS --out FILE] [--autoplay] [--bot-idle]\n"
            "            [--music-preview FILE.wav] [--startup-check] [--menu-check]\n            [--missions N] [--mission N] [--transition-shot SECONDS --out FILE]\n"
-           "            [--menu-shot SECONDS | --intro-shot SECONDS] [--out FILE]\n");
+           "            [--menu-shot SECONDS | --intro-shot SECONDS] [--out FILE]\n"
+           "            [--ship-check [--out IMAGE_PREFIX]] [--mission-shot S --shot-steer X,Y --shot-shield 1..3]\n");
 }
 
 static Cli parse(int argc, char **argv)
 {
-    Cli c = { .seed = 1, .w = 1600, .h = 900, .vsync = 1, .speed = 120.0, .missionShot = -1, .transitionShot = -1, .menuShot = -1, .introShot = -1, .missions = 1, .startMission = 1 };
+    Cli c = { .seed = 1, .w = 1600, .h = 900, .vsync = 1, .speed = 120.0, .missionShot = -1, .transitionShot = -1, .menuShot = -1, .introShot = -1, .missions = 1, .startMission = 1, .shotShield = -1 };
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
         const char *v = i + 1 < argc ? argv[i + 1] : NULL;
@@ -70,6 +73,9 @@ static Cli parse(int argc, char **argv)
         else if (!strcmp(a, "--audio-check")) c.audioCheck = true;
         else if (!strcmp(a, "--startup-check")) c.startupCheck = true;
         else if (!strcmp(a, "--menu-check")) c.menuCheck = true;
+        else if (!strcmp(a, "--ship-check")) c.shipCheck = true;
+        else if (!strcmp(a, "--shot-steer")&&v){if(sscanf(v,"%f,%f",&c.shotSteerX,&c.shotSteerY)!=2){fprintf(stderr,"--shot-steer requires X,Y\n");exit(1);}c.shotSteer=true;i++;}
+        else if (!strcmp(a, "--shot-shield")&&v){c.shotShield=atoi(v);if(c.shotShield<1||c.shotShield>3){fprintf(stderr,"--shot-shield requires 1..3\n");exit(1);}i++;}
         else if (!strcmp(a, "--menu-shot") && v) {c.menuShot=atof(v);i++;}
         else if (!strcmp(a, "--intro-shot") && v) {c.introShot=atof(v);i++;}
         else if (!strcmp(a,"--music-preview")&&v){c.musicPreview=v;i++;}
@@ -124,7 +130,7 @@ int main(int argc, char **argv)
     bool mission = !bench && !cli.hasShot && !cli.sandbox && !cli.listParams && !cli.writePreset && (cli.env==CT_ENV_VORTEX||cli.env==CT_ENV_CITY);
     unsigned int flags = FLAG_WINDOW_RESIZABLE;
     if (cli.hidden) flags |= FLAG_WINDOW_HIDDEN;
-    if (cli.vsync && !bench && !cli.autoplay && !cli.menuCheck && cli.missionShot<0&&cli.transitionShot<0&&cli.menuShot<0&&cli.introShot<0) flags |= FLAG_VSYNC_HINT;
+    if (cli.vsync && !bench && !cli.autoplay && !cli.menuCheck && !cli.shipCheck && cli.missionShot<0&&cli.transitionShot<0&&cli.menuShot<0&&cli.introShot<0) flags |= FLAG_VSYNC_HINT;
     SetConfigFlags(flags);
     SetTraceLogLevel(LOG_WARNING);
     InitWindow(cli.w, cli.h, mission ? "DATA // RUN - Data Vortex" : "cybertunnel sandbox");
@@ -171,7 +177,7 @@ int main(int argc, char **argv)
         return ok ? 0 : 1;
     }
     if (mission) {
-        GameOptions options={.hidden=cli.hidden,.shotSeconds=cli.missionShot,.transitionShot=cli.transitionShot,.menuShot=cli.menuShot,.introShot=cli.introShot,.autoplay=cli.autoplay,.idleBot=cli.idleBot,.audioCheck=cli.audioCheck,.startupCheck=cli.startupCheck,.menuCheck=cli.menuCheck,.missions=cli.missions,.startMission=cli.startMission,.shotOut=cli.shotOut};
+        GameOptions options={.hidden=cli.hidden,.shotSeconds=cli.missionShot,.transitionShot=cli.transitionShot,.menuShot=cli.menuShot,.introShot=cli.introShot,.autoplay=cli.autoplay,.idleBot=cli.idleBot,.audioCheck=cli.audioCheck,.startupCheck=cli.startupCheck,.menuCheck=cli.menuCheck,.shipCheck=cli.shipCheck,.shotSteer=cli.shotSteer,.shotSteerX=cli.shotSteerX,.shotSteerY=cli.shotSteerY,.shotShield=cli.shotShield,.missions=cli.missions,.startMission=cli.startMission,.shotOut=cli.shotOut};
         int result=game_run(ct,&options);
         ct_destroy(ct);CloseWindow();return result;
     }

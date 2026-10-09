@@ -151,6 +151,9 @@ void sl_poll(ShaderLib *lib, double now)
         path_join(path, sizeof(path), lib->dir, e->vsName); m = file_mtime(path); if (m > mt) mt = m;
         path_join(path, sizeof(path), lib->dir, e->fsName); m = file_mtime(path); if (m > mt) mt = m;
         path_join(path, sizeof(path), lib->dir, "common.glsl"); m = file_mtime(path); if (m > mt) mt = m;
+        if(!strcmp(e->vsName,"ship.vs")||!strcmp(e->vsName,"object.vs")){
+            path_join(path,sizeof(path),lib->dir,"ship_articulation.glsl");m=file_mtime(path);if(m>mt)mt=m;
+        }
         if (mt > e->mtime) {
             long long keep = mt;
             if (compile_entry(lib, e)) { lib->reloadCount++; printf("shaderlib: reloaded %s / %s\n", e->vsName, e->fsName); }

@@ -209,6 +209,8 @@ static void draw_ship_opaque(CtTunnel *ct, const FrameContext *ctx)
     sl_i1(&ct->sl,ct->shShip,"uHasSkin",ct->shipSkin.id?1:0);
     sl_f1(&ct->sl, ct->shShip, "uTime", ctx->shaderTime);
     sl_f1(&ct->sl, ct->shShip, "uBoost", ctx->speedNorm);
+    sl_f2(&ct->sl,ct->shShip,"uSteer",v->controlX,v->controlY);
+    sl_f1(&ct->sl,ct->shShip,"uDamage",ct->shipDamage);
     Texture2D previousTexture=ct->mat.maps[MATERIAL_MAP_ALBEDO].texture;
     if(ct->shipSkin.id)ct->mat.maps[MATERIAL_MAP_ALBEDO].texture=ct->shipSkin;
     draw_mesh(ct, ct->shShip, ct->shipHull, xf);
@@ -229,7 +231,10 @@ static void draw_ship_emissive(CtTunnel *ct, const FrameContext *ctx)
     // The ship is always close: disable distance fades.
     sl_f4(sl, sh, "uFade", 1e6f, 2e6f, 0.0f, 0.001f);
     sl_f1(sl, sh, "uChunkFade", 1.0f);
+    sl_i1(sl,sh,"uShipPose",1);
+    sl_f2(sl,sh,"uSteer",v->controlX,v->controlY);
     draw_mesh(ct, sh, ct->shipEdges, xf);
+    sl_i1(sl,sh,"uShipPose",0);
     sl_f1(sl,ct->shAfterburner,"uTime",ctx->shaderTime);
     sl_v3(sl,ct->shAfterburner,"uCamPos",ctx->camera.position);
     sl_f1(sl,ct->shAfterburner,"uBoost",ctx->speedNorm);
@@ -404,6 +409,7 @@ void ct_set_input(CtTunnel *ct, const CtInput *in)
     ct->input.rollRight = ct->input.rollRight || in->rollRight;
 }
 void ct_set_intensity(CtTunnel *ct, float intensity) { ct->core.intensityOverride = intensity < 0.0f ? -1.0f : fminf(intensity, 1.0f); }
+void ct_set_ship_damage(CtTunnel *ct,float damage) { ct->shipDamage=fminf(fmaxf(damage,0),1); }
 void ct_trigger_whiteout(CtTunnel *ct) { ct->whiteoutT = 0.0f; }
 void ct_set_whiteout(CtTunnel *ct, float w) { ct->whiteoutManual = w; }
 

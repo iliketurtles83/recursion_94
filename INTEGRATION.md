@@ -115,6 +115,7 @@ The game is responsible for bloom/tonemapping. Useful inputs for a game-side pos
 | Call | Purpose |
 |---|---|
 | `ct_set_intensity(ct, v)` | 0..1 global energy (ring brightness, streak speed/density, zoom blur strength); `< 0` = automatic pacing. Zoom blur itself only appears with boost (`zoomBlur` at full boost, `zoomBlurAtBase` fraction at base speed) |
+| `ct_set_ship_damage(ct, v)` | Cosmetic ship damage, clamped 0..1; affects plating wear and canopy cracks. The host owns health and repair rules. |
 | `ct_trigger_whiteout(ct)` | whiteout + core flare animation (`whiteoutDuration`) |
 | `ct_set_whiteout(ct, w)` | manual whiteout 0..1 (e.g. scripted transitions); `< 0` returns to the animation |
 | `ct_path_sample(ct, s)` | centerline position, frame (T, N=up, B=right), radius, roll, curvature |

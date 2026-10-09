@@ -20,12 +20,14 @@ typedef struct Game {
     Mesh ring, glowRing, targetRing, sphere, cube;
     Font font, smallFont;
     bool ownFont, audio, mute, paused, boost, quit;
-    Sound engine, collect, hit, finish;
+    Sound engine, collect, hit, finish, repair;
     AudioStream music;
     Techno *techno;
     float uiTime, hitFlash, lastX, lastY, transitionFlash, menuOpacity, routeFade;
     double missionOrigin;
     RenderTexture2D routeSnapshot;
+    bool poseOverride; // screenshot/QA controls, never enabled during play
+    Vector2 pose;
     MissionPhase lastPhase;
     CtSceneView view;
 } Game;
@@ -33,6 +35,7 @@ typedef struct Game {
 static const Color HUD_WHITE={222,237,241,255}, DIM={129,164,179,255};
 static const Color CYAN={67,206,232,255}, AMBER={255,187,86,255}, HUD_RED={255,88,101,255};
 static const Color LASER_COLOR={178,108,255,255};
+static const Color REPAIR_GREEN={82,244,126,255};
 static float clamp(float x,float lo,float hi) {return fminf(fmaxf(x,lo),hi);}
 
 static Mesh ring_mesh(float tube)
@@ -164,6 +167,17 @@ static void scene(void *user,const CtSceneView *view,bool emissive)
                 actor(g,g->cube,xf,(Vector3){0},(Vector3){.42f,.42f,.12f},g->uiTime,AMBER,1.8f);
                 actor(g,g->glowRing,xf,(Vector3){0},(Vector3){.55f,.55f,1},-g->uiTime,CYAN,1.3f);
             }
+        } else if(e->kind==EVENT_REPAIR) {
+            if(!emissive) {
+                actor(g,g->cube,xf,(Vector3){0},(Vector3){.85f,.70f,.40f},0,(Color){36,78,52,255},0);
+                actor(g,g->cube,xf,(Vector3){0,0,-.215f},(Vector3){.64f,.54f,.025f},0,(Color){16,28,23,255},0);
+                for(int x=-1;x<=1;x+=2)for(int y=-1;y<=1;y+=2)
+                    actor(g,g->cube,xf,(Vector3){x*.39f,y*.31f,0},(Vector3){.13f,.13f,.46f},0,(Color){154,181,164,255},0);
+            }else{
+                actor(g,g->cube,xf,(Vector3){0,0,-.25f},(Vector3){.43f,.115f,.028f},0,REPAIR_GREEN,1.55f);
+                actor(g,g->cube,xf,(Vector3){0,0,-.25f},(Vector3){.115f,.43f,.028f},0,REPAIR_GREEN,1.55f);
+                actor(g,g->targetRing,xf,(Vector3){0},(Vector3){.75f,.75f,1},0,REPAIR_GREEN,1.15f*pulse);
+            }
         } else if(e->kind==EVENT_MINE) {
             if(!emissive) {
                 actor(g,g->sphere,xf,(Vector3){0},(Vector3){.65f,.65f,.65f},0,(Color){105,45,63,255},0);
@@ -240,6 +254,7 @@ static void audio_frame(Game *g)
     } else StopSound(g->engine);
     if(g->m.justCollected)PlaySound(g->collect);
     if(g->m.justHit)PlaySound(g->hit);
+    if(g->m.justRepaired)PlaySound(g->repair);
     if(g->m.phase==MISSION_WARP && g->lastPhase!=MISSION_WARP)PlaySound(g->finish);
 }
 
@@ -331,7 +346,7 @@ static CtInput bot(Game *g,MissionSample p,float dt)
     CtStats stats;ct_get_stats(g->ct,&stats);
     for(int i=0;i<g->m.eventCount;i++) {
         MissionEvent *e=&g->m.events[i];
-        if(e->resolved||e->kind==EVENT_PACKET||e->s<=p.s||e->s-p.s>72)continue;
+        if(e->resolved||mission_event_pickup(e)||e->s<=p.s||e->s-p.s>72)continue;
         float time=g->m.elapsed+(float)(e->s-p.s)/fmaxf(stats.speed,32);
         if(mission_event_opening(e)){mission_event_position(e,time,&x,&y);break;}
         if(!mission_event_danger(e,time,x,y,1.1f))continue;
@@ -342,7 +357,7 @@ static CtInput bot(Game *g,MissionSample p,float dt)
             float cost=hypotf(tx-x,ty-y)+.15f*hypotf(tx-p.x,ty-p.y);
             for(int j=i;j<g->m.eventCount;j++) {
                 MissionEvent *hazard=&g->m.events[j];
-                if(hazard->resolved||hazard->kind==EVENT_PACKET||hazard->s>e->s+8)continue;
+                if(hazard->resolved||mission_event_pickup(hazard)||hazard->s>e->s+8)continue;
                 float ht=g->m.elapsed+(float)(hazard->s-p.s)/fmaxf(stats.speed,32);
                 if(mission_event_danger(hazard,ht,tx,ty,1.1f))cost+=100;
             }
@@ -407,10 +422,11 @@ static void frame(Game *g,float dt,bool automated,bool idle)
         }
         in.boost=in.boost&&mission_can_boost(&g->m);
     }
+    if(g->poseOverride&&automated&&!g->paused){in.steerX=g->pose.x;in.steerY=g->pose.y;}
     g->lastX=p.x;g->lastY=p.y;g->boost=in.boost;
     // Consume the whole rendered frame in safe slices. The previous 50 ms cap
     // made a 120 ms frame advance only 50 ms of flight: visible slow motion.
-    int collected=0,hit=0,near=0;
+    int collected=0,hit=0,near=0,repaired=0;
     if(dt<=1e-6f)ct_update(g->ct,0.0f);
     for(float remaining=dt;remaining>1e-6f;) {
         float slice=fminf(remaining,1/60.0f);remaining-=slice;
@@ -427,9 +443,12 @@ static void frame(Game *g,float dt,bool automated,bool idle)
             mission_tick(&g->m,slice,ship_sample(g),in.boost);
             if(g->m.number!=number){configure_mission(g);begin_countdown(g);g->transitionFlash=.35f;}
             collected+=g->m.justCollected;hit+=g->m.justHit;near+=g->m.justNear;
+            repaired+=g->m.justRepaired;
         }
     }
     g->m.justCollected=collected;g->m.justHit=hit;g->m.justNear=near;
+    g->m.justRepaired=repaired;
+    ct_set_ship_damage(g->ct,clamp((3-g->m.shield)*.5f,0,1));
     if(!g->paused){
         g->transitionFlash=fmaxf(g->transitionFlash-dt,0);
         if(g->m.phase!=MISSION_TITLE)g->menuOpacity=fmaxf(g->menuOpacity-dt/.75f,0);
@@ -468,7 +487,7 @@ static void target_marker(Hud *h,const MissionEvent *e,bool packet,int width,int
     float markerRadius=e->kind==EVENT_ROTOR?2:e->kind==EVENT_SPLITTER?e->amplitude:mission_event_radius(e,g->m.elapsed);
     Vector3 edge=Vector3Add(pos,Vector3Scale(path.binormal,markerRadius));
     float r=clamp(Vector2Distance(p,GetWorldToScreenEx(edge,g->view.camera,width,height)),12*h->s,112*h->s)+6*h->s;
-    Color color=packet?AMBER:mission_event_opening(e)?CYAN:HUD_RED;
+    Color color=e->kind==EVENT_REPAIR?REPAIR_GREEN:packet?AMBER:mission_event_opening(e)?CYAN:HUD_RED;
     for(int sx=-1;sx<=1;sx+=2)for(int sy=-1;sy<=1;sy+=2) {
         Vector2 corner={p.x+sx*r,p.y+sy*r};
         Vector2 horizontal={corner.x-sx*12*h->s,corner.y},vertical={corner.x,corner.y-sy*12*h->s};
@@ -553,7 +572,13 @@ static void hud(Game *g,int w,int height)
     for(int i=0;i<m->eventCount;i++) {
         MissionEvent *e=&m->events[i];
         double ship=ct_ship_s(g->ct)-g->missionOrigin;
-        if(e->kind!=EVENT_PACKET&&!e->resolved&&e->s>=ship&&e->s<ship+145) {
+        if(e->kind==EVENT_REPAIR&&!e->resolved&&e->s>=ship&&e->s<ship+200&&m->shield<3)
+            target_marker(&h,e,false,w,height);
+    }
+    for(int i=0;i<m->eventCount;i++) {
+        MissionEvent *e=&m->events[i];
+        double ship=ct_ship_s(g->ct)-g->missionOrigin;
+        if(!mission_event_pickup(e)&&!e->resolved&&e->s>=ship&&e->s<ship+145) {
             target_marker(&h,e,false,w,height);
             break;
         }
@@ -623,6 +648,44 @@ static bool check_live_menu(Game *g)
     return valid;
 }
 
+static bool ship_capture(Game *g,const char *prefix,const char *state)
+{
+    int w=GetRenderWidth(),h=GetRenderHeight();RenderTexture2D rt=LoadRenderTexture(w,h);
+    if(!rt.id)return false;
+    BeginDrawing();ct_render(g->ct,&rt,w,h);EndDrawing();
+    bool ok=true;
+    if(prefix){Image img=LoadImageFromTexture(rt.texture);ImageFlipVertical(&img);ok=ExportImage(img,TextFormat("%s-%s.png",prefix,state));UnloadImage(img);}
+    UnloadRenderTexture(rt);return ok;
+}
+static bool check_ship_systems(Game *g,const char *prefix)
+{
+    restart(g,true);g->m.phase=MISSION_RUNNING;g->m.countdown=0;g->missionOrigin=ct_ship_s(g->ct);
+    g->m.shield=1;g->m.eventCount=1;g->m.packets=0;g->menuOpacity=0;
+    MissionSample p=ship_sample(g);
+    g->m.events[0]=(MissionEvent){.s=p.s+45,.x=p.x,.y=p.y,.radius=1.35f,.kind=EVENT_REPAIR};
+    frame(g,0,true,false);bool valid=ship_capture(g,prefix,"critical");
+    g->paused=true;for(int i=0;i<60;i++)frame(g,1/60.0f,true,false);
+    valid=valid&&g->m.shield==1&&!g->m.events[0].resolved;
+    g->paused=false;int repairs=0,gaps=0;
+    for(int i=0;i<90&&g->m.shield<2;i++){frame(g,1/60.0f,true,false);repairs+=g->m.justRepaired;gaps+=!g->boost;}
+    valid=valid&&g->m.shield==2&&repairs==1&&gaps==0&&g->m.packets==0;
+    valid=ship_capture(g,prefix,"repaired")&&valid;
+    p=ship_sample(g);g->m.events[0]=(MissionEvent){.s=p.s+30,.x=p.x,.y=p.y,.radius=1.35f,.kind=EVENT_REPAIR};
+    for(int i=0;i<60&&g->m.shield<3;i++){frame(g,1/60.0f,true,false);repairs+=g->m.justRepaired;gaps+=!g->boost;}
+    valid=valid&&g->m.shield==3&&repairs==2&&gaps==0&&g->m.phase==MISSION_RUNNING&&g->m.score==0;
+    valid=ship_capture(g,prefix,"intact")&&valid;
+    g->m.eventCount=0;g->poseOverride=true;
+    const Vector2 directions[]={{-1,0},{1,0},{0,1},{0,-1}};
+    const char *names[]={"left","right","up","down"};
+    for(int d=0;d<4;d++){
+        g->pose=directions[d];
+        for(int i=0;i<60;i++)frame(g,1/60.0f,true,false);
+        valid=ship_capture(g,prefix,names[d])&&valid;
+    }
+    g->poseOverride=false;
+    printf("ship systems: four steering poses rendered, paused kit protected, two repairs, data/score unchanged, %d boost gaps: %s\n",gaps,valid?"PASS":"FAIL");
+    return valid;
+}
 int game_run(CtTunnel *ct,const GameOptions *options)
 {
     bool hidden=options->hidden,autoplay=options->autoplay,idleBot=options->idleBot,audioCheck=options->audioCheck,startupCheck=options->startupCheck;
@@ -647,17 +710,19 @@ int game_run(CtTunnel *ct,const GameOptions *options)
     g.mute=audioCheck||startupCheck;
     if(g.audio){
         g.engine=synth(1,65,0);g.collect=synth(.25f,540,2);g.hit=synth(.35f,140,3);g.finish=synth(.9f,660,2);
+        g.repair=synth(.42f,820,2);
         g.techno=techno_create(ct_get_seed(ct));g.music=LoadAudioStream(TECHNO_RATE,32,2);
         callbackMusic=g.techno;SetAudioStreamCallback(g.music,music_callback);SetAudioStreamVolume(g.music,.85f);
         techno_control(g.techno,0,false,false,g.mute);PlayAudioStream(g.music);
     }
     ct_set_scene_draw(ct,scene,&g);restart(&g,shotSeconds>0||autoplay||transitionShot>=0);
-    bool automated=shotSeconds>=0||autoplay||transitionShot>=0||options->menuShot>=0||options->introShot>=0||options->menuCheck;
+    if(shotSeconds>=0){g.poseOverride=options->shotSteer;g.pose=(Vector2){options->shotSteerX,options->shotSteerY};if(options->shotShield>=1&&options->shotShield<=3)g.m.shield=options->shotShield;}
+    bool automated=shotSeconds>=0||autoplay||transitionShot>=0||options->menuShot>=0||options->introShot>=0||options->menuCheck||options->shipCheck;
     int frames=0,result=0,boostGaps=0,cleared=0;double transitionTime=-1,introTime=-1;
     float minimumSpeed=1000;double maxStreamingMs=0;
     if(audioCheck) {
-        bool loaded=g.audio&&g.engine.frameCount&&g.techno&&g.music.buffer&&g.collect.frameCount&&g.hit.frameCount&&g.finish.frameCount;
-        printf("audio: stereo techno stream and four generated effects %s (muted verification)\n",loaded?"ready":"FAILED");
+        bool loaded=g.audio&&g.engine.frameCount&&g.techno&&g.music.buffer&&g.collect.frameCount&&g.hit.frameCount&&g.finish.frameCount&&g.repair.frameCount;
+        printf("audio: stereo techno stream and five generated effects %s (muted verification)\n",loaded?"ready":"FAILED");
         if(!loaded)result=4;
     }
     while(!WindowShouldClose()&&!g.quit) {
@@ -707,7 +772,7 @@ int game_run(CtTunnel *ct,const GameOptions *options)
             break;
         }
         if(done)break;
-        if(options->menuCheck&&frames>=120)break;
+        if((options->menuCheck||options->shipCheck)&&frames>=120)break;
         if(startupCheck&&frames>=8){
             CtStats stats;ct_get_stats(ct,&stats);
             bool ready=stats.drawCalls>0&&g.m.phase==MISSION_TITLE&&isfinite(g.view.camera.position.x)&&isfinite(g.view.camera.fovy)&&g.view.camera.fovy>0;
@@ -718,6 +783,7 @@ int game_run(CtTunnel *ct,const GameOptions *options)
         if(automated&&frames>(missionLimit+1)*60*110){result=3;break;}
     }
     if(options->menuCheck&&!check_live_menu(&g))result=3;
+    if(options->shipCheck&&!check_ship_systems(&g,shotOut))result=3;
     if(automated) {
         printf("mission: number=%d cleared=%d phase=%d time=%.3f distance=%.2f data=%d shield=%d score=%lld misses=%d near=%d\n",g.m.number,g.m.completed,g.m.phase,g.m.elapsed,ct_ship_s(ct),g.m.packets,g.m.shield,(long long)g.m.score,g.m.misses,g.m.nearMisses);
         if(autoplay&&g.m.completed<missionLimit)result=1;
@@ -795,7 +861,7 @@ int game_run(CtTunnel *ct,const GameOptions *options)
         printf("music: %llu stereo frames synthesized, %.1f BPM\n",(unsigned long long)techno_frames(g.techno),techno_bpm(g.techno));
         if(audioCheck&&techno_frames(g.techno)==0)result=4;
         callbackMusic=NULL;techno_destroy(g.techno);
-        UnloadSound(g.engine);UnloadSound(g.collect);UnloadSound(g.hit);UnloadSound(g.finish);CloseAudioDevice();
+        UnloadSound(g.engine);UnloadSound(g.collect);UnloadSound(g.hit);UnloadSound(g.finish);UnloadSound(g.repair);CloseAudioDevice();
     }
     if(g.ownFont){UnloadFont(g.font);UnloadFont(g.smallFont);}
     if(g.routeSnapshot.id)UnloadRenderTexture(g.routeSnapshot);

@@ -2,7 +2,9 @@
 #define DATARUN_GAME_H
 #include "cybertunnel.h"
 typedef struct GameOptions {
-    bool hidden, autoplay, idleBot, audioCheck, startupCheck, menuCheck;
+    bool hidden, autoplay, idleBot, audioCheck, startupCheck, menuCheck, shipCheck, shotSteer;
+    float shotSteerX, shotSteerY;
+    int shotShield;
     int missions, startMission;
     double shotSeconds, transitionShot, menuShot, introShot;
     const char *shotOut;

@@ -9,6 +9,27 @@ static void face(LineGeo *g, Vector3 a, Vector3 b, Vector3 c, Vector3 d, Vector3
     lg_fill_quad(g,a,b,c,d,n,(LineAttr){.color=color,.intensity=1,.group=material});
 }
 typedef struct Section { float z,w,h,y; } Section;
+static void tag_part(LineGeo *g,int first,float part)
+{
+    for(int i=first;i<g->vcount;i++)g->uv2[i*2+1]=part;
+}
+// Beveled, closed control surfaces retain their thickness while deflected.
+static void plate(LineGeo *g,const Vector3 p[4],Vector3 thickness,Color paint)
+{
+    Vector3 back[4],inset[4],center={0},n=Vector3Normalize(thickness);
+    for(int i=0;i<4;i++)center=Vector3Add(center,Vector3Scale(p[i],.25f));
+    for(int i=0;i<4;i++){
+        back[i]=Vector3Subtract(p[i],thickness);
+        inset[i]=Vector3Add(Vector3Lerp(p[i],center,.075f),Vector3Scale(thickness,.12f));
+    }
+    face(g,inset[0],inset[1],inset[2],inset[3],n,paint,0);
+    face(g,back[0],back[1],back[2],back[3],Vector3Negate(n),(Color){52,66,75,255},2);
+    for(int i=0;i<4;i++){
+        int k=(i+1)%4;
+        face(g,p[i],p[k],inset[k],inset[i],n,(Color){165,176,181,255},3);
+        face(g,p[i],back[i],back[k],p[k],Vector3Subtract(p[i],center),(Color){82,95,105,255},3);
+    }
+}
 // Small solid tubes retain a silhouette and specular highlight at close range.
 static void tube(LineGeo *g,const Vector3 *p,int count,int sides,float radius,Color color,float material)
 {
@@ -147,6 +168,7 @@ void shipmodel_build(LineGeo *hull, LineGeo *lights, float engineIntensity)
         tube(hull,p,13,8,.009f,(Color){104,126,137,255},3);
     }
     for(int side=-1;side<=1;side+=2) {
+        int first=hull->vcount;
         Vector3 top[4]={{side*.25f,.01f,.90f},{side*1.48f,.01f,-.65f},{side*1.12f,.08f,-1.26f},{side*.23f,.10f,-.83f}},bottom[4];
         for(int i=0;i<4;i++) {bottom[i]=top[i];bottom[i].y-=.12f;}
         Vector3 inset[4];Vector3 middle={0};for(int i=0;i<4;i++)middle=Vector3Add(middle,Vector3Scale(top[i],.25f));
@@ -155,6 +177,7 @@ void shipmodel_build(LineGeo *hull, LineGeo *lights, float engineIntensity)
         for(int i=0;i<4;i++)face(hull,top[i],top[(i+1)%4],inset[(i+1)%4],inset[i],(Vector3){0,1,0},(Color){133,145,154,255},3);
         face(hull,bottom[0],bottom[1],bottom[2],bottom[3],(Vector3){0,-1,0},(Color){44,62,77,255},0);
         for(int i=0;i<4;i++) face(hull,top[i],bottom[i],bottom[(i+1)%4],top[(i+1)%4],(Vector3){side,0,0},(Color){61,87,106,255},0);
+        tag_part(hull,first,(float)side);
         const Section pod[]={{.10f,.10f,.10f,-.07f},{-.15f,.16f,.15f,-.06f},{-.50f,.21f,.20f,-.05f},{-.90f,.22f,.20f,-.05f},{-1.20f,.20f,.18f,-.05f},{-1.42f,.18f,.17f,-.05f}};
         loft(hull,pod,6,side*.48f,(Color){154,161,166,255},3);
         collar(hull,side*.48f,-1.24f,.205f);
@@ -166,9 +189,40 @@ void shipmodel_build(LineGeo *hull, LineGeo *lights, float engineIntensity)
         }
         tube(hull,hose,9,6,.012f,(Color){138,116,83,255},3);
         // Raised armor plates, recessed intake slats and canopy rails.
+        first=hull->vcount;
         face(hull,(Vector3){side*.36f,.125f,.22f},(Vector3){side*1.27f,.13f,-.69f},(Vector3){side*1.0f,.17f,-1.08f},(Vector3){side*.38f,.19f,-.71f},(Vector3){0,1,0},(Color){211,220,226,255},0);
         service_hatch(hull,side*.88f,.165f,-.62f);
         service_hatch(hull,side*.77f,.195f,-.95f);
+        // Flush rivet rows, panel seams, and bolted wing-root pivot hardware.
+        for(int k=0;k<8;k++)fastener(hull,side*(.51f+k*.085f),.151f,-.015f-k*.092f);
+        for(int k=0;k<3;k++) {
+            Vector3 seam[3]={{side*(.53f+k*.10f),.160f,-.26f-k*.20f},
+                {side*(.81f+k*.06f),.172f,-.55f-k*.15f},{side*(.99f-k*.04f),.181f,-.77f-k*.11f}};
+            tube(hull,seam,3,6,.0028f,(Color){30,41,48,255},2);
+        }
+        Vector3 rootPin[2]={{side*.285f,.085f,.24f},{side*.285f,.085f,-.70f}};
+        tube(hull,rootPin,2,8,.038f,(Color){128,145,155,255},3);
+        Vector3 flapPin[2]={{side*.72f,.13f,-1.08f},{side*1.12f,.13f,-1.08f}};
+        tube(hull,flapPin,2,8,.022f,(Color){159,167,164,255},3);
+        Vector3 finPin[2]={{side*1.01f,.10f,-.90f},{side*1.01f,.10f,-1.32f}};
+        tube(hull,finPin,2,8,.025f,(Color){132,145,153,255},3);
+        tag_part(hull,first,(float)side);
+        first=hull->vcount;
+        Vector3 flap[4]={{side*.73f,.13f,-1.09f},{side*1.10f,.13f,-1.09f},
+            {side*1.00f,.13f,-1.47f},{side*.72f,.13f,-1.35f}};
+        plate(hull,flap,(Vector3){0,.035f,0},(Color){195,207,216,255});
+        for(int k=0;k<3;k++)fastener(hull,side*(.77f+k*.10f),.140f,-1.17f);
+        Vector3 actuator[2]={{side*.82f,.147f,-1.10f},{side*.82f,.148f,-1.29f}};
+        tube(hull,actuator,2,8,.014f,(Color){172,155,115,255},3);
+        tag_part(hull,first,side*3.0f);
+        first=hull->vcount;
+        Vector3 winglet[4]={{side*.94f,.10f,-.88f},{side*1.05f,.52f,-1.15f},
+            {side*1.08f,.50f,-1.32f},{side*.94f,.10f,-1.32f}};
+        plate(hull,winglet,(Vector3){side*.035f,0,0},(Color){133,162,182,255});
+        // Recessed hinge cover and a solid metallic spine on each winglet.
+        Vector3 finSpine[3]={{side*.958f,.15f,-1.23f},{side*1.021f,.35f,-1.23f},{side*1.06f,.48f,-1.23f}};
+        tube(hull,finSpine,3,6,.012f,(Color){73,94,109,255},3);
+        tag_part(hull,first,side*2.0f);
         for(int k=0;k<7;k++) {
             float z=-.21f-k*.12f;
             face(hull,(Vector3){side*.36f,.185f,z},(Vector3){side*.60f,.185f,z-.015f},(Vector3){side*.60f,.19f,z-.05f},(Vector3){side*.36f,.19f,z-.045f},(Vector3){0,1,0},(Color){24,38,49,255},0);
@@ -179,10 +233,9 @@ void shipmodel_build(LineGeo *hull, LineGeo *lights, float engineIntensity)
             face(hull,p,q,Vector3Add(q,(Vector3){side*.018f,.009f,0}),Vector3Add(p,(Vector3){side*.018f,.009f,0}),
                 (Vector3){side,1,0},(Color){63,72,82,255},2);
         }
-        lg_fill_tri(hull,(Vector3){side*1.0f,.07f,-.90f},(Vector3){side*1.13f,.44f,-1.22f},(Vector3){side*.82f,.12f,-1.23f},(Vector3){side,0,0},(LineAttr){.color={86,115,134,255},.intensity=1});
-        LineAttr strip={.color={69,220,245,255},.intensity=.85f,.group=-1};
+        LineAttr strip={.color={69,220,245,255},.intensity=.85f,.group=-1,.anim=(float)side};
         lg_facing_segment(lights,(Vector3){side*.40f,.12f,.49f},(Vector3){side*1.16f,.13f,-.87f},.016f,.016f,.85f,.85f,strip);
-        LineAttr nav={.color=side<0?(Color){255,86,70,255}:(Color){110,235,183,255},.intensity=1.5f,.group=-1};
+        LineAttr nav={.color=side<0?(Color){255,86,70,255}:(Color){110,235,183,255},.intensity=1.5f,.group=-1,.anim=(float)side};
         lg_facing_segment(lights,(Vector3){side*1.4f,.08f,-.65f},(Vector3){side*1.32f,.09f,-.80f},.025f,.025f,1.5f,1.5f,nav);
     }
     // Recessed aft service bulkhead replaces the bright flat tail cap.

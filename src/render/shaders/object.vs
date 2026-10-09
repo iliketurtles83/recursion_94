@@ -9,10 +9,12 @@ in vec4 vertexColor;
 uniform mat4 matModel;
 uniform mat4 matView;
 uniform mat4 matProjection;
+uniform int uShipPose;
 uniform vec4 uObjA[16];     // center (chunk-local), size
 uniform vec4 uObjB[16];     // axis, angular speed
 uniform vec4 uObjC[16];     // phase, unused...
 #include "common.glsl"
+#include "ship_articulation.glsl"
 out vec2 fUV;
 out vec3 fColor;
 out float fIntensity;
@@ -21,6 +23,10 @@ out float fHash;
 void main()
 {
     vec3 a = vertexPosition, b = vertexNormal;
+    vec3 unused=vec3(0,1,0);
+    // Only ship lights opt in. Scene objects and world-space exhaust trails
+    // always receive uShipPose=0, so their animation attributes remain intact.
+    if(uShipPose>0){ship_pose(a,unused,vertexTexCoord2.y);ship_pose(b,unused,vertexTexCoord2.y);}
     if (vertexTexCoord2.x > -0.5) {
         int g = int(vertexTexCoord2.x + 0.5);
         float ang = uObjC[g].x + uObjB[g].w * uTime;

@@ -59,6 +59,7 @@ struct CtTunnel {
     int            shShip, shLine, shAfterburner;
     Material       mat;
     Texture2D      shipSkin;
+    float          shipDamage;
     Mesh           shipHull, shipEdges, shipNozzles, shipFlames, trailMesh;
     LineGeo        shipHullGeo, shipEdgesGeo, shipNozzleGeo, shipFlameGeo, trailGeo;
 

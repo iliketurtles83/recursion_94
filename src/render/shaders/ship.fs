@@ -5,7 +5,7 @@ out vec4 finalColor;
 uniform sampler2D texture0;
 uniform int uHasSkin;
 uniform vec3 uKeyDir,uFillDir,uRimColor;
-uniform float uTime,uBoost;
+uniform float uTime,uBoost,uDamage;
 const float PI=3.14159265;
 vec3 fresnel(float c,vec3 f0){return f0+(1.0-f0)*pow(1.0-c,5.0);}
 vec3 sky(vec3 r){
@@ -30,6 +30,16 @@ vec3 lighting(vec3 n,vec3 v,vec3 l,vec3 base,vec3 f0,float metal,float rough){
     vec3 f=fresnel(vh,f0),spec=distribution*visibility*f/max(4*nv*nl,.001);
     return ((1-f)*(1-metal)*base/PI+spec)*nl;
 }
+float scar(vec2 center,vec2 radius){
+    vec2 p=(fLocal.xz-center)/radius;
+    float grain=sin(p.x*17+p.y*13)*sin(p.y*21-p.x*8)*.09;
+    return 1-smoothstep(.55,1.1,length(p)+grain);
+}
+float crack(vec2 p,vec2 a,vec2 b){
+    vec2 d=b-a;float t=clamp(dot(p-a,d)/dot(d,d),0,1);
+    float dist=length(p-a-d*t),aa=max(fwidth(dist),.0008);
+    return 1-smoothstep(.0012,.0024+aa,dist);
+}
 void main(){
     vec3 n=normalize(fNormal),v=normalize(fView);
     if(dot(n,v)<0)n=-n;
@@ -48,6 +58,28 @@ void main(){
         vec3 gradient=sign(det)*(dFdx(height)*r1+dFdy(height)*r2);
         n=normalize(max(abs(det),.0000001)*n-gradient);
     } else base=fColor*.48;
+    float stage1=clamp(uDamage*2,0,1),stage2=clamp(uDamage*2-1,0,1);
+    float scorch=max(scar(vec2(-.83,-.60),vec2(.50,.58))*stage1,
+        scar(vec2(.94,-.85),vec2(.48,.48))*stage2);
+    scorch=max(scorch,scar(vec2(.04,.80),vec2(.22,.50))*(stage1*.35+stage2*.65));
+    scorch=max(scorch,scar(vec2(-.05,-.67),vec2(.26,.48))*(stage1*.75+stage2*.25));
+    scorch*=smoothstep(-.04,.12,fLocal.y);
+    float fracture=0;
+    if(glass){
+        vec2 p=fLocal.xz,impact=vec2(-.07,.28);
+        fracture=max(crack(p,impact,vec2(-.19,.61)),crack(p,impact,vec2(.19,.08)));
+        fracture=max(fracture,crack(p,vec2(-.13,.46),vec2(.03,.71)));
+        fracture=max(fracture,crack(p,impact,vec2(-.14,-.15)));
+        fracture=max(fracture,crack(p,vec2(.05,.18),vec2(.17,.43)))*stage1;
+        fracture=max(fracture,max(crack(p,vec2(-.09,-.72),vec2(.06,-.36)),crack(p,vec2(-.04,-.60),vec2(.13,-.70)))*stage1);
+        fracture=max(fracture,max(crack(p,vec2(.12,.60),vec2(-.19,-.08)),crack(p,vec2(.12,.60),vec2(-.05,.81)))*stage2);
+        base=mix(base,vec3(.25,.31,.34),fracture*.75);rough+=fracture*.5+uDamage*.12;
+    }else{
+        float chipped=1-smoothstep(.10,.22,shade);
+        base=mix(base,vec3(.018,.014,.011),scorch*.92);
+        base=mix(base,vec3(.30,.29,.25),scorch*chipped*.55);
+        rough=mix(rough,.79,scorch);metal=mix(metal,.35,scorch);
+    }
     if(heatShield){
         float temper=.5+.5*sin(fLocal.z*24.0+atan(fLocal.y+.05,abs(fLocal.x)-.48)*2.0);
         base*=mix(vec3(1.0),mix(vec3(.78,.64,.51),vec3(.46,.55,.68),temper),.35);
@@ -61,6 +93,11 @@ void main(){
     vec3 reflection=sky(reflect(-v,n)),f=fresnel(max(dot(n,v),0),f0);
     col+=base*vec3(.20,.28,.35)*(1-metal*.75)+reflection*f*(glass?1.8:1.1);
     if(glass)col+=vec3(.008,.022,.026);
+    if(!glass)col*=1-.65*scorch;
+    col+=vec3(.34,.42,.44)*fracture;
+    // A few dim hot tears in critically damaged plating, without broad bloom.
+    float tear=1-smoothstep(.001,.005+fwidth(fLocal.z),abs(fLocal.z+.67+.08*sin(fLocal.x*13)));
+    col+=vec3(.40,.055,.004)*tear*scorch*stage2;
     col+=uRimColor*pow(1-max(dot(n,v),0),4.0)*.035;
     // Exhaust illuminates the aft hardware locally instead of tinting the hull.
     float left=exp(-length(fLocal-vec3(-.48,-.05,-1.78))*7.0),right=exp(-length(fLocal-vec3(.48,-.05,-1.78))*7.0);

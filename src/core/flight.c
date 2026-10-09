@@ -129,6 +129,9 @@ void flight_step(FlightState *st, const FlightParams *p, const PathSystem *path,
     PathSample ps = path_sample(path, st->s);
     float limit = p->steerLimit * (float)ps.radius;
     float fdt = (float)dt;
+    float servo = 1.0f - expf(-12.0f * fdt);
+    st->controlX += (clampf(sx,-1,1) - st->controlX) * servo;
+    st->controlY += (clampf(sy,-1,1) - st->controlY) * servo;
     st->vx += (sx * p->steerAccel - st->vx * p->steerDamping) * fdt;
     st->vy += (sy * p->steerAccel - st->vy * p->steerDamping) * fdt;
     st->x += st->vx * fdt;
@@ -218,5 +221,7 @@ FlightView flight_interpolate(const FlightState *a, const FlightState *b, float 
     v.fov = a->fov + (b->fov - a->fov) * alpha;
     v.s = a->s + (b->s - a->s) * alpha;
     v.speed = a->speed + (b->speed - a->speed) * alpha;
+    v.controlX = a->controlX + (b->controlX-a->controlX)*alpha;
+    v.controlY = a->controlY + (b->controlY-a->controlY)*alpha;
     return v;
 }

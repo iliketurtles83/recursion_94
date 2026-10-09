@@ -38,6 +38,7 @@ typedef struct FlightState {
     float  speed;
     float  x, y, vx, vy;     // cross-section offset (right, up) and velocity
     float  bank, tilt;       // radians
+    float  controlX, controlY; // damped steering command for articulated surfaces
     float  barrel;           // extra roll from barrel roll (radians)
     float  barrelT;          // 0..1 progress, <0 idle
     int    barrelDir;
@@ -61,6 +62,7 @@ typedef struct FlightView {
     float fov;
     double s;
     float speed;
+    float controlX, controlY;
 } FlightView;
 
 void flight_register_params(FlightParams *p, ParamRegistry *reg);

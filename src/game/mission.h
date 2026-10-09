@@ -13,7 +13,8 @@
 typedef enum MissionPhase { MISSION_TITLE, MISSION_COUNTDOWN, MISSION_RUNNING, MISSION_WARP, MISSION_LOST } MissionPhase;
 typedef enum EventKind {
     EVENT_PACKET, EVENT_DRONE, EVENT_SWEEPER, EVENT_MINE, EVENT_BARRIER,
-    EVENT_ORBITER, EVENT_SHUTTER, EVENT_INTERCEPTOR, EVENT_ROTOR, EVENT_PULSAR, EVENT_SPLITTER
+    EVENT_ORBITER, EVENT_SHUTTER, EVENT_INTERCEPTOR, EVENT_ROTOR, EVENT_PULSAR, EVENT_SPLITTER,
+    EVENT_REPAIR
 } EventKind;
 typedef struct MissionEvent {
     double s;
@@ -32,7 +33,7 @@ typedef struct Mission {
     uint64_t seed;
     float elapsed, countdown, immunity, warpRemaining, duration, cruiseSpeed, boostSpeed, difficulty;
     MissionSample previous;
-    int justCollected, justHit, justNear;
+    int justCollected, justHit, justNear, justRepaired;
     const char *failure;
 } Mission;
 
@@ -44,6 +45,7 @@ uint64_t mission_route_seed(const Mission *m);
 float mission_theme_hue(int number);
 const char *mission_enemy_name(EventKind kind);
 bool mission_event_opening(const MissionEvent *e);
+bool mission_event_pickup(const MissionEvent *e);
 float mission_event_angle(const MissionEvent *e, float time);
 float mission_event_radius(const MissionEvent *e, float time);
 void mission_event_split(const MissionEvent *e, float time, int side, float *x, float *y);

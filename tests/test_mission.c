@@ -7,6 +7,7 @@ static int checks,failures;
 #define CHECK(x) do{checks++;if(!(x)){failures++;printf("FAIL line %d: %s\n",__LINE__,#x);}}while(0)
 static Mission running(void) {Mission m;mission_reset(&m,42);mission_start(&m);mission_tick(&m,MISSION_COUNTDOWN_SECONDS,(MissionSample){0},false);return m;}
 static void one_event(Mission *m,MissionEvent e) {m->eventCount=1;m->events[0]=e;}
+static int hazards(const Mission *m){int n=0;for(int i=0;i<m->eventCount;i++)if(!mission_event_pickup(&m->events[i]))n++;return n;}
 static void test_continuous_boost(bool pickups)
 {
     // Use real flight physics and the authored gate spacing. Put gates on the
@@ -40,13 +41,14 @@ static void test_endless(void)
     Mission m;mission_reset(&m,83);int64_t total=5000000000ll;
     for(int number=1;number<=32;number++) {
         CHECK(m.number==number&&m.enemyKinds==mission_enemy_count(number));
-        int kinds[11]={0};
+        int kinds[12]={0};
         CHECK(m.eventCount<MISSION_EVENTS);
         for(int i=0;i<m.eventCount;i++) {
-            MissionEvent *e=&m.events[i];CHECK((int)e->kind<=m.enemyKinds);kinds[e->kind]++;
+            MissionEvent *e=&m.events[i];CHECK((int)e->kind<=m.enemyKinds||e->kind==EVENT_REPAIR);kinds[e->kind]++;
             if(i)CHECK(e->s>m.events[i-1].s);
         }
         CHECK(kinds[0]==m.packetCount);
+        CHECK(kinds[EVENT_REPAIR]<=1);
         for(int kind=1;kind<=m.enemyKinds;kind++)CHECK(kinds[kind]>0);
         if(number>5)CHECK(m.boostSpeed>65&&m.packetCount>25&&m.duration<90);
         uint64_t route=mission_route_seed(&m);float hue=mission_theme_hue(number);
@@ -103,23 +105,65 @@ static void test_difficulty(void)
             if(e->kind==EVENT_PACKET)CHECK(e->radius>=1.44f);
         }
         if(number==10||number==11||number==20||number==21)
-            printf("difficulty M%d: %.2fx, %.1f m/s boost, %d hazards, %d/%d data, %.1f s deadline\n",number,m.difficulty,m.boostSpeed,m.eventCount-m.packetCount,m.required,m.packetCount,m.duration);
+            printf("difficulty M%d: %.2fx, %.1f m/s boost, %d hazards, %d/%d data, %.1f s deadline\n",number,m.difficulty,m.boostSpeed,hazards(&m),m.required,m.packetCount,m.duration);
         previous=m;
     }
     Mission a,b;mission_reset_at(&a,83,10);mission_reset_at(&b,83,11);
-    CHECK(b.eventCount-b.packetCount>a.eventCount-a.packetCount);
+    CHECK(hazards(&b)>hazards(&a));
     mission_reset_at(&a,83,20);mission_reset_at(&b,83,21);
-    CHECK(b.eventCount-b.packetCount>a.eventCount-a.packetCount);
+    CHECK(hazards(&b)>hazards(&a));
     mission_reset_at(&b,83,10000);
     CHECK(isfinite(b.difficulty)&&b.required==30&&b.packetCount==40&&b.eventCount<MISSION_EVENTS);
     // Damage recovery at the very-hard milestone changes at the collision time.
     b.phase=MISSION_RUNNING;one_event(&b,(MissionEvent){.s=10,.kind=EVENT_DRONE,.radius=1});
     mission_tick(&b,.1f,(MissionSample){10},true);CHECK(fabsf(b.immunity-.9f)<.001f&&b.shield==2);
 }
+static void test_repairs(void)
+{
+    int spawned=0,exampleSeed=-1;
+    for(int seed=0;seed<1024;seed++)for(int level=1;level<=21;level+=20) {
+        Mission m;mission_reset_at(&m,(uint64_t)seed,level);int kits=0;
+        for(int i=0;i<m.eventCount;i++)if(m.events[i].kind==EVENT_REPAIR){
+            kits++;spawned++;if(exampleSeed<0)exampleSeed=seed;
+            CHECK(!mission_event_danger(&m.events[i],0,0,0,100));
+            CHECK(m.events[i].s>500&&m.events[i].s<2800);
+            CHECK(i>0&&m.events[i-1].kind==EVENT_PACKET);
+            CHECK(fabsf(m.events[i].x-m.events[i-1].x)<.001f);
+        }
+        CHECK(kits<=1);
+    }
+    CHECK(spawned>180&&spawned<330); // 8.8..16.1%, around the intended 12.5%.
+    printf("repair rarity: %d of 2048 missions; example seed %d\n",spawned,exampleSeed);
+    Mission m=running();m.shield=1;m.combo=4;m.score=12345;m.immunity=.9f;
+    one_event(&m,(MissionEvent){.s=10,.radius=1.35f,.kind=EVENT_REPAIR});
+    mission_tick(&m,.1f,(MissionSample){20},true);
+    CHECK(m.shield==2&&m.justRepaired==1&&m.events[0].collected&&m.phase==MISSION_RUNNING);
+    CHECK(m.score==12345&&m.combo==4&&m.packets==0&&m.misses==0&&m.justHit==0&&m.justNear==0);
+    CHECK(fabsf(m.immunity-.8f)<.001f&&mission_can_boost(&m));
+    mission_tick(&m,.1f,(MissionSample){30},true);CHECK(m.shield==2&&m.justRepaired==0);
+    m=running();one_event(&m,(MissionEvent){.s=10,.radius=1.35f,.kind=EVENT_REPAIR});
+    mission_tick(&m,.1f,(MissionSample){20},false);CHECK(m.shield==3&&m.justRepaired==0&&m.events[0].collected);
+    m=running();m.shield=1;m.combo=4;one_event(&m,(MissionEvent){.s=10,.x=4,.radius=1.35f,.kind=EVENT_REPAIR});
+    mission_tick(&m,.1f,(MissionSample){20},false);CHECK(m.shield==1&&m.combo==4&&m.misses==0&&m.nearMisses==0&&!m.events[0].collected);
+    // Swept pickups use crossing position, not the end of a long frame.
+    m=running();m.shield=1;one_event(&m,(MissionEvent){.s=10,.radius=1.35f,.kind=EVENT_REPAIR});
+    m.previous=(MissionSample){0,-3,0};mission_tick(&m,1,(MissionSample){20,3,0},false);
+    CHECK(m.shield==2&&m.justRepaired==1);
+    // A kit cannot revive a ship disabled earlier in the same large frame.
+    m=running();m.shield=1;m.eventCount=2;
+    m.events[0]=(MissionEvent){.s=10,.radius=1,.kind=EVENT_DRONE};
+    m.events[1]=(MissionEvent){.s=20,.radius=1.35f,.kind=EVENT_REPAIR};
+    mission_tick(&m,1,(MissionSample){30},false);CHECK(m.shield==0&&m.phase==MISSION_LOST&&m.justRepaired==0);
+    // The chronological reverse really does absorb the next hit.
+    m=running();m.shield=1;m.eventCount=2;
+    m.events[0]=(MissionEvent){.s=10,.radius=1.35f,.kind=EVENT_REPAIR};
+    m.events[1]=(MissionEvent){.s=20,.radius=1,.kind=EVENT_DRONE};
+    mission_tick(&m,1,(MissionSample){30},false);CHECK(m.shield==1&&m.phase==MISSION_RUNNING&&m.justRepaired==1&&m.justHit==1);
+}
 int main(void)
 {
     Mission m,n;mission_reset(&m,42);mission_reset(&n,42);
-    CHECK(m.eventCount==47 && m.shield==3 && m.phase==MISSION_TITLE);
+    CHECK((m.eventCount==47||m.eventCount==48) && m.shield==3 && m.phase==MISSION_TITLE);
     CHECK(memcmp(m.events,n.events,sizeof(m.events))==0);
     mission_reset(&n,43);CHECK(memcmp(m.events,n.events,sizeof(m.events))!=0);
     for(int i=1;i<m.eventCount;i++) CHECK(m.events[i].s>m.events[i-1].s);
@@ -174,10 +218,11 @@ int main(void)
     CHECK(m.shield==3 && m.justNear==1 && !m.events[0].hit);
     m=running();one_event(&m,(MissionEvent){.s=10,.x=2,.y=-1,.radius=2.65f,.kind=EVENT_BARRIER});
     mission_tick(&m,1,(MissionSample){20,-4,2},false);CHECK(m.shield==2 && m.events[0].hit);
-    mission_reset(&m,42);int kinds[11]={0};
+    mission_reset(&m,42);int kinds[12]={0};
     for(int i=0;i<m.eventCount;i++){kinds[m.events[i].kind]++;CHECK(fabsf(m.events[i].x)<4&&fabsf(m.events[i].y)<3);}
     CHECK(kinds[0]==25 && kinds[1]>0 && kinds[2]>0 && kinds[3]==0 && kinds[4]==0);
     test_endless();
     test_difficulty();
+    test_repairs();
     printf("mission: %d checks, %d failures\n",checks,failures);return failures?1:0;
 }

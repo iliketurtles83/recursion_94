@@ -24,6 +24,8 @@ extern "C" {
 #endif
 
 typedef struct CtTunnel CtTunnel;
+// Cosmetic damage: 0 = intact; 1 = critical. Does not alter flight physics.
+void ct_set_ship_damage(CtTunnel *ct, float damage);
 
 // Optional game content is drawn into the HDR scene, with the camera already bound.
 typedef struct CtSceneView {
