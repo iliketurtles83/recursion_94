@@ -44,6 +44,7 @@ const char *ct_environment_name(int id)
     case ENV_TEMPLATE: return "Template";
     case ENV_CITY: return "Neon Grid City";
     case ENV_CORRIDOR: return "Server Corridor";
+    case ENV_GREYBOX: return "Greybox";
     }
     return "?";
 }
@@ -63,6 +64,7 @@ static void register_core_params(CtTunnel *ct)
     params_int(reg, g, "buildBudget", &c->buildBudget, 1, 1, 8);
     params_int(reg, g, "uploadBudget", &c->uploadBudget, 1, 1, 8);
     params_bool(reg, g, "showShip", &c->showShip, true);
+    params_bool(reg, g, "shipDart", &ct->fp.dartShip, false);   // original placeholder dart instead of the courier
     params_bool(reg, g, "showPathDebug", &c->showPathDebug, false);
     params_float(reg, g, "rebaseDist", &c->rebaseDist, (float)CT_REBASE_DIST, 1.0f, 100000.0f);
     params_float(reg, g, "engineIntensity", &c->engineIntensity, 10.0f, 0.0f, 40.0f);
@@ -102,6 +104,44 @@ static void upload_static(Mesh *m, LineGeo *g, bool dynamic)
     *m = lg_upload_mesh(g, 0, dynamic);
 }
 
+// The original placeholder dart (shipDart): flat dark hull, cyan edges, two engine glows.
+static void build_dart(CtTunnel *ct)
+{
+    // Ship local: x right, y up, z forward.
+    Vector3 nose = { 0.0f, 0.0f, 0.95f };
+    Vector3 tl = { -0.62f, -0.02f, -0.5f }, tr = { 0.62f, -0.02f, -0.5f };
+    Vector3 ridge = { 0.0f, 0.17f, -0.38f }, belly = { 0.0f, -0.1f, -0.4f };
+    Vector3 back = { 0.0f, 0.04f, -0.62f };
+    Color hull = { 0x10, 0x16, 0x24, 255 };
+    LineAttr fa = { hull, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f };
+    LineGeo g = { 0 };
+    Vector3 tris[8][3] = {
+        { nose, ridge, tl }, { nose, tr, ridge }, { nose, tl, belly }, { nose, belly, tr },
+        { tl, ridge, back }, { ridge, tr, back }, { tl, back, belly }, { back, tr, belly },
+    };
+    for (int i = 0; i < 8; i++) {
+        Vector3 n = Vector3Normalize(Vector3CrossProduct(Vector3Subtract(tris[i][1], tris[i][0]), Vector3Subtract(tris[i][2], tris[i][0])));
+        lg_fill_tri(&g, tris[i][0], tris[i][1], tris[i][2], n, fa);
+    }
+    upload_static(&ct->dartHull, &g, false);
+
+    lg_clear(&g);
+    LineAttr ea = { (Color){ 0x4F, 0xEA, 0xF5, 255 }, 2.5f, 0.0f, 0.0f, -1.0f, 0.0f };
+    Vector3 edges[][2] = { { nose, tl }, { nose, tr }, { nose, ridge }, { tl, back }, { tr, back }, { ridge, back } };
+    for (int i = 0; i < 6; i++) lg_facing_segment(&g, edges[i][0], edges[i][1], 0.012f, 0.012f, ea.intensity, ea.intensity, ea);
+    Vector3 eng[2];
+    flight_engine_offsets(true, eng);
+    // Engine glow intensity is baked at build time (engineIntensity).
+    float gi = ct->core.engineIntensity;
+    LineAttr ga = { (Color){ 0xE8, 0xFB, 0xFF, 255 }, gi, 0.0f, 0.0f, -1.0f, 0.0f };
+    for (int i = 0; i < 2; i++) {
+        Vector3 a = eng[i], b = { eng[i].x, eng[i].y, eng[i].z - 0.08f };
+        lg_facing_segment(&g, a, b, 0.09f, 0.09f, gi, gi, ga);
+    }
+    upload_static(&ct->dartEdges, &g, false);
+    lg_free(&g);
+}
+
 static void build_ship(CtTunnel *ct)
 {
     char textureFile[1024];
@@ -123,6 +163,7 @@ static void build_ship(CtTunnel *ct)
     upload_static(&ct->shipNozzles,&ct->shipNozzleGeo,true);
     shipmodel_flames(&ct->shipFlameGeo);
     upload_static(&ct->shipFlames,&ct->shipFlameGeo,false);
+    build_dart(ct);
 
     // Trail mesh: fixed capacity, rewritten each frame.
     LineGeo *t = &ct->trailGeo;
@@ -161,7 +202,8 @@ static void update_trail_mesh(CtTunnel *ct)
     Vector3 eng[2];
     const FlightView *v = &ct->view;
     float boost=flight_speed_norm(&ct->fp,v->speed);
-    for(int e=0;e<2;e++)eng[e]=flight_exhaust_offset(e,v->gimbal[e],.48f+2.6f*boost);
+    if (ct->fp.dartShip) flight_engine_offsets(true, eng);
+    else for(int e=0;e<2;e++)eng[e]=flight_exhaust_offset(e,v->gimbal[e],.48f+2.6f*boost);
     float w0 = ct->core.trailWidth*(1+.8f*boost), i0 = ct->core.trailIntensity*(.5f+.5f*boost);
     for (int e = 0; e < 2; e++) {
         DVec3 head = dv_add(v->shipPos, dv_add(dv_add(dv_scale(v->shipRight, eng[e].x), dv_scale(v->shipUp, eng[e].y)), dv_scale(v->shipFwd, eng[e].z)));
@@ -170,8 +212,10 @@ static void update_trail_mesh(CtTunnel *ct)
         for (int k = 0; k < FLIGHT_TRAIL_LEN; k++) {
             // The head uses the interpolated flame tip. Start history one
             // physics step earlier so the wake never folds forward into it.
-            if (k < st->trailCount-1) {
-                int idx = (st->trailHead - 2 - k + 2 * FLIGHT_TRAIL_LEN) % FLIGHT_TRAIL_LEN;
+            // The dart's engines are fixed, so its trail starts at the newest sample.
+            int skip = ct->fp.dartShip ? 0 : 1;
+            if (k < st->trailCount - skip) {
+                int idx = (st->trailHead - 1 - skip - k + 2 * FLIGHT_TRAIL_LEN) % FLIGHT_TRAIL_LEN;
                 Vector3 p = dv_to_v3(dv_sub(st->trail[e][idx], ct->renderOrigin));
                 float tk = (float)(k + 1) / (float)FLIGHT_TRAIL_LEN;
                 float fa = 1.0f - tPrev, fb = 1.0f - tk;
@@ -204,6 +248,13 @@ static void draw_ship_opaque(CtTunnel *ct, const FrameContext *ctx)
 {
     const FlightView *v = &ct->view;
     Matrix xf = basis_matrix(dv_to_v3(v->shipRight), dv_to_v3(v->shipUp), dv_to_v3(v->shipFwd), dv_to_v3(dv_sub(v->shipPos, ct->renderOrigin)));
+    if (ct->fp.dartShip) {
+        sl_v3(&ct->sl, ct->shShipDart, "uCamPos", ctx->camera.position);
+        sl_f3(&ct->sl, ct->shShipDart, "uRimColor", 0.25f, 0.85f, 1.0f);
+        sl_v3(&ct->sl, ct->shShipDart, "uFillDir", Vector3Negate(dv_to_v3(v->shipFwd)));
+        draw_mesh(ct, ct->shShipDart, ct->dartHull, xf);
+        return;
+    }
     sl_v3(&ct->sl, ct->shShip, "uCamPos", ctx->camera.position);
     sl_f3(&ct->sl, ct->shShip, "uRimColor", 0.25f, 0.85f, 1.0f);
     sl_v3(&ct->sl, ct->shShip, "uFillDir", Vector3Negate(dv_to_v3(v->shipFwd)));
@@ -235,17 +286,20 @@ static void draw_ship_emissive(CtTunnel *ct, const FrameContext *ctx)
     // The ship is always close: disable distance fades.
     sl_f4(sl, sh, "uFade", 1e6f, 2e6f, 0.0f, 0.001f);
     sl_f1(sl, sh, "uChunkFade", 1.0f);
-    sl_i1(sl,sh,"uShipPose",1);
-    sl_f2(sl,sh,"uSteer",v->controlX,v->controlY);
-    draw_mesh(ct, sh, ct->shipEdges, xf);
-    sl_i1(sl,sh,"uShipPose",0);
-    sl_f1(sl,ct->shAfterburner,"uTime",ctx->shaderTime);
-    sl_v3(sl,ct->shAfterburner,"uCamPos",ctx->camera.position);
-    sl_f1(sl,ct->shAfterburner,"uBoost",ctx->speedNorm);
-    sl_f1(sl,ct->shAfterburner,"uPower",fminf(ct->core.engineIntensity*.22f,2.0f));
-    sl_f2(sl,ct->shAfterburner,"uGimbalLeft",v->gimbal[0].x,v->gimbal[0].y);
-    sl_f2(sl,ct->shAfterburner,"uGimbalRight",v->gimbal[1].x,v->gimbal[1].y);
-    draw_mesh(ct,ct->shAfterburner,ct->shipFlames,xf);
+    if (ct->fp.dartShip) draw_mesh(ct, sh, ct->dartEdges, xf);
+    else {
+        sl_i1(sl,sh,"uShipPose",1);
+        sl_f2(sl,sh,"uSteer",v->controlX,v->controlY);
+        draw_mesh(ct, sh, ct->shipEdges, xf);
+        sl_i1(sl,sh,"uShipPose",0);
+        sl_f1(sl,ct->shAfterburner,"uTime",ctx->shaderTime);
+        sl_v3(sl,ct->shAfterburner,"uCamPos",ctx->camera.position);
+        sl_f1(sl,ct->shAfterburner,"uBoost",ctx->speedNorm);
+        sl_f1(sl,ct->shAfterburner,"uPower",fminf(ct->core.engineIntensity*.22f,2.0f));
+        sl_f2(sl,ct->shAfterburner,"uGimbalLeft",v->gimbal[0].x,v->gimbal[0].y);
+        sl_f2(sl,ct->shAfterburner,"uGimbalRight",v->gimbal[1].x,v->gimbal[1].y);
+        draw_mesh(ct,ct->shAfterburner,ct->shipFlames,xf);
+    }
     Vector3 mag = ct_srgb_to_linear((Color){ 0x65, 0xCE, 0xF5, 255 });
     sl_v3(sl, sh, "uEdgeColor", mag);
     sl_f1(sl, sh, "uEdgeMix", 1.0f);
@@ -313,6 +367,7 @@ CtTunnel *ct_create(const CtConfig *cfg)
     ct->envs[ENV_TEMPLATE] = env_template_create();
     ct->envs[ENV_CITY] = env_city_create();
     ct->envs[ENV_CORRIDOR] = env_corridor_create();
+    ct->envs[ENV_GREYBOX] = env_greybox_create();
     ct->envId = (cfg->environment >= 0 && cfg->environment < ENV_COUNT) ? cfg->environment : ENV_VORTEX;
     ct->env = &ct->envs[ct->envId];
     register_env_params(ct);
@@ -328,6 +383,7 @@ CtTunnel *ct_create(const CtConfig *cfg)
 
     pipe_init(&ct->pipe, &ct->sl, cfg->width, cfg->height, cfg->hdr16, ct->post.bloomQuarterRes);
     ct->shShip = sl_load(&ct->sl, "ship.vs", "ship.fs");
+    ct->shShipDart = sl_load(&ct->sl, "ship.vs", "ship_dart.fs");
     ct->shAfterburner = sl_load(&ct->sl,"afterburner.vs","afterburner.fs");
     ct->shLine = sl_load(&ct->sl, "object.vs", "line_facing.fs");
     ct->mat = LoadMaterialDefault();
@@ -349,6 +405,8 @@ void ct_destroy(CtTunnel *ct)
     lg_unload_mesh(ct->shipEdges);
     lg_unload_mesh(ct->shipNozzles);
     lg_unload_mesh(ct->shipFlames);
+    lg_unload_mesh(ct->dartHull);
+    lg_unload_mesh(ct->dartEdges);
     lg_unload_mesh(ct->trailMesh);
     lg_free(&ct->shipHullGeo);
     lg_free(&ct->shipEdgesGeo);
@@ -641,7 +699,7 @@ void ct_render(CtTunnel *ct, const RenderTexture2D *target, int width, int heigh
     const ChunkGpu *const *vis = chunks_visible(&ct->chunks, &nvis);
 
     bool ship = ct->cfg.drawShip && ct->core.showShip;
-    if (ship) {update_trail_mesh(ct);update_nozzles(ct);}
+    if (ship) {update_trail_mesh(ct);if(!ct->fp.dartShip)update_nozzles(ct);}
     render_reflection(ct, vis, nvis, ship);
 
     pipe_begin_scene(&ct->pipe, c->view, c->proj, (Color){ 3, 6, 12, 255 });

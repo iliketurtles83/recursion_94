@@ -38,7 +38,7 @@ typedef struct CtSceneView {
 typedef void (*CtSceneDrawFn)(void *user, const CtSceneView *view, bool emissive);
 void ct_set_scene_draw(CtTunnel *ct, CtSceneDrawFn draw, void *user);
 
-enum { CT_ENV_VORTEX = 0, CT_ENV_TEMPLATE = 1, CT_ENV_CITY = 2, CT_ENV_CORRIDOR = 3 };
+enum { CT_ENV_VORTEX = 0, CT_ENV_TEMPLATE = 1, CT_ENV_CITY = 2, CT_ENV_CORRIDOR = 3, CT_ENV_GREYBOX = 4 };
 
 typedef struct CtConfig {
     uint64_t    seed;

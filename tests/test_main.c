@@ -612,6 +612,51 @@ static void test_city_decor(void)
 }
 
 // Environment #3 (server corridor): level path, world-up frames, heading close to a grid axis.
+static void test_greybox(void)
+{
+    Environment env = env_greybox_create();
+    ParamRegistry reg;
+    params_clear(&reg);
+    env.registerParams(&env, &reg);
+    env.init(&env, 7, NULL);
+
+    // Same path style as the vortex defaults, so the same seed flies the same course.
+    Environment vx = env_vortex_create();
+    ParamRegistry vreg;
+    params_clear(&vreg);
+    vx.registerParams(&vx, &vreg);
+    PathStyle a = env.pathStyle(&env), b = vx.pathStyle(&vx);
+    bool same = a.baseRadius == b.baseRadius && a.radiusNoiseAmp == b.radiusNoiseAmp && a.radiusNoiseScale == b.radiusNoiseScale
+             && a.maxYawStepDeg == b.maxYawStepDeg && a.maxPitchDeg == b.maxPitchDeg && a.pitchSpring == b.pitchSpring
+             && a.twistRateMax == b.twistRateMax && a.hasWalls == b.hasWalls && a.floorDepth == b.floorDepth
+             && a.ceilingHeight == b.ceilingHeight && a.yawSpring == b.yawSpring && a.yawAxisDeg == b.yawAxisDeg;
+    CHECK(same, "greybox path style equals the vortex default");
+    vx.unload(&vx);
+
+    enum { N = 60 };
+    uint64_t h[N];
+    CHECK(build_order_independent(&env, 7, N, h), "greybox chunk build independent of order (%d chunks)", N);
+
+    // One ring per 10 m with no duplicates at chunk boundaries: count ring circles (72 segments
+    // each) over 20 chunks; the rails add a fixed number of segments per chunk.
+    PathSystem p;
+    path_init(&p, 7, a);
+    static ChunkCpu c;
+    int segs = 0;
+    for (int k = 0; k < 20; k++) {
+        path_ensure(&p, k * CHUNK_LEN - 100.0, (k + 1) * CHUNK_LEN + 100.0);
+        chunk_cpu_begin(&c, &p, k);
+        env.buildChunk(&env, &p, k, &c);
+        segs += c.geo[0].icount / 6;
+    }
+    int rings = 20 * (int)CHUNK_LEN / 10, envelopes = 20 * (int)CHUNK_LEN / 50 + 1;
+    int railSegs = 20 * 8 * (int)ceil(CHUNK_LEN / 2.0);
+    CHECK(segs == (rings + envelopes) * 72 + railSegs, "greybox: %d rings + %d envelope circles + rails over 960 m (%d segments)",
+          rings, envelopes, segs);
+    path_free(&p);
+    env.unload(&env);
+}
+
 static void test_corridor(void)
 {
     Environment env = env_corridor_create();
@@ -1040,6 +1085,7 @@ int main(void)
     test_corridor_pillars();
     test_corridor_decor();
     test_corridor_beams();
+    test_greybox();
     test_params();
     printf("%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

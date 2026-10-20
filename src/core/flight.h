@@ -32,6 +32,7 @@ typedef struct FlightParams {
     float cameraRollFollow;  // 0 = tunnel roll only, 1 = follow ship bank
     float barrelRollTime;
     bool  autopilot;
+    bool  dartShip;          // original placeholder dart (engine positions differ from the courier)
 } FlightParams;
 
 typedef struct FlightState {
@@ -81,7 +82,7 @@ int flight_advance(FlightState *prev, FlightState *cur, const FlightParams *p, c
 FlightView flight_interpolate(const FlightState *a, const FlightState *b, float alpha);
 float flight_speed_norm(const FlightParams *p, float speed);
 // Engine attach points in ship-local space (right, up, fwd).
-void flight_engine_offsets(Vector3 out[2]);
+void flight_engine_offsets(bool dart, Vector3 out[2]);
 // Shared nozzle rotation/attachment math for reaction forces and exhaust wake.
 Vector3 flight_gimbal_rotate(Vector3 p, Vector2 angles);
 Vector3 flight_exhaust_offset(int engine, Vector2 angles, float plumeLength);

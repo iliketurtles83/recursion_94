@@ -161,6 +161,7 @@ preset after switching to it (`--env 2 --preset city`, `--env 3 --preset corrido
 | `CT_ENV_TEMPLATE` (1) | Template | Skeleton to copy for new environments | – |
 | `CT_ENV_CITY` (2) | Neon Grid City | Open flight low over an infinite reflective grid floor between monolith towers with circuit traces and code text, light rain, floating props. Level path weaving around the grid axes; ship kept above the floor. Pacing AVENUE / DOWNTOWN / OPEN / PLAZA | `city` |
 | `CT_ENV_CORRIDOR` (3) | Server Corridor | Low flight over the same reflective grid floor between walls of server pillars covered in Matrix-style digital rain, with white stepped outlines and floor kerbs; a broken lattice of circuit-covered beams above the pillars, a sparse sky lattice, holo rings, light rain, wireframe props. Level path held within ~8° of a grid axis; ship kept between floor and ceiling. Pacing COLONNADE / SERVER HALL / ATRIUM | `corridor` |
+| `CT_ENV_GREYBOX` (4) | Greybox | Plain measuring course for tuning ship movement: grey distance rings every `gbRingSpacing` (brighter at 50 / 100 m), lengthwise rails, an amber steering-envelope circle every 50 m at `steerLimit` × radius. Path style defaults equal the vortex's, so the same seed gives the vortex course | `greybox` |
 
 Both full environments follow the same treadmill model: the path is fixed and the player
 moves within the lane around it (`steerLimit` × lane radius; the city also clamps above its

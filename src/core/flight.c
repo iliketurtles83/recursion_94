@@ -42,10 +42,15 @@ float flight_speed_norm(const FlightParams *p, float speed)
     return t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
 }
 
-void flight_engine_offsets(Vector3 out[2])
+void flight_engine_offsets(bool dart, Vector3 out[2])
 {
-    out[0] = (Vector3){ -0.48f, -0.05f, -1.56f };
-    out[1] = (Vector3){ 0.48f, -0.05f, -1.56f };
+    if (dart) {
+        out[0] = (Vector3){ -0.16f, 0.02f, -0.62f };
+        out[1] = (Vector3){ 0.16f, 0.02f, -0.62f };
+    } else {
+        out[0] = (Vector3){ -0.48f, -0.05f, -1.56f };
+        out[1] = (Vector3){ 0.48f, -0.05f, -1.56f };
+    }
 }
 
 Vector3 flight_gimbal_rotate(Vector3 p,Vector2 a)
@@ -222,8 +227,11 @@ void flight_step(FlightState *st, const FlightParams *p, const PathSystem *path,
 
     // Engine trail history.
     Vector3 eng[2];
-    float plumeLength=.48f+2.6f*flight_speed_norm(p,st->speed);
-    for(int e=0;e<2;e++)eng[e]=flight_exhaust_offset(e,st->gimbal[e],plumeLength);
+    if (p->dartShip) flight_engine_offsets(true, eng);
+    else {
+        float plumeLength=.48f+2.6f*flight_speed_norm(p,st->speed);
+        for(int e=0;e<2;e++)eng[e]=flight_exhaust_offset(e,st->gimbal[e],plumeLength);
+    }
     for (int e = 0; e < 2; e++) {
         DVec3 w = dv_add(st->shipPos, dv_add(dv_add(dv_scale(st->shipRight, eng[e].x), dv_scale(st->shipUp, eng[e].y)), dv_scale(st->shipFwd, eng[e].z)));
         st->trail[e][st->trailHead] = w;

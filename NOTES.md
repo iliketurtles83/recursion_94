@@ -759,3 +759,25 @@ The game commits changed shared shaders and the city palette for every user, not
 
 Still changed for the sandbox: the coarse grid overlay in `grid.fs` (city and corridor floors)
 and the vortex distance fade / guide rings (`detailNear`, `detailFar`).
+
+## Greybox, step 1 (`env/env_greybox.c`, `CT_ENV_GREYBOX` = 4)
+
+Purpose: tune ship movement against measurable references, without bloom, streaks and glyph rain
+hiding speed and drift. Not a game; later steps only if this raises questions.
+
+- Path style defaults equal the vortex "Path" group (own `gb*` names, since only the active
+  environment's params are registered), so `--seed N` flies the vortex course.
+- Content: grey rings every `gbRingSpacing` (10 m) on the tunnel radius, brighter and wider at
+  50 m and 100 m; `gbRails` (8) lengthwise rails offset from the axes; an amber circle every
+  50 m at `steerLimit` × radius, the flight model's reach (read from the registry at build time,
+  so after changing `steerLimit` press R to rebuild).
+- `shipDart` (Sim): the original placeholder dart and its shader (`ship_dart.fs`) and engine
+  positions instead of the courier. Off by default; `presets/greybox.ini` turns it on, sets
+  intensity 0.3 and removes zoom blur, chromatic aberration, grain and vignette, bloom 0.35.
+  Flight keys stay at defaults (the original tuning). The courier's flight tuning is in
+  `presets/mission_tunnel.ini` (steer accel 48 / damping 7, bank 25°, cam 7.25 / 2.45,
+  FOV boost 3, shake 0.008).
+- Run: `./build/cybertunnel --sandbox --env 4 --preset greybox`.
+- **Accept:** tests 99 passed (new: style equals vortex defaults; order-independent build;
+  96 rings + 20 envelope circles + rails over 960 m, no boundary duplicates). Shots at s = 300
+  cruise / boost / vortex at the same seed: same course.

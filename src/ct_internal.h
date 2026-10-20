@@ -56,11 +56,12 @@ struct CtTunnel {
 
     ShaderLib      sl;
     Pipeline       pipe;
-    int            shShip, shLine, shAfterburner;
+    int            shShip, shShipDart, shLine, shAfterburner;
     Material       mat;
     Texture2D      shipSkin;
     float          shipDamage;
     Mesh           shipHull, shipEdges, shipNozzles, shipFlames, trailMesh;
+    Mesh           dartHull, dartEdges;
     LineGeo        shipHullGeo, shipEdgesGeo, shipNozzleGeo, shipFlameGeo, trailGeo;
 
     DVec3          renderOrigin;
