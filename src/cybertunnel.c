@@ -210,12 +210,10 @@ static void update_trail_mesh(CtTunnel *ct)
         Vector3 prev = dv_to_v3(dv_sub(head, ct->renderOrigin));
         float tPrev = 0.0f;
         for (int k = 0; k < FLIGHT_TRAIL_LEN; k++) {
-            // The head uses the interpolated flame tip. Start history one
+            // The head uses the interpolated engine position. Start history one
             // physics step earlier so the wake never folds forward into it.
-            // The dart's engines are fixed, so its trail starts at the newest sample.
-            int skip = ct->fp.dartShip ? 0 : 1;
-            if (k < st->trailCount - skip) {
-                int idx = (st->trailHead - 1 - skip - k + 2 * FLIGHT_TRAIL_LEN) % FLIGHT_TRAIL_LEN;
+            if (k < st->trailCount-1) {
+                int idx = (st->trailHead - 2 - k + 2 * FLIGHT_TRAIL_LEN) % FLIGHT_TRAIL_LEN;
                 Vector3 p = dv_to_v3(dv_sub(st->trail[e][idx], ct->renderOrigin));
                 float tk = (float)(k + 1) / (float)FLIGHT_TRAIL_LEN;
                 float fa = 1.0f - tPrev, fb = 1.0f - tk;

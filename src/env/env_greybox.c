@@ -107,23 +107,27 @@ static void gb_build_chunk(Environment *env, const PathSystem *path, int chunkIn
     float I = st->intensity;
 
     // Rings at whole multiples of the spacing; each belongs to the chunk with s0 <= s < s1.
-    if (st->showRings || st->showEnvelope) {
+    if (st->showRings) {
         double sp = st->ringSpacing;
-        float limit = gb_steer_limit(st);
         for (int64_t k = (int64_t)ceil(out->s0 / sp - 1e-9); k * sp < out->s1; k++) {
             double s = k * sp;
             PathSample ps = path_sample(path, s);
             long m = lround(s);
             bool on50 = fabs(s - (double)m) < 1e-6 && m % 50 == 0;
             bool on100 = on50 && m % 100 == 0;
-            if (st->showRings) {
-                Color c = on100 ? GB_MAJOR : (on50 ? GB_MID : GB_MINOR);
-                float w = on100 ? 0.07f : (on50 ? 0.05f : 0.03f);
-                float in = I * (on100 ? 1.6f : (on50 ? 1.2f : 1.0f));
-                gb_circle(g, &ps, ps.radius, out->origin, w, (LineAttr){ c, in, 0.0f, 0.0f, -1.0f, 0.0f });
-            }
-            if (st->showEnvelope && on50)
-                gb_circle(g, &ps, ps.radius * limit, out->origin, 0.025f, (LineAttr){ GB_ENVELOPE, I * 0.8f, 0.0f, 0.0f, -1.0f, 0.0f });
+            Color c = on100 ? GB_MAJOR : (on50 ? GB_MID : GB_MINOR);
+            float w = on100 ? 0.07f : (on50 ? 0.05f : 0.03f);
+            float in = I * (on100 ? 1.6f : (on50 ? 1.2f : 1.0f));
+            gb_circle(g, &ps, ps.radius, out->origin, w, (LineAttr){ c, in, 0.0f, 0.0f, -1.0f, 0.0f });
+        }
+    }
+
+    // Steering envelope every 50 m, independent of the ring spacing.
+    if (st->showEnvelope) {
+        float limit = gb_steer_limit(st);
+        for (int64_t k = (int64_t)ceil(out->s0 / 50.0 - 1e-9); k * 50.0 < out->s1; k++) {
+            PathSample ps = path_sample(path, k * 50.0);
+            gb_circle(g, &ps, ps.radius * limit, out->origin, 0.025f, (LineAttr){ GB_ENVELOPE, I * 0.8f, 0.0f, 0.0f, -1.0f, 0.0f });
         }
     }
 

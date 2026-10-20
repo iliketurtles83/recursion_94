@@ -653,6 +653,17 @@ static void test_greybox(void)
     int railSegs = 20 * 8 * (int)ceil(CHUNK_LEN / 2.0);
     CHECK(segs == (rings + envelopes) * 72 + railSegs, "greybox: %d rings + %d envelope circles + rails over 960 m (%d segments)",
           rings, envelopes, segs);
+
+    // Envelope circles stay every 50 m when the ring spacing does not divide 50.
+    Param *spacing = params_find(&reg, "gbRingSpacing"), *showRings = params_find(&reg, "gbShowRings"), *rails = params_find(&reg, "gbRails");
+    params_set(spacing, 12.0f); params_set(showRings, 0.0f); params_set(rails, 0.0f);
+    segs = 0;
+    for (int k = 0; k < 20; k++) {
+        chunk_cpu_begin(&c, &p, k);
+        env.buildChunk(&env, &p, k, &c);
+        segs += c.geo[0].icount / 6;
+    }
+    CHECK(segs == envelopes * 72, "greybox: envelope every 50 m with 12 m ring spacing (%d circles)", segs / 72);
     path_free(&p);
     env.unload(&env);
 }

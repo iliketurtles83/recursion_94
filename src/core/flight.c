@@ -14,6 +14,7 @@ void flight_register_params(FlightParams *p, ParamRegistry *reg)
     params_float(reg, g, "steerLimit", &p->steerLimit, 0.55f, 0.0f, 0.9f);
     params_float(reg, g, "steerAccel", &p->steerAccel, 60.0f, 1.0f, 300.0f);
     params_float(reg, g, "steerDamping", &p->steerDamping, 5.0f, 0.1f, 30.0f);
+    p->dartShip = false;   // registered by the module as the Sim parameter shipDart
     // Off by default (original flight model); presets/mission*.ini enable it for DATA // RUN.
     params_float(reg,g,"vectoringStrength",&p->vectoringStrength,0.0f,0,2);
     params_float(reg,g,"vectoringAngleDeg",&p->vectoringAngleDeg,14,0,22);

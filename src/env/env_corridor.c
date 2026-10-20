@@ -564,6 +564,7 @@ static void cor_draw_background(Environment *env, const FrameContext *ctx)
     sl_v3(sl, sh, "uZenith", ct_srgb_to_linear(COL_ZENITH));
     sl_v3(sl, sh, "uHorizon", ct_srgb_to_linear(COL_HORIZON));
     sl_f2(sl, sh, "uHaze", st->p.hazeWidth, st->p.hazeGlow);
+    sl_f1(sl, sh, "uSkyline", 0.0f);   // shared program: the city's game look may have left it on
     sl_f1(sl, sh, "uDust", st->p.dust);
     pipe_fullscreen_quad();
     EndShaderMode();
@@ -611,6 +612,7 @@ static void draw_pillars(CorridorState *st, const FrameContext *ctx, const Chunk
     sl_v3(sl, sh, "uKeyDir", Vector3Normalize((Vector3){ 0.35f, 0.55f, 0.75f }));
     sl_f4(sl, sh, "uPanel", p->panelW, p->panelH, p->seamDark, p->recessed);
     sl_f2(sl, sh, "uFogRange", p->fogStart, p->fogEnd);
+    sl_f1(sl, sh, "uWindows", 0.0f);   // shared program: the city's game look may have left it on
     sl_v3(sl, sh, "uZenith", ct_srgb_to_linear(COL_ZENITH));
     sl_v3(sl, sh, "uHorizon", ct_srgb_to_linear(COL_HORIZON));
     sl_f2(sl, sh, "uHaze", p->hazeWidth, p->hazeGlow);
@@ -696,6 +698,7 @@ static void cor_draw_emissive(Environment *env, const FrameContext *ctx, const C
         env_set_common_uniforms(sl, rs, ctx);
         sl_f1(sl, rs, "uPulseAmount", 2.0f);
         sl_f1(sl, rs, "uPulseSpeed", 0.6f);
+        sl_f2(sl, rs, "uDetailRange", 0.0f, 0.0f);   // shared program: the vortex leaves its fade range set
         draw_batch(st, ctx, rs, chunks, n, KB_RING);
     }
     if (p->showStreaks) {
