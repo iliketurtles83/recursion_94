@@ -439,6 +439,7 @@ static void draw_towers(CityState *st, const FrameContext *ctx, const ChunkGpu *
     sl_f2(sl, sh, "uHaze", p->hazeWidth, p->hazeGlow);
     sl_f1(sl, sh, "uWindows", p->gameLook ? 1.0f : 0.0f);
     draw_batch(st, ctx, sh, chunks, n, CB_BODY);
+    sl_f1(sl, sh, "uWindows", 0.0f);
 }
 
 static void city_draw_opaque(Environment *env, const FrameContext *ctx, const ChunkGpu *const *chunks, int n)
