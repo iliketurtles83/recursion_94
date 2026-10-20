@@ -52,6 +52,9 @@ const char *ct_environment_name(int id)
 // ---------------------------------------------------------------------------
 // Parameters
 
+// Courier size that matches the dart. presets/mission*.ini set courierScale=1 for DATA // RUN.
+#define COURIER_SCALE 0.42f
+
 static void register_core_params(CtTunnel *ct)
 {
     ParamRegistry *reg = &ct->reg;
@@ -65,6 +68,7 @@ static void register_core_params(CtTunnel *ct)
     params_int(reg, g, "uploadBudget", &c->uploadBudget, 1, 1, 8);
     params_bool(reg, g, "showShip", &c->showShip, true);
     params_bool(reg, g, "shipDart", &ct->fp.dartShip, false);   // original placeholder dart instead of the courier
+    params_float(reg, g, "courierScale", &ct->fp.courierScale, COURIER_SCALE, 0.1f, 2.0f);
     params_bool(reg, g, "showPathDebug", &c->showPathDebug, false);
     params_float(reg, g, "rebaseDist", &c->rebaseDist, (float)CT_REBASE_DIST, 1.0f, 100000.0f);
     params_float(reg, g, "engineIntensity", &c->engineIntensity, 10.0f, 0.0f, 40.0f);
@@ -72,6 +76,7 @@ static void register_core_params(CtTunnel *ct)
     params_float(reg, g, "trailWidth", &c->trailWidth, 0.035f, 0.005f, 0.5f);
 
     flight_register_params(&ct->fp, reg);
+    ct->fp.courierScale = COURIER_SCALE;   // flight_register_params set the neutral 1
 
     g = "Fog";
     Atmosphere *a = &ct->atmo;
@@ -217,7 +222,7 @@ static void update_trail_mesh(CtTunnel *ct)
     const FlightView *v = &ct->view;
     float boost=flight_speed_norm(&ct->fp,v->speed);
     if (ct->fp.dartShip) flight_engine_offsets(true, eng);
-    else for(int e=0;e<2;e++)eng[e]=flight_exhaust_offset(e,v->gimbal[e],.48f+2.6f*boost);
+    else for(int e=0;e<2;e++)eng[e]=Vector3Scale(flight_exhaust_offset(e,v->gimbal[e],.48f+2.6f*boost),ct->fp.courierScale);
     float w0 = ct->core.trailWidth*(1+.8f*boost), i0 = ct->core.trailIntensity*(.5f+.5f*boost);
     for (int e = 0; e < 2; e++) {
         DVec3 head = dv_add(v->shipPos, dv_add(dv_add(dv_scale(v->shipRight, eng[e].x), dv_scale(v->shipUp, eng[e].y)), dv_scale(v->shipFwd, eng[e].z)));
@@ -256,10 +261,19 @@ static void draw_mesh(CtTunnel *ct, int sh, Mesh m, Matrix xf)
     ct->rstats.vertices += m.vertexCount;
 }
 
+// Ship model matrix. The courier is scaled by courierScale; the dart is drawn at its own size.
+static Matrix ship_matrix(const CtTunnel *ct)
+{
+    const FlightView *v = &ct->view;
+    float k = ct->fp.dartShip ? 1.0f : ct->fp.courierScale;
+    return basis_matrix(Vector3Scale(dv_to_v3(v->shipRight), k), Vector3Scale(dv_to_v3(v->shipUp), k),
+                        Vector3Scale(dv_to_v3(v->shipFwd), k), dv_to_v3(dv_sub(v->shipPos, ct->renderOrigin)));
+}
+
 static void draw_ship_opaque(CtTunnel *ct, const FrameContext *ctx)
 {
     const FlightView *v = &ct->view;
-    Matrix xf = basis_matrix(dv_to_v3(v->shipRight), dv_to_v3(v->shipUp), dv_to_v3(v->shipFwd), dv_to_v3(dv_sub(v->shipPos, ct->renderOrigin)));
+    Matrix xf = ship_matrix(ct);
     if (ct->fp.dartShip) {
         sl_v3(&ct->sl, ct->shShipDart, "uCamPos", ctx->camera.position);
         sl_f3(&ct->sl, ct->shShipDart, "uRimColor", 0.25f, 0.85f, 1.0f);
@@ -291,7 +305,7 @@ static void draw_ship_emissive(CtTunnel *ct, const FrameContext *ctx)
     const FlightView *v = &ct->view;
     ShaderLib *sl = &ct->sl;
     int sh = ct->shLine;
-    Matrix xf = basis_matrix(dv_to_v3(v->shipRight), dv_to_v3(v->shipUp), dv_to_v3(v->shipFwd), dv_to_v3(dv_sub(v->shipPos, ct->renderOrigin)));
+    Matrix xf = ship_matrix(ct);
     env_set_common_uniforms(sl, sh, ctx);
     sl_f1(sl, sh, "uFlicker", 0.0f);
     sl_f1(sl, sh, "uEdgeMix", 0.0f);

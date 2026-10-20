@@ -15,6 +15,7 @@ void flight_register_params(FlightParams *p, ParamRegistry *reg)
     params_float(reg, g, "steerAccel", &p->steerAccel, 60.0f, 1.0f, 300.0f);
     params_float(reg, g, "steerDamping", &p->steerDamping, 5.0f, 0.1f, 30.0f);
     p->dartShip = false;   // registered by the module as the Sim parameter shipDart
+    p->courierScale = 1.0f; // registered by the module as the Sim parameter courierScale
     // Off by default (original flight model); presets/mission*.ini enable it for DATA // RUN.
     params_float(reg,g,"vectoringStrength",&p->vectoringStrength,0.0f,0,2);
     params_float(reg,g,"vectoringAngleDeg",&p->vectoringAngleDeg,14,0,22);
@@ -232,7 +233,10 @@ void flight_step(FlightState *st, const FlightParams *p, const PathSystem *path,
     if (p->dartShip) flight_engine_offsets(true, eng);
     else {
         float plumeLength=.48f+2.6f*flight_speed_norm(p,st->speed);
-        for(int e=0;e<2;e++)eng[e]=flight_exhaust_offset(e,st->gimbal[e],plumeLength);
+        for(int e=0;e<2;e++){
+            Vector3 o=flight_exhaust_offset(e,st->gimbal[e],plumeLength);float k=p->courierScale;
+            eng[e]=(Vector3){o.x*k,o.y*k,o.z*k};
+        }
     }
     for (int e = 0; e < 2; e++) {
         DVec3 w = dv_add(st->shipPos, dv_add(dv_add(dv_scale(st->shipRight, eng[e].x), dv_scale(st->shipUp, eng[e].y)), dv_scale(st->shipFwd, eng[e].z)));

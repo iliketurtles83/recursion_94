@@ -33,6 +33,7 @@ typedef struct FlightParams {
     float barrelRollTime;
     bool  autopilot;
     bool  dartShip;          // original placeholder dart (engine positions differ from the courier)
+    float courierScale;      // uniform size of the courier model and its exhaust anchors
 } FlightParams;
 
 typedef struct FlightState {

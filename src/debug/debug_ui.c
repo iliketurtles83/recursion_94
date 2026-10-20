@@ -84,10 +84,10 @@ void ct_debug_panel(CtTunnel *ct, int width, int height)
     if (GuiButton((Rectangle){ x + LABEL_W + SLIDER_W + 6, y, 60, ROW_H }, TextFormat("%.0f", ct->jumpTarget))) ct_jump_to(ct, ct->jumpTarget);
     y += ROW_H + 2;
     GuiLabel((Rectangle){ x, y, 60, ROW_H }, "presets:");
-    const char *presets[3] = { "default", "calm", "intense" };
-    for (int i = 0; i < 3; i++)
+    const char *presets[4] = { "default", "calm", "intense", "greybox" };
+    for (int i = 0; i < 4; i++)
         if (GuiButton((Rectangle){ x + 60 + i * 64, y, 60, ROW_H }, presets[i])) ct_preset_load(ct, presets[i]);
-    if (GuiButton((Rectangle){ x + 60 + 3 * 64, y, 80, ROW_H }, "save custom")) ct_preset_save(ct, "custom");
+    if (GuiButton((Rectangle){ x + 60 + 4 * 64, y, 80, ROW_H }, "save custom")) ct_preset_save(ct, "custom");
     y += ROW_H + 2;
     if (GuiButton((Rectangle){ x, y, 120, ROW_H }, "reset defaults")) { params_reset_defaults(&ct->reg); ct_rebuild(ct); }
     y += ROW_H + 8;
