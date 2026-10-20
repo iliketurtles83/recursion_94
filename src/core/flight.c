@@ -17,7 +17,6 @@ void flight_register_params(FlightParams *p, ParamRegistry *reg)
     p->dartShip = false;   // registered by the module as the Sim parameter shipDart
     // Off by default (original flight model); presets/mission*.ini enable it for DATA // RUN.
     params_float(reg,g,"vectoringStrength",&p->vectoringStrength,0.0f,0,2);
-    p->dartShip = false;
     params_float(reg,g,"vectoringAngleDeg",&p->vectoringAngleDeg,14,0,22);
     params_float(reg, g, "maxBankDeg", &p->maxBankDeg, 35.0f, 0.0f, 80.0f);
     params_float(reg, g, "maxShipPitchDeg", &p->maxPitchDeg, 15.0f, 0.0f, 45.0f);
