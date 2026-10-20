@@ -104,6 +104,8 @@ static void upload_static(Mesh *m, LineGeo *g, bool dynamic)
     *m = lg_upload_mesh(g, 0, dynamic);
 }
 
+static void build_dart_edges(CtTunnel *ct);
+
 // The original placeholder dart (shipDart): flat dark hull, cyan edges, two engine glows.
 static void build_dart(CtTunnel *ct)
 {
@@ -124,22 +126,34 @@ static void build_dart(CtTunnel *ct)
         lg_fill_tri(&g, tris[i][0], tris[i][1], tris[i][2], n, fa);
     }
     upload_static(&ct->dartHull, &g, false);
+    lg_free(&g);
+    build_dart_edges(ct);
+}
 
-    lg_clear(&g);
+// Dart edges and engine glows. The glow intensity is baked into the mesh, so it is rebuilt
+// when engineIntensity changes (presets, --set and the debug panel apply after ct_create).
+static void build_dart_edges(CtTunnel *ct)
+{
+    Vector3 nose = { 0.0f, 0.0f, 0.95f };
+    Vector3 tl = { -0.62f, -0.02f, -0.5f }, tr = { 0.62f, -0.02f, -0.5f };
+    Vector3 ridge = { 0.0f, 0.17f, -0.38f };
+    Vector3 back = { 0.0f, 0.04f, -0.62f };
+    LineGeo g = { 0 };
     LineAttr ea = { (Color){ 0x4F, 0xEA, 0xF5, 255 }, 2.5f, 0.0f, 0.0f, -1.0f, 0.0f };
     Vector3 edges[][2] = { { nose, tl }, { nose, tr }, { nose, ridge }, { tl, back }, { tr, back }, { ridge, back } };
     for (int i = 0; i < 6; i++) lg_facing_segment(&g, edges[i][0], edges[i][1], 0.012f, 0.012f, ea.intensity, ea.intensity, ea);
     Vector3 eng[2];
     flight_engine_offsets(true, eng);
-    // Engine glow intensity is baked at build time (engineIntensity).
     float gi = ct->core.engineIntensity;
     LineAttr ga = { (Color){ 0xE8, 0xFB, 0xFF, 255 }, gi, 0.0f, 0.0f, -1.0f, 0.0f };
     for (int i = 0; i < 2; i++) {
         Vector3 a = eng[i], b = { eng[i].x, eng[i].y, eng[i].z - 0.08f };
         lg_facing_segment(&g, a, b, 0.09f, 0.09f, gi, gi, ga);
     }
+    if (ct->dartEdges.vaoId) lg_unload_mesh(ct->dartEdges);
     upload_static(&ct->dartEdges, &g, false);
     lg_free(&g);
+    ct->dartGlow = gi;
 }
 
 static void build_ship(CtTunnel *ct)
@@ -284,7 +298,10 @@ static void draw_ship_emissive(CtTunnel *ct, const FrameContext *ctx)
     // The ship is always close: disable distance fades.
     sl_f4(sl, sh, "uFade", 1e6f, 2e6f, 0.0f, 0.001f);
     sl_f1(sl, sh, "uChunkFade", 1.0f);
-    if (ct->fp.dartShip) draw_mesh(ct, sh, ct->dartEdges, xf);
+    if (ct->fp.dartShip) {
+        if (ct->dartGlow != ct->core.engineIntensity) build_dart_edges(ct);
+        draw_mesh(ct, sh, ct->dartEdges, xf);
+    }
     else {
         sl_i1(sl,sh,"uShipPose",1);
         sl_f2(sl,sh,"uSteer",v->controlX,v->controlY);

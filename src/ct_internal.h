@@ -62,6 +62,7 @@ struct CtTunnel {
     float          shipDamage;
     Mesh           shipHull, shipEdges, shipNozzles, shipFlames, trailMesh;
     Mesh           dartHull, dartEdges;
+    float          dartGlow;        // engineIntensity baked into dartEdges
     LineGeo        shipHullGeo, shipEdgesGeo, shipNozzleGeo, shipFlameGeo, trailGeo;
 
     DVec3          renderOrigin;
