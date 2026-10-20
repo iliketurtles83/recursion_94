@@ -68,7 +68,7 @@ typedef struct CityParams {
     bool  pacing;
     float fogStart, fogEnd;          // fog for chunk content (towers etc.)
     float hazeWidth, hazeGlow, dust; // sky
-    bool  showFloor, showSky, landmarks;
+    bool  showFloor, showSky, landmarks, gameLook;
 } CityParams;
 
 typedef struct CityState {
@@ -82,12 +82,18 @@ typedef struct CityState {
     TowerDesc  towers[CITY_MAX_TOWERS];   // build scratch (builds are single-threaded)
 } CityState;
 
-static const Color COL_CYAN    = { 0x42, 0xAD, 0xCC, 255 };
-static const Color COL_FLOOR   = { 0x0B, 0x15, 0x20, 255 };
-static const Color COL_HORIZON = { 0x21, 0x43, 0x56, 255 };
-static const Color COL_ZENITH  = { 0x09, 0x12, 0x21, 255 };
-static const Color COL_PINK    = { 0xCB, 0x79, 0xB1, 255 };
-static const Color COL_VIOLET  = { 0x78, 0xA3, 0xD6, 255 };
+// Two looks: the original sandbox palette (default) and the muted DATA // RUN palette with
+// lit tower windows and a skyline/moon sky, which the game enables through `cityGameLook` in presets/mission.ini.
+typedef struct CityPalette { Color cyan, floor, horizon, zenith, pink, violet, body; } CityPalette;
+static const CityPalette PAL_SANDBOX = {
+    { 0x4F, 0xEA, 0xF5, 255 }, { 0x03, 0x0B, 0x14, 255 }, { 0x0B, 0x2A, 0x3A, 255 },
+    { 0x02, 0x03, 0x08, 255 }, { 0xFF, 0x4F, 0xD8, 255 }, { 0xB0, 0x6C, 0xFF, 255 },
+    { 0x1C, 0x24, 0x34, 255 } };
+static const CityPalette PAL_GAME = {
+    { 0x42, 0xAD, 0xCC, 255 }, { 0x0B, 0x15, 0x20, 255 }, { 0x21, 0x43, 0x56, 255 },
+    { 0x09, 0x12, 0x21, 255 }, { 0xCB, 0x79, 0xB1, 255 }, { 0x78, 0xA3, 0xD6, 255 },
+    { 0x35, 0x49, 0x5B, 255 } };
+static const CityPalette *city_palette(const CityParams *p) { return p->gameLook ? &PAL_GAME : &PAL_SANDBOX; }
 static const Color COL_PALE    = { 0xA8, 0xEE, 0xFF, 255 };
 
 static PathStyle city_path_style(const Environment *env)
@@ -133,9 +139,6 @@ static void city_register(Environment *env, ParamRegistry *reg)
     params_float(reg, g, "gridNodeSize", &f->nodeSize, 0.12f, 0.0f, 1.0f);
     params_float(reg, g, "floorReflect", &f->reflectStrength, 1.3f, 0.0f, 3.0f);
     params_float(reg, g, "floorReflectR0", &f->reflectR0, 0.3f, 0.0f, 1.0f);
-    f->lineColor = COL_CYAN;
-    f->floorColor = COL_FLOOR;
-    f->horizonColor = COL_HORIZON;
 
     g = "Towers";
     CityTowerParams *t = &p->towers;
@@ -203,7 +206,6 @@ static void city_register(Environment *env, ParamRegistry *reg)
     rn->zBehind = 12.0f;
     rn->volume = 1;
     rn->colMain = (Color){ 0x8A, 0xF2, 0xFF, 255 };
-    rn->colAccent = COL_VIOLET;
 
     g = "Props";
     params_bool(reg, g, "showProps", &p->showProps, true);
@@ -220,6 +222,7 @@ static void city_register(Environment *env, ParamRegistry *reg)
     g = "City";
     params_bool(reg, g, "showSky", &p->showSky, true);
     params_bool(reg, g, "cityLandmarks", &p->landmarks, false);
+    params_bool(reg, g, "cityGameLook", &p->gameLook, false);
     params_float(reg, g, "cityFogStart", &p->fogStart, 120.0f, 0.0f, 600.0f);
     // Fog must be complete before ~358 units: the far chunk becomes visible with its nearest
     // towers about that far away (window s + 400, chunk length 48, camera 6 behind the ship).
@@ -306,7 +309,7 @@ static void build_props(const CityState *st, const PathSystem *path, int chunkIn
         set_u(c, U_OBJ_B + g, axis, pcg32_range(&r, 0.15f, 0.6f) * (pcg32_chance(&r, 0.5f) ? 1.0f : -1.0f));
         set_u(c, U_OBJ_C + g, (Vector3){ pcg32_float(&r) * 6.2831853f, 0, 0 }, 0.0f);
         LineAttr e = { COL_PALE, p->propEdgeIntensity, pcg32_float(&r), 0.0f, (float)g, 0.0f };
-        LineAttr f = { COL_CYAN, p->propFaceIntensity, pcg32_float(&r), 0.0f, (float)g, 0.0f };
+        LineAttr f = { city_palette(p)->cyan, p->propFaceIntensity, pcg32_float(&r), 0.0f, (float)g, 0.0f };
         float w = 0.035f;
         float kind = pcg32_float(&r);
         if (kind < 0.5f) shape_cube(&c->geo[CB_PROP_EDGES], &c->geo[CB_PROP_FACES], h, e, f, w);
@@ -382,10 +385,11 @@ static void city_draw_background(Environment *env, const FrameContext *ctx)
     sl_v3(sl, sh, "uCamUp", up);
     sl_v3(sl, sh, "uCamFwd", fwd);
     sl_f1(sl, sh, "uTanHalf", tanf(ctx->fovy * 0.5f * DEG2RAD));
-    sl_v3(sl, sh, "uZenith", ct_srgb_to_linear(COL_ZENITH));
-    sl_v3(sl, sh, "uHorizon", ct_srgb_to_linear(COL_HORIZON));
+    sl_v3(sl, sh, "uZenith", ct_srgb_to_linear(city_palette(&st->p)->zenith));
+    sl_v3(sl, sh, "uHorizon", ct_srgb_to_linear(city_palette(&st->p)->horizon));
     sl_f2(sl, sh, "uHaze", st->p.hazeWidth, st->p.hazeGlow);
     sl_f1(sl, sh, "uDust", st->p.dust);
+    sl_f1(sl, sh, "uSkyline", st->p.gameLook ? 1.0f : 0.0f);
     pipe_fullscreen_quad();
     EndShaderMode();
     ctx->stats->drawCalls++;
@@ -420,17 +424,19 @@ static void draw_towers(CityState *st, const FrameContext *ctx, const ChunkGpu *
     ShaderLib *sl = st->sl;
     int sh = st->shTower;
     env_set_common_uniforms(sl, sh, ctx);
-    Vector3 body = ct_srgb_to_linear((Color){ 0x35, 0x49, 0x5B, 255 });
-    Vector3 cyan = ct_srgb_to_linear(COL_CYAN);
+    const CityPalette *pal = city_palette(p);
+    Vector3 body = ct_srgb_to_linear(pal->body);
+    Vector3 cyan = ct_srgb_to_linear(pal->cyan);
     sl_v3(sl, sh, "uBody", Vector3Scale(body, p->bodyBrightness));
     sl_v3(sl, sh, "uRim", Vector3Scale(cyan, p->rimIntensity));
     sl_v3(sl, sh, "uUnderglow", Vector3Scale(cyan, p->underglow));
     sl_v3(sl, sh, "uKeyDir", Vector3Normalize((Vector3){ 0.35f, 0.55f, 0.75f }));
     sl_f4(sl, sh, "uPanel", p->panelW, p->panelH, p->seamDark, p->recessed);
     sl_f2(sl, sh, "uFogRange", p->fogStart, p->fogEnd);
-    sl_v3(sl, sh, "uZenith", ct_srgb_to_linear(COL_ZENITH));
-    sl_v3(sl, sh, "uHorizon", ct_srgb_to_linear(COL_HORIZON));
+    sl_v3(sl, sh, "uZenith", ct_srgb_to_linear(city_palette(&st->p)->zenith));
+    sl_v3(sl, sh, "uHorizon", ct_srgb_to_linear(city_palette(&st->p)->horizon));
     sl_f2(sl, sh, "uHaze", p->hazeWidth, p->hazeGlow);
+    sl_f1(sl, sh, "uWindows", p->gameLook ? 1.0f : 0.0f);
     draw_batch(st, ctx, sh, chunks, n, CB_BODY);
 }
 
@@ -441,6 +447,10 @@ static void city_draw_opaque(Environment *env, const FrameContext *ctx, const Ch
     if (!st->p.showFloor || ctx->reflectionPass) return;
     // The floor fogs into exactly the sky's horizon colour.
     GridFloorParams fp = st->p.floor;
+    const CityPalette *pal = city_palette(&st->p);
+    fp.lineColor = pal->cyan;
+    fp.floorColor = pal->floor;
+    fp.horizonColor = pal->horizon;
     fp.horizonGlow = st->p.hazeGlow;
     double floorY = path_sample(ctx->path, ctx->sShip).pos.y - ctx->path->style.floorDepth;
     gridfloor_draw(&st->floor, &fp, ctx, floorY);
@@ -471,8 +481,8 @@ static void city_draw_emissive(Environment *env, const FrameContext *ctx, const 
     if (p->showTowers && p->showGlyphs) {
         int g = st->shGlyph;
         env_set_common_uniforms(sl, g, ctx);
-        sl_v3(sl, g, "uPink", ct_srgb_to_linear(COL_PINK));
-        sl_v3(sl, g, "uViolet", ct_srgb_to_linear(COL_VIOLET));
+        sl_v3(sl, g, "uPink", ct_srgb_to_linear(city_palette(p)->pink));
+        sl_v3(sl, g, "uViolet", ct_srgb_to_linear(city_palette(p)->violet));
         sl_v3(sl, g, "uCyan", ct_srgb_to_linear(COL_PALE));
         draw_batch(st, ctx, g, chunks, n, CB_GLYPHS);
     }
@@ -485,6 +495,7 @@ static void city_draw_emissive(Environment *env, const FrameContext *ctx, const 
     }
     if (p->showRain) {
         StreakParams rp = p->rain;
+        rp.colAccent = city_palette(p)->violet;
         float fd = ctx->path->style.floorDepth;
         rp.slabYMin = p->rainYMin - fd;
         rp.slabYMax = p->rainYMax - fd;

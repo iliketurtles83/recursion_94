@@ -735,3 +735,27 @@ pillars with a gap, a sparse sky lattice, holo rings, light rain, props, three p
 archetypes, `presets/corridor.ini`. Shared pieces extracted for it: `lattice_place`, `pacing`,
 `trace_route`, gridfloor ceiling mode. Orange polyhedra are left out for now (revisit
 with collision). Open: the corridor-into-vortex ending, tied to the transition design.
+
+# Shared-shader regressions and the greybox (2026-10-20)
+
+## Restoring the sandbox look after DATA // RUN
+
+The game commits changed shared shaders and the city palette for every user, not just the game:
+
+- `ring.fs` read a new `uDetailRange` that only the vortex sets. Left at (0,0) in the corridor,
+  `smoothstep(0,0,d)` made every ordinary ring line 0, so the **corridor holo rings were
+  invisible**. Distance simplification now applies only when the range is set; otherwise the
+  original look (no fade, 0.3 halo).
+- `tower.fs` lit windows and brighter base lighting, and `sky.fs` skyline silhouette and moon,
+  reached both the city and the corridor. They are now behind `uWindows` / `uSkyline` (0 =
+  original), set only by the city with `cityGameLook`.
+- The city's muted palette and light tower body are restored to the originals; the game palette
+  is `cityGameLook=1` in `presets/mission.ini`.
+- **User feedback:** moons, skylines and lit windows read as "urbanization of cyberspace". Keep
+  the environments invented and abstract, not real-world archetypes.
+- **Accept:** corridor shots at s = 6 and 700 pixel-identical to the pre-game shaders; city sky
+  matches the original sky shader. Note: the executable now loads shaders and presets from the
+  copies in `build/`, so a shader A/B needs the `build/shaders` file swapped (or a rebuild).
+
+Still changed for the sandbox: the coarse grid overlay in `grid.fs` (city and corridor floors)
+and the vortex distance fade / guide rings (`detailNear`, `detailFar`).

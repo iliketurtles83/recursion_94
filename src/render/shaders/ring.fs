@@ -12,10 +12,13 @@ uniform vec2 uDetailRange;
 void main()
 {
     float aa = fwidth(fUV.y) * 1.2;
-    float distant=smoothstep(uDetailRange.x,uDetailRange.y,fDist);
+    // Distance simplification is opt-in: only the vortex sets uDetailRange. Left at (0,0)
+    // (corridor holo rings) the original look applies: no fade, 0.3 halo.
+    bool ranged=uDetailRange.y>uDetailRange.x;
+    float distant=ranged?smoothstep(uDetailRange.x,uDetailRange.y,fDist):0.0;
     bool guide=fPulse.y<0.0;
     float detail=guide?distant:(1.0-distant)*(1.0-distant);
-    vec3 lc = line_color(fColor, fUV.y, aa, guide?0.0:0.22);
+    vec3 lc = line_color(fColor, fUV.y, aa, guide?0.0:(ranged?0.22:0.3));
     float pulse = 0.0;
     if (fPulse.y > 0.0) {
         float ph = fract(fUV.x * fPulse.y - uTime * uPulseSpeed * (0.5 + fPulse.x) + fPulse.x * 17.0);
