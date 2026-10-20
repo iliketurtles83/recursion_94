@@ -392,6 +392,7 @@ static void city_draw_background(Environment *env, const FrameContext *ctx)
     sl_f1(sl, sh, "uSkyline", st->p.gameLook ? 1.0f : 0.0f);
     pipe_fullscreen_quad();
     EndShaderMode();
+    sl_f1(sl, sh, "uSkyline", 0.0f);
     ctx->stats->drawCalls++;
     rlEnableDepthTest();
     rlEnableDepthMask();
