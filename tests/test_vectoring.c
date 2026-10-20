@@ -95,6 +95,7 @@ int main(void)
 {
     ParamRegistry reg={0};FlightParams p;flight_register_params(&p,&reg);
     p.baseSpeed=32;p.boostSpeed=65;p.steerAccel=48;p.steerDamping=7;
+    p.vectoringStrength=.90f;   // the mission preset value; the registered default is 0 (off)
     PathSystem path;path_init(&path,83,(PathStyle){.baseRadius=100,.radiusNoiseScale=60,.hasWalls=true});path_ensure(&path,0,2000);
     test_forces(&p,&path);test_roll(&p,&path);test_attachments(&p,&path);test_fixed_steps(&p,&path);path_free(&path);
     printf("thrust vectoring: %d checks, %d failures\n",checks,failures);return failures?1:0;
