@@ -799,3 +799,28 @@ Plan: `PLAN_ENV4_CRYSTAL_FIELD.md`. Targets: `reference/concepts/env4-crystal-fi
 - **Accept:** tests 105 passed (new: open style without twist; pitch ≤ 8.2° and roll 0 over
   5 seeds × 20 000 units; order-independent build). Vortex, city, corridor and greybox shots at
   seed 7, 4 s are byte-identical to before.
+
+## Phase B — Polyhedra and placement, edges only (2026-10-21)
+
+- `render/shapes.c`: `shape_solid()` builds any convex `ShapeSolid` at a position with three
+  basis axes (rotation × per-axis scale). The existing cube/octa/sphere functions are untouched.
+- `env/crystal_field.c/.h` (pure CPU):
+  - Solids: tetrahedron, octahedron, icosahedron, cube, triangular prism, hexagonal bipyramid. Vertices
+    only; edges and triangles come from a brute-force convex hull (coplanar vertices form one polygon, so
+    cube and prism faces have no diagonals). Circumradius 1.
+  - Placement: each chunk owns the clusters and single shapes anchored in its `[s0, s1)`. Clusters sit
+    75 % left/right (±35°), the rest anywhere around, at `keep-out .. cfBandMax` with a near bias.
+    Sizes: 3 % giants (8–16), 35 % medium (2–6), the rest small (0.5–2). Bipyramids are stretched
+    1.6–2.6×, 15 % of the others on one axis. Random orientation. Colours: 70 % orange, 25 % amber, 5 % pale gold.
+  - Keep-out: √2 × `steerLimit` × lane radius + `cfClearance` (16.6 by default), against the path
+    around the shape, not only its anchor. Shapes that fail are pushed away from the nearest path point.
+    `steerLimit` is read from the registry, as the greybox does (press R after changing it).
+- `pathReach` covers the largest band; "Crystal Field" edits rebuild chunks, "Crystal Path" edits
+  rebuild the path.
+- `cfEdgeIntensity` 1.5: at 2.5 the white core of `line_facing.fs` and bloom turned the edges peach-white.
+- **Accept:** tests 111 passed (new: solid edge counts and Euler characteristic; 3 seeds × 80 chunks,
+  29 shapes per chunk, worst margin to the keep-out +0.02, checked exactly against the path segments;
+  build 0.14 ms, 2.6k vertices per chunk).
+- Note: `--shot N` jumps to arc length N, not N seconds. Shots: `shots/env4/b_crystal_300*.png`, `_700`.
+- **Open for Phase C:** far shapes crowd the vanishing point where the path curves; the concept keeps the
+  middle clearer. Edges are still paler than the concept's saturated orange.

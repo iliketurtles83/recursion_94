@@ -11,6 +11,7 @@
 #include "env/city_towers.h"
 #include "env/corridor_pillars.h"
 #include "env/corridor_beams.h"
+#include "env/crystal_field.h"
 #include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -705,6 +706,113 @@ static void test_crystal(void)
     env.unload(&env);
 }
 
+// Distance from p to the segment ab.
+static double seg_distance(DVec3 p, DVec3 a, DVec3 b)
+{
+    DVec3 ab = dv_sub(b, a);
+    double l2 = dv_dot(ab, ab), t = l2 > 0.0 ? dv_dot(dv_sub(p, a), ab) / l2 : 0.0;
+    t = t < 0.0 ? 0.0 : (t > 1.0 ? 1.0 : t);
+    return dv_len(dv_sub(p, dv_madd(a, ab, t)));
+}
+
+// Crystal field: solid topology, no shape inside the steering box keep-out at any arc length,
+// build time and vertex budget.
+static void test_crystal_field(void)
+{
+    static const int edges[CF_KIND_COUNT] = { 6, 12, 30, 12, 9, 18 };
+    static const int polys[CF_KIND_COUNT] = { 4, 8, 20, 6, 5, 12 };
+    bool topo = true;
+    for (int k = 0; k < CF_KIND_COUNT; k++) {
+        const ShapeSolid *so = crystal_solid(k);
+        // Euler with polygon faces: F = E - V + 2. An n-sided polygon is n - 2 triangles and the
+        // sides of all polygons add up to 2E, so the triangle count is 2E - 2F.
+        if (so->ne != edges[k] || so->ne - so->nv + 2 != polys[k] || so->nf != 2 * so->ne - 2 * polys[k]) topo = false;
+        float rmax = 0.0f;
+        for (int i = 0; i < so->nv; i++) rmax = fmaxf(rmax, sqrtf(so->v[i].x * so->v[i].x + so->v[i].y * so->v[i].y + so->v[i].z * so->v[i].z));
+        if (fabsf(rmax - 1.0f) > 1e-5f) topo = false;
+    }
+    CHECK(topo, "crystal solids: edge counts and Euler characteristic, circumradius 1");
+
+    Environment env = env_crystal_create();
+    ParamRegistry reg;
+    params_clear(&reg);
+    env.registerParams(&env, &reg);
+    env.init(&env, 41, NULL);
+    PathStyle st = env.pathStyle(&env);
+    CrystalFieldParams f = { 0 };
+    f.laneRadius = st.baseRadius;
+    f.steerLimit = 0.8f;
+    f.clearance = params_get(params_find(&reg, "cfClearance"));
+    f.bandMax = params_get(params_find(&reg, "cfBandMax"));
+    f.clusters = params_get(params_find(&reg, "cfClusters"));
+    f.scatter = params_get(params_find(&reg, "cfScatter"));
+    f.clusterMin = (int)params_get(params_find(&reg, "cfClusterMin"));
+    f.clusterMax = (int)params_get(params_find(&reg, "cfClusterMax"));
+    f.clusterRadMin = params_get(params_find(&reg, "cfClusterRadMin"));
+    f.clusterRadMax = params_get(params_find(&reg, "cfClusterRadMax"));
+    f.sideBias = params_get(params_find(&reg, "cfSideBias"));
+    f.nearBias = params_get(params_find(&reg, "cfNearBias"));
+    f.giantFrac = params_get(params_find(&reg, "cfGiantFrac"));
+    f.mediumFrac = params_get(params_find(&reg, "cfMediumFrac"));
+    f.smallMin = 0.5f; f.smallMax = 2.0f; f.mediumMin = 2.0f; f.mediumMax = 6.0f; f.giantMin = 8.0f; f.giantMax = 16.0f;
+    f.edgeIntensity = 2.5f;
+    double keep = crystal_keepout(&f), worst = 1e9, reach = crystal_path_reach(&f);
+    CHECK(reach <= env.pathReach, "crystal placement reach %.0f within pathReach %.0f", reach, env.pathReach);
+    static CrystalShape sh[CF_MAX_SHAPES];
+    int total = 0, maxN = 0, giants = 0;
+    for (int seed = 1; seed <= 3; seed++) {
+        PathSystem p;
+        path_init(&p, (uint64_t)seed * 104729u, st);
+        for (int k = 0; k < 80; k++) {
+            double s0 = k * CHUNK_LEN, s1 = s0 + CHUNK_LEN;
+            path_ensure(&p, fmax(0.0, s0 - env.pathReach), s1 + env.pathReach);
+            int n = crystal_field_plan(&f, &p, ct_hash64_2((uint64_t)seed, (uint64_t)k), s0, s1, sh, CF_MAX_SHAPES);
+            total += n;
+            if (n > maxN) maxN = n;
+            for (int i = 0; i < n; i++) {
+                if (sh[i].size >= f.giantMin) giants++;
+                double d = 1e300;
+                DVec3 a = path_sample(&p, fmax(0.0, s0 - 400.0)).pos;
+                for (double s = fmax(0.0, s0 - 400.0) + PATH_DS; s <= s1 + 400.0; s += PATH_DS) {
+                    DVec3 b = path_sample(&p, s).pos;
+                    d = fmin(d, seg_distance(sh[i].pos, a, b));
+                    a = b;
+                }
+                if (d - sh[i].bound - keep < worst) worst = d - sh[i].bound - keep;
+            }
+        }
+        path_free(&p);
+    }
+    printf("  crystal field (3 seeds x 80 chunks): %d shapes, %.1f per chunk (max %d), %d giants; keep-out %.2f, worst margin %.3f\n",
+           total, total / 240.0, maxN, giants, keep, worst);
+    CHECK(worst >= -1e-6, "no crystal inside the steering box keep-out (worst margin %.3f)", worst);
+    CHECK(maxN < CF_MAX_SHAPES, "crystal shapes per chunk below the cap (%d)", maxN);
+
+    // Full chunk builds: time and vertex budget.
+    PathSystem p;
+    path_init(&p, 41, st);
+    static ChunkCpu c;
+    double worstMs = 0.0;
+    int maxVerts = 0;
+    for (int k = 0; k < 60; k++) {
+        ensure_for_chunk(&p, &env, k);
+        chunk_cpu_begin(&c, &p, k);
+        double t0 = build_timer_seconds();
+        env.buildChunk(&env, &p, k, &c);
+        double ms = (build_timer_seconds() - t0) * 1000.0;
+        if (ms > worstMs) worstMs = ms;
+        int v = 0;
+        for (int b = 0; b < CHUNK_BATCHES; b++) v += c.geo[b].vcount;
+        if (v > maxVerts) maxVerts = v;
+    }
+    printf("  crystal chunks: worst build %.2f ms, max %d vertices\n", worstMs, maxVerts);
+    CHECK(worstMs < 3.0, "crystal chunk build < 3 ms (%.2f ms)", worstMs);
+    CHECK(maxVerts <= 60000, "crystal chunk <= 60k vertices (%d)", maxVerts);
+    for (int b = 0; b < CHUNK_BATCHES; b++) lg_free(&c.geo[b]);
+    path_free(&p);
+    env.unload(&env);
+}
+
 static void test_corridor(void)
 {
     Environment env = env_corridor_create();
@@ -1135,6 +1243,7 @@ int main(void)
     test_corridor_beams();
     test_greybox();
     test_crystal();
+    test_crystal_field();
     test_params();
     printf("%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

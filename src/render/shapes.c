@@ -45,3 +45,24 @@ void shape_sphere(LineGeo *edges, float r, LineAttr e, float width)
         }
     }
 }
+
+void shape_solid(LineGeo *edges, LineGeo *faces, const ShapeSolid *s, Vector3 c, Vector3 ax, Vector3 ay, Vector3 az,
+                 LineAttr e, LineAttr f, float width)
+{
+    Vector3 v[SHAPE_SOLID_MAX_V];
+    for (int i = 0; i < s->nv; i++) {
+        Vector3 q = s->v[i];
+        v[i] = Vector3Add(c, Vector3Add(Vector3Scale(ax, q.x), Vector3Add(Vector3Scale(ay, q.y), Vector3Scale(az, q.z))));
+    }
+    for (int i = 0; i < s->ne; i++) lg_facing_segment(edges, v[s->e[i][0]], v[s->e[i][1]], width, width, e.intensity, e.intensity, e);
+    if (!faces) return;
+    for (int i = 0; i < s->nf; i++) {
+        Vector3 a = v[s->f[i][0]], b = v[s->f[i][1]], d = v[s->f[i][2]];
+        Vector3 n = Vector3Normalize(Vector3CrossProduct(Vector3Subtract(b, a), Vector3Subtract(d, a)));
+        Vector3 mid = Vector3Scale(Vector3Add(a, Vector3Add(b, d)), 1.0f / 3.0f);
+        if (Vector3DotProduct(n, Vector3Subtract(mid, c)) < 0.0f) { n = Vector3Negate(n); Vector3 t = b; b = d; d = t; }
+        LineAttr fa = f;
+        fa.anim = (float)i;
+        lg_fill_tri(faces, a, b, d, n, fa);
+    }
+}
