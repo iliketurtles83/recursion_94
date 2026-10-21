@@ -192,6 +192,10 @@ static CrystalShape make_shape(const CrystalFieldParams *p, Pcg32 *r, DVec3 pos)
     sh.color = c < 0.70f ? CF_ORANGE : (c < 0.95f ? CF_AMBER : CF_GOLD);
     sh.intensity = p->edgeIntensity * pcg32_range(r, 0.7f, 1.2f);
     sh.hash = pcg32_float(r);
+    float z = pcg32_range(r, -1.0f, 1.0f), a = pcg32_float(r) * 6.2831853f, q = sqrtf(1.0f - z * z);
+    sh.spinAxis = (Vector3){ q * cosf(a), q * sinf(a), z };
+    sh.spinSpeed = p->tumble * pcg32_range(r, 0.3f, 1.0f) / (1.0f + 0.15f * sh.size) * (pcg32_chance(r, 0.5f) ? 1.0f : -1.0f);
+    sh.spinPhase = pcg32_float(r) * 6.2831853f;
     sh.pos = pos;
     return sh;
 }
@@ -252,14 +256,22 @@ int crystal_field_plan(const CrystalFieldParams *p, const PathSystem *path, uint
 }
 
 void crystal_field_build(const CrystalFieldParams *p, const CrystalShape *s, int n, DVec3 origin,
-                         LineGeo *edges, LineGeo *faces)
+                         LineGeo *edges, LineGeo *faces, float (*uniforms)[4])
 {
     for (int i = 0; i < n; i++) {
         const CrystalShape *sh = &s[i];
         Vector3 c = dv_to_v3(dv_sub(sh->pos, origin));
         float w = fmaxf(p->edgeWidthMin, p->edgeWidth * sh->size);
         LineAttr e = { sh->color, sh->intensity, sh->hash, 0.0f, -1.0f, 0.0f };
+        if (i < CF_TUMBLE_SLOTS) {
+            float *a = uniforms[i], *b = uniforms[CF_TUMBLE_SLOTS + i];
+            a[0] = c.x; a[1] = c.y; a[2] = c.z; a[3] = sh->spinPhase;
+            b[0] = sh->spinAxis.x; b[1] = sh->spinAxis.y; b[2] = sh->spinAxis.z; b[3] = sh->spinSpeed;
+            e.group = (float)i;
+            c = (Vector3){ 0 };
+        }
         LineAttr f = e;
+        f.intensity = sh->intensity * p->faceIntensity;
         shape_solid(edges, faces, crystal_solid(sh->kind), c, sh->ax, sh->ay, sh->az, e, f, w);
     }
 }

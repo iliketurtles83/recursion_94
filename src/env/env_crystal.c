@@ -19,13 +19,16 @@
 #define DEG (3.14159265358979f / 180.0f)
 #define STREAK_COUNT 1200
 
-enum { CB_EDGES = 0 };   // chunk batches
+enum { CB_EDGES = 0, CB_FACES = 1 };   // chunk batches
 enum { F_FIELD = 1 };    // RNG feature streams
+_Static_assert(2 * CF_TUMBLE_SLOTS <= CHUNK_UNIFORMS, "tumble slots must fit the chunk uniforms");
 
 typedef struct CrystalParams {
     float bgGlow, dust;
     float fogStart, fogEnd;
-    bool  showBackground, showStreaks, showShapes;
+    bool  showBackground, showStreaks, showShapes, showFaces;
+    float whiteCore, faceFresnel;
+    float clearStrength, clearRadius, clearNear, clearFar;
     CrystalFieldParams field;
     StreakParams streaks;
 } CrystalParams;
@@ -33,7 +36,7 @@ typedef struct CrystalParams {
 typedef struct CrystalState {
     uint64_t     seed;
     ShaderLib   *sl;
-    int          shBg, shLines;
+    int          shBg, shEdge, shFace;
     Material     mat;
     ParamRegistry *reg;     // registry of the last registerParams call, for the flight's steerLimit
     PathStyle    path;
@@ -91,9 +94,20 @@ static void cf_register(Environment *env, ParamRegistry *reg)
     params_float(reg, g, "cfEdgeIntensity", &f->edgeIntensity, 1.5f, 0.0f, 10.0f);
     params_float(reg, g, "cfEdgeWidth", &f->edgeWidth, 0.012f, 0.0f, 0.1f);
     params_float(reg, g, "cfEdgeWidthMin", &f->edgeWidthMin, 0.02f, 0.0f, 0.2f);
+    params_float(reg, g, "cfFaceIntensity", &f->faceIntensity, 0.025f, 0.0f, 1.0f);
+    params_float(reg, g, "cfTumble", &f->tumble, 0.3f, 0.0f, 2.0f);
     f->smallMin = 0.5f; f->smallMax = 2.0f;
     f->mediumMin = 2.0f; f->mediumMax = 6.0f;
     f->giantMin = 8.0f; f->giantMax = 16.0f;
+
+    g = "Crystal Look";
+    params_bool(reg, g, "cfShowFaces", &p->showFaces, true);
+    params_float(reg, g, "cfWhiteCore", &p->whiteCore, 0.15f, 0.0f, 1.0f);
+    params_float(reg, g, "cfFaceFresnel", &p->faceFresnel, 1.5f, 0.0f, 10.0f);
+    params_float(reg, g, "cfClearStrength", &p->clearStrength, 0.8f, 0.0f, 1.0f);
+    params_float(reg, g, "cfClearRadius", &p->clearRadius, 0.2f, 0.01f, 1.0f);
+    params_float(reg, g, "cfClearNear", &p->clearNear, 50.0f, 0.0f, 400.0f);
+    params_float(reg, g, "cfClearFar", &p->clearFar, 140.0f, 0.0f, 600.0f);
 
     g = "Crystal Streaks";
     StreakParams *sk = &p->streaks;
@@ -124,7 +138,8 @@ static void cf_init(Environment *env, uint64_t seed, ShaderLib *sl)
     st->sl = sl;
     if (sl) {
         st->shBg = sl_load(sl, "fullscreen.vs", "background.fs");
-        st->shLines = sl_load(sl, "object.vs", "line_facing.fs");
+        st->shEdge = sl_load(sl, "crystal.vs", "crystal_edge.fs");
+        st->shFace = sl_load(sl, "crystal_face.vs", "crystal_face.fs");
         st->mat = LoadMaterialDefault();
     }
     streaks_init(&st->streaks, sl, STREAK_COUNT);
@@ -151,7 +166,7 @@ static void cf_build_chunk(Environment *env, const PathSystem *path, int chunkIn
     static CrystalShape shapes[CF_MAX_SHAPES];
     uint64_t base = ct_hash64_3(st->seed, ((uint64_t)ENV_CRYSTAL << 8) | F_FIELD, (uint64_t)(int64_t)chunkIndex);
     int n = crystal_field_plan(&f, path, base, out->s0, out->s1, shapes, CF_MAX_SHAPES);
-    crystal_field_build(&f, shapes, n, out->origin, &out->geo[CB_EDGES], NULL);
+    crystal_field_build(&f, shapes, n, out->origin, &out->geo[CB_EDGES], &out->geo[CB_FACES], out->uniforms);
 }
 
 static void cf_upload(Environment *env, ChunkCpu *in, ChunkGpu *out) { chunk_upload_default(in, out); }
@@ -205,24 +220,47 @@ static void cf_draw_background(Environment *env, const FrameContext *ctx)
 
 static void cf_draw_opaque(Environment *env, const FrameContext *ctx, const ChunkGpu *const *chunks, int n) { }
 
-static void cf_draw_emissive(Environment *env, const FrameContext *ctx, const ChunkGpu *const *chunks, int n)
+// Uniforms shared by the edge and face programs: atmosphere and the clear centre.
+static void set_shape_uniforms(CrystalState *st, int sh, const FrameContext *ctx)
 {
-    CrystalState *st = (CrystalState *)env->state;
-    ShaderLib *sl = st->sl;
-    int sh = st->shLines;
-    env_set_common_uniforms(sl, sh, ctx);
-    sl_f1(sl, sh, "uEdgeMix", 0.0f);
-    sl_f1(sl, sh, "uFlicker", 0.0f);
-    st->mat.shader = sl_shader(sl, sh);
+    const CrystalParams *p = &st->p;
+    env_set_common_uniforms(st->sl, sh, ctx);
+    sl_f2(st->sl, sh, "uVanishPx", ctx->vanishingUV.x * (float)ctx->width, ctx->vanishingUV.y * (float)ctx->height);
+    sl_f4(st->sl, sh, "uClear", p->clearStrength, p->clearRadius * (float)ctx->height, p->clearNear, p->clearFar);
+}
+
+static void draw_batch(CrystalState *st, const FrameContext *ctx, int sh, const ChunkGpu *const *chunks, int n, int batch)
+{
+    st->mat.shader = sl_shader(st->sl, sh);
     for (int i = 0; i < n; i++) {
         const ChunkGpu *c = chunks[i];
-        sl_f1(sl, sh, "uChunkFade", env_chunk_fade(c, ctx->time));
+        sl_f1(st->sl, sh, "uChunkFade", env_chunk_fade(c, ctx->time));
+        sl_vec4v(st->sl, sh, "uShapeA", c->uniforms[0], CF_TUMBLE_SLOTS);
+        sl_vec4v(st->sl, sh, "uShapeB", c->uniforms[CF_TUMBLE_SLOTS], CF_TUMBLE_SLOTS);
         Matrix xf = env_chunk_transform(c, ctx->renderOrigin);
         for (int m = 0; m < c->meshCount; m++) {
+            if (c->meshBatch[m] != batch) continue;
             DrawMesh(c->meshes[m], st->mat, xf);
             ctx->stats->drawCalls++;
             ctx->stats->vertices += c->meshes[m].vertexCount;
         }
+    }
+}
+
+static void cf_draw_emissive(Environment *env, const FrameContext *ctx, const ChunkGpu *const *chunks, int n)
+{
+    CrystalState *st = (CrystalState *)env->state;
+    const CrystalParams *p = &st->p;
+    if (p->showShapes) {
+        if (p->showFaces) {
+            set_shape_uniforms(st, st->shFace, ctx);
+            sl_f1(st->sl, st->shFace, "uFaceBase", 1.0f);
+            sl_f1(st->sl, st->shFace, "uFaceFresnel", p->faceFresnel);
+            draw_batch(st, ctx, st->shFace, chunks, n, CB_FACES);
+        }
+        set_shape_uniforms(st, st->shEdge, ctx);
+        sl_f1(st->sl, st->shEdge, "uWhiteCore", p->whiteCore);
+        draw_batch(st, ctx, st->shEdge, chunks, n, CB_EDGES);
     }
     if (st->p.showStreaks) streaks_draw(&st->streaks, &st->p.streaks, ctx);
 }

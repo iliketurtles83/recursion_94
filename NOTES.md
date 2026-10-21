@@ -824,3 +824,22 @@ Plan: `PLAN_ENV4_CRYSTAL_FIELD.md`. Targets: `reference/concepts/env4-crystal-fi
 - Note: `--shot N` jumps to arc length N, not N seconds. Shots: `shots/env4/b_crystal_300*.png`, `_700`.
 - **Open for Phase C:** far shapes crowd the vanishing point where the path curves; the concept keeps the
   middle clearer. Edges are still paler than the concept's saturated orange.
+
+## Phase C — Faces, edge colour, clear centre, tumble (2026-10-21)
+
+- Own shader pair, so no shared program state: `crystal.vs` + `crystal_edge.fs` (edges) and
+  `crystal_face.vs` + `crystal_face.fs` (faces). `object.vs` already tumbles objects, but only 16 per chunk
+  and through a program the other environments share.
+- **Tumble**: the first 48 shapes of a chunk (`CF_TUMBLE_SLOTS`; ~29 on average, 41 at most) are built around
+  their own centre; centre + phase and axis + speed go to the chunk uniforms (96 vec4 = 2 × 48). Speed up to
+  `cfTumble` 0.3 rad/s, slower for big shapes, random sign. The keep-out uses the bounding sphere, so it holds at
+  any rotation.
+- **Edge colour**: `cfWhiteCore` 0.15 instead of `line_facing.fs`'s fixed 0.5, so the edges stay saturated orange.
+- **Faces**: additive, no depth write; `cfFaceIntensity` 0.025 of the edge intensity × (1 + `cfFaceFresnel` 1.5 ×
+  grazing³). At 0.06 / 2.5 they read as solid orange fills; the concept's faces are dark glass.
+- **Clear centre**: both shaders fade shapes near the vanishing point (`cfClearRadius` 0.2 of the screen height)
+  when they are far (`cfClearNear` 50 → `cfClearFar` 140), by up to `cfClearStrength` 0.8. Near shapes are never faded.
+- **Accept:** tests 111 passed; `cfTumble` 0 vs 2 gives different, intact shapes. Bench 20 s at speed 120: 39 draw
+  calls, max chunk build 0.27 ms, streaming ≤ 0.31 ms per frame, max GL coordinate 1362, 75k vertices.
+  Shots: `shots/env4/c_f025.png` (defaults) against `reference/concepts/env4-crystal-field_*.png`.
+  Shimmer at distance still needs a live look.

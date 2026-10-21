@@ -22,6 +22,9 @@
 enum { CF_TETRA, CF_OCTA, CF_ICOSA, CF_CUBE, CF_PRISM, CF_BIPYRAMID, CF_KIND_COUNT };
 
 #define CF_MAX_SHAPES 160
+// Shapes per chunk that tumble: two vec4 chunk uniforms each (centre + phase, axis + speed).
+// Shapes beyond these stand still.
+#define CF_TUMBLE_SLOTS 48
 
 typedef struct CrystalFieldParams {
     float laneRadius;        // path radius (steering box half size = steerLimit x laneRadius)
@@ -39,6 +42,8 @@ typedef struct CrystalFieldParams {
     float edgeIntensity;
     float edgeWidth;         // edge half width per unit of shape size
     float edgeWidthMin;
+    float faceIntensity;     // face brightness relative to the edges
+    float tumble;            // largest angular speed (rad/s); giants turn slower
 } CrystalFieldParams;
 
 typedef struct CrystalShape {
@@ -50,6 +55,8 @@ typedef struct CrystalShape {
     Color   color;
     float   intensity;
     float   hash;
+    Vector3 spinAxis;
+    float   spinSpeed, spinPhase;
 } CrystalShape;
 
 const ShapeSolid *crystal_solid(int kind);
@@ -62,8 +69,10 @@ double crystal_path_reach(const CrystalFieldParams *p);
 // Shapes owned by the chunk [s0, s1). base: per-seed, per-chunk hash. Returns the count.
 int  crystal_field_plan(const CrystalFieldParams *p, const PathSystem *path, uint64_t base, double s0, double s1,
                         CrystalShape *out, int max);
-// Edge (and, if faces is not NULL, face) geometry of the shapes, relative to origin.
+// Edge (and, if faces is not NULL, face) geometry of the shapes, relative to origin. The first
+// CF_TUMBLE_SLOTS shapes are built around their own centre with their slot as group, and their
+// centre/phase and axis/speed go to uniforms[slot] and uniforms[CF_TUMBLE_SLOTS + slot].
 void crystal_field_build(const CrystalFieldParams *p, const CrystalShape *s, int n, DVec3 origin,
-                         LineGeo *edges, LineGeo *faces);
+                         LineGeo *edges, LineGeo *faces, float (*uniforms)[4]);
 
 #endif
