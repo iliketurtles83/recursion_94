@@ -45,6 +45,7 @@ const char *ct_environment_name(int id)
     case ENV_CITY: return "Neon Grid City";
     case ENV_CORRIDOR: return "Server Corridor";
     case ENV_GREYBOX: return "Greybox";
+    case ENV_CRYSTAL: return "Crystal Field";
     }
     return "?";
 }
@@ -397,6 +398,7 @@ CtTunnel *ct_create(const CtConfig *cfg)
     ct->envs[ENV_CITY] = env_city_create();
     ct->envs[ENV_CORRIDOR] = env_corridor_create();
     ct->envs[ENV_GREYBOX] = env_greybox_create();
+    ct->envs[ENV_CRYSTAL] = env_crystal_create();
     ct->envId = (cfg->environment >= 0 && cfg->environment < ENV_COUNT) ? cfg->environment : ENV_VORTEX;
     ct->env = &ct->envs[ct->envId];
     register_env_params(ct);

@@ -53,6 +53,7 @@ set(CT_MODULE_SRC
   src/env/env_city.c
   src/env/env_corridor.c
   src/env/env_greybox.c
+  src/env/env_crystal.c
   src/env/corridor_pillars.c
   src/env/corridor_beams.c
   src/env/city_towers.c

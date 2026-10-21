@@ -756,6 +756,7 @@ static void vortex_draw_background(Environment *env, const FrameContext *ctx)
     sl_v3(sl, sh, "uGlowColor", ct_srgb_to_linear(theme_color(&st->p,(Color){ 0x2A, 0x7A, 0xB0, 255 })));
     sl_f1(sl, sh, "uGlow", st->p.bgGlow * (0.6f + 0.8f * ctx->intensity));
     sl_f1(sl, sh, "uDust", st->p.dust);
+    sl_f1(sl, sh, "uGlowFocus", 0.0f);
     pipe_fullscreen_quad();
     EndShaderMode();
     ctx->stats->drawCalls++;

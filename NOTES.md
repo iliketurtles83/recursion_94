@@ -781,3 +781,21 @@ hiding speed and drift. Not a game; later steps only if this raises questions.
 - **Accept:** tests 99 passed (new: style equals vortex defaults; order-independent build;
   96 rings + 20 envelope circles + rails over 960 m, no boundary duplicates). Shots at s = 300
   cruise / boost / vortex at the same seed: same course.
+
+# Environment #4 — Crystal Field
+
+Plan: `PLAN_ENV4_CRYSTAL_FIELD.md`. Targets: `reference/concepts/env4-crystal-field_*.png`, and
+`reference/t_4.0s.png` / `t_4.25s.png`. Registry id `ENV_CRYSTAL = 5` (id 4 is the greybox).
+
+## Phase A — Stub (2026-10-21)
+
+- `env/env_crystal.c`: open path with no floor, ceiling, walls or twist; lane radius 12,
+  yaw step 8°, pitch 8°. Background, warm vanishing glow and sparse white streaks (cylinder,
+  centre clear). Empty chunks. Params in "Crystal Path", "Crystal" and "Crystal Streaks", all `cf*`.
+- `background.fs` gets `uGlowFocus` (0 = the vortex's wide glow with a floor everywhere, 1 = a tight
+  halo plus a hot centre). The orange glow with the old floor turned the whole sky brown. The vortex
+  sets 0 every frame (shared-program rule).
+- Run: `./build/cybertunnel --sandbox --env 5`.
+- **Accept:** tests 105 passed (new: open style without twist; pitch ≤ 8.2° and roll 0 over
+  5 seeds × 20 000 units; order-independent build). Vortex, city, corridor and greybox shots at
+  seed 7, 4 s are byte-identical to before.

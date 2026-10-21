@@ -668,6 +668,43 @@ static void test_greybox(void)
     env.unload(&env);
 }
 
+// Environment #4 (crystal field): open void without floor or walls, no roll, gentle pitch.
+static void test_crystal(void)
+{
+    Environment env = env_crystal_create();
+    ParamRegistry reg;
+    params_clear(&reg);
+    env.registerParams(&env, &reg);
+    env.init(&env, 17, NULL);
+    PathStyle st = env.pathStyle(&env);
+    CHECK(!st.hasWalls && st.floorDepth == 0.0f && st.ceilingHeight == 0.0f && st.twistRateMax == 0.0f,
+          "crystal style is open, without floor, ceiling or twist");
+    double worstPitch = 0.0, worstRoll = 0.0, maxCurv = 0.0;
+    for (int seed = 1; seed <= 5; seed++) {
+        PathSystem p;
+        path_init(&p, (uint64_t)seed * 7919u, st);
+        for (double s = 0.0; s <= 20000.0; s += PATH_DS) {
+            path_ensure(&p, s - 100.0, s + 50.0);
+            PathSample q = path_sample(&p, s);
+            double pitch = fabs(asin(q.T.y)) * 180.0 / 3.14159265358979;
+            if (pitch > worstPitch) worstPitch = pitch;
+            if (fabs(q.roll) > worstRoll) worstRoll = fabs(q.roll);
+            if (q.curvature > maxCurv) maxCurv = q.curvature;
+        }
+        path_free(&p);
+    }
+    printf("  crystal path (5 seeds x 20000 units): max pitch %.1f deg (style %.1f), max roll %.2e, maxCurv %.5f (limit %.5f)\n",
+           worstPitch, st.maxPitchDeg, worstRoll, maxCurv, path_curvature_limit(&st));
+    CHECK(worstPitch <= st.maxPitchDeg * 1.25, "crystal path pitch within the style limit (%.1f deg)", worstPitch);
+    CHECK(worstRoll == 0.0, "crystal path has no roll");
+    CHECK(maxCurv <= path_curvature_limit(&st), "crystal curvature within limit");
+
+    enum { N = 60 };
+    uint64_t h[N];
+    CHECK(build_order_independent(&env, 17, N, h), "crystal chunk build independent of order (%d chunks)", N);
+    env.unload(&env);
+}
+
 static void test_corridor(void)
 {
     Environment env = env_corridor_create();
@@ -1097,6 +1134,7 @@ int main(void)
     test_corridor_decor();
     test_corridor_beams();
     test_greybox();
+    test_crystal();
     test_params();
     printf("%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
