@@ -21,6 +21,7 @@ typedef struct FlightInput {
 typedef struct FlightParams {
     float baseSpeed, boostSpeed, speedResponse;
     float steerLimit;        // fraction of R
+    float steerSoftEdge;     // cushion band inside the limit, fraction of it (0 = hard stop)
     float steerAccel, steerDamping;
     float vectoringStrength, vectoringAngleDeg;
     float maxBankDeg, maxPitchDeg;

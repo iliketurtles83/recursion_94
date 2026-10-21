@@ -11,7 +11,8 @@ void flight_register_params(FlightParams *p, ParamRegistry *reg)
     params_float(reg, g, "baseSpeed", &p->baseSpeed, 25.0f, 0.0f, 300.0f);
     params_float(reg, g, "boostSpeed", &p->boostSpeed, 40.0f, 0.0f, 400.0f);
     params_float(reg, g, "speedResponse", &p->speedResponse, 2.5f, 0.1f, 20.0f);
-    params_float(reg, g, "steerLimit", &p->steerLimit, 0.55f, 0.0f, 0.9f);
+    params_float(reg, g, "steerLimit", &p->steerLimit, 0.8f, 0.0f, 0.95f);
+    params_float(reg, g, "steerSoftEdge", &p->steerSoftEdge, 0.25f, 0.0f, 0.6f);
     params_float(reg, g, "steerAccel", &p->steerAccel, 60.0f, 1.0f, 300.0f);
     params_float(reg, g, "steerDamping", &p->steerDamping, 5.0f, 0.1f, 30.0f);
     p->dartShip = false;   // registered by the module as the Sim parameter shipDart
@@ -68,6 +69,20 @@ Vector3 flight_exhaust_offset(int engine,Vector2 angles,float plumeLength)
     p.x+=engine?.48f:-.48f;p.y-=.05f;p.z-=1.40f;return p;
 }
 static float clampf(float x, float lo, float hi) { return x < lo ? lo : (x > hi ? hi : x); }
+
+// Edge cushion: acceleration along the outward direction for a ship at distance d (outward
+// velocity v) from the centre. Zero until the last `soft` fraction of the limit, then a spring
+// that balances full steering input exactly at the limit, plus damping of outward motion.
+static float edge_cushion(float d, float v, float limit, float soft, float accel, float damping)
+{
+    float band = limit * soft;
+    float pen = d - (limit - band);
+    if (band <= 1e-4f || pen <= 0.0f) return 0.0f;
+    float t = pen / band;
+    float a = -accel * t;
+    if (v > 0.0f) a -= 2.0f * damping * t * v;
+    return a;
+}
 
 // Implicit critically damped spring step.
 static void spring(float *x, float *v, float target, float omega, float dt)
@@ -177,12 +192,35 @@ void flight_step(FlightState *st, const FlightParams *p, const PathSystem *path,
     }
     DVec3 force=dv_add(dv_scale(st->shipRight,reaction.x),dv_scale(st->shipUp,reaction.y));
     float thrust=p->steerAccel*p->vectoringStrength*st->vectorPower;
-    st->vx += (sx*p->steerAccel+thrust*(float)dv_dot(force,ps.B)-st->vx*p->steerDamping)*fdt;
-    st->vy += (sy*p->steerAccel+thrust*(float)dv_dot(force,ps.N)-st->vy*p->steerDamping)*fdt;
+    const PathStyle *style = &path->style;
+    // Soft edge: a box per axis without walls, radial inside a tunnel (matches the clamp below).
+    float edgeX = 0.0f, edgeY = 0.0f;
+    if (!style->hasWalls) {
+        float flipX = st->x < 0.0f ? -1.0f : 1.0f, flipY = st->y < 0.0f ? -1.0f : 1.0f;
+        edgeX = flipX * edge_cushion(fabsf(st->x), st->vx * flipX, limit, p->steerSoftEdge, p->steerAccel, p->steerDamping);
+        edgeY = flipY * edge_cushion(fabsf(st->y), st->vy * flipY, limit, p->steerSoftEdge, p->steerAccel, p->steerDamping);
+    } else {
+        float r0 = sqrtf(st->x * st->x + st->y * st->y);
+        if (r0 > 1e-4f) {
+            float nx = st->x / r0, ny = st->y / r0;
+            float a = edge_cushion(r0, st->vx * nx + st->vy * ny, limit, p->steerSoftEdge, p->steerAccel, p->steerDamping);
+            edgeX = a * nx; edgeY = a * ny;
+        }
+    }
+    st->vx += (sx*p->steerAccel+thrust*(float)dv_dot(force,ps.B)+edgeX-st->vx*p->steerDamping)*fdt;
+    st->vy += (sy*p->steerAccel+thrust*(float)dv_dot(force,ps.N)+edgeY-st->vy*p->steerDamping)*fdt;
     st->x += st->vx * fdt;
     st->y += st->vy * fdt;
+    // Hard limit behind the cushion (boost vectoring can push past the spring).
     float r = sqrtf(st->x * st->x + st->y * st->y);
-    if (r > limit && r > 1e-4f) {
+    if (!style->hasWalls) {
+        // Open environments: a box, |x| and |y| each up to the limit.
+        if (st->x > limit) { st->x = limit; if (st->vx > 0.0f) st->vx = 0.0f; }
+        if (st->x < -limit) { st->x = -limit; if (st->vx < 0.0f) st->vx = 0.0f; }
+        if (st->y > limit) { st->y = limit; if (st->vy > 0.0f) st->vy = 0.0f; }
+        if (st->y < -limit) { st->y = -limit; if (st->vy < 0.0f) st->vy = 0.0f; }
+    } else if (r > limit && r > 1e-4f) {
+        // Tunnels: a circle that follows the walls.
         float k = limit / r;
         st->x *= k; st->y *= k;
         // remove outward velocity
@@ -191,7 +229,6 @@ void flight_step(FlightState *st, const FlightParams *p, const PathSystem *path,
         if (vo > 0.0f) { st->vx -= vo * nx; st->vy -= vo * ny; }
     }
     // Floor / ceiling (open environments): a flat clamp on the vertical offset.
-    const PathStyle *style = &path->style;
     if (style->floorDepth > 0.0f) {
         float yMin = fminf(-style->floorDepth + FLIGHT_CLEARANCE, 0.0f);
         if (st->y < yMin) { st->y = yMin; if (st->vy < 0.0f) st->vy = 0.0f; }

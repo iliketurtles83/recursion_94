@@ -261,7 +261,8 @@ unknown keys are skipped, and loading first resets everything to defaults).
 | Flight | `baseSpeed` | float | 25 | 0 | 300 |
 | Flight | `boostSpeed` | float | 40 | 0 | 400 |
 | Flight | `speedResponse` | float | 2.5 | 0.1 | 20 |
-| Flight | `steerLimit` | float | 0.55 | 0 | 0.9 |
+| Flight | `steerLimit` | float | 0.8 | 0 | 0.95 |
+| Flight | `steerSoftEdge` | float | 0.25 | 0 | 0.6 |
 | Flight | `steerAccel` | float | 60 | 1 | 300 |
 | Flight | `steerDamping` | float | 5 | 0.1 | 30 |
 | Flight | `maxBankDeg` | float | 35 | 0 | 80 |
