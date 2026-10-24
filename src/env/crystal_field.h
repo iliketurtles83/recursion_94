@@ -46,6 +46,18 @@ typedef struct CrystalFieldParams {
     float tumble;            // largest angular speed (rad/s); giants turn slower
 } CrystalFieldParams;
 
+// Pacing multipliers on the field parameters at an arc length (1 = unchanged). Fractions are
+// clamped after scaling, and band never grows the field past bandMax (pathReach stays valid).
+typedef struct CrystalMod {
+    float clusters, scatter;     // x mean counts
+    float clusterSize;           // x clusterMin / clusterMax
+    float band;                  // x bandMax (<= 1)
+    float nearBias;              // x nearBias
+    float side;                  // x sideBias
+    float giant, medium;         // x giantFrac, mediumFrac
+} CrystalMod;
+typedef CrystalMod (*CrystalModFn)(const void *user, double s);
+
 typedef struct CrystalShape {
     DVec3   pos;             // world centre
     Vector3 ax, ay, az;      // basis: rotation x per-axis scale
@@ -66,9 +78,11 @@ double crystal_keepout(const CrystalFieldParams *p);
 double crystal_path_distance(const PathSystem *path, DVec3 p, double sCenter, double reach, DVec3 *nearest);
 // How far beyond a chunk the placement samples the path (Environment.pathReach).
 double crystal_path_reach(const CrystalFieldParams *p);
-// Shapes owned by the chunk [s0, s1). base: per-seed, per-chunk hash. Returns the count.
+// Shapes owned by the chunk [s0, s1). base: per-seed, per-chunk hash. mod (may be NULL) scales
+// the parameters: counts by its value at the chunk middle, each group by its value at the
+// group's arc length. Returns the count.
 int  crystal_field_plan(const CrystalFieldParams *p, const PathSystem *path, uint64_t base, double s0, double s1,
-                        CrystalShape *out, int max);
+                        CrystalModFn mod, const void *modUser, CrystalShape *out, int max);
 // Edge (and, if faces is not NULL, face) geometry of the shapes, relative to origin. The first
 // CF_TUMBLE_SLOTS shapes are built around their own centre with their slot as group, and their
 // centre/phase and axis/speed go to uniforms[slot] and uniforms[CF_TUMBLE_SLOTS + slot].

@@ -8,6 +8,7 @@
 // Placement and geometry of the polyhedra: crystal_field.c.
 #include "env_common.h"
 #include "crystal_field.h"
+#include "core/pacing.h"
 #include "core/rng.h"
 #include "render/pipeline.h"
 #include "render/rmath.h"
@@ -20,13 +21,42 @@
 #define STREAK_COUNT 1200
 
 enum { CB_EDGES = 0, CB_FACES = 1 };   // chunk batches
-enum { F_FIELD = 1 };    // RNG feature streams
+enum { F_FIELD = 1, F_PACING = 2 };    // RNG feature streams
 _Static_assert(2 * CF_TUMBLE_SLOTS <= CHUNK_UNIFORMS, "tumble slots must fit the chunk uniforms");
 
+// Pacing archetypes: a hash-driven Markov chain over runs of chunks (core/pacing.c), blended
+// from the previous chunk's archetype across each chunk.
+typedef struct CrystalArch {
+    CrystalMod mod;
+    float glow;              // x background glow
+    float energy;            // pacing energy 0..1
+} CrystalArch;
+
+enum { CA_DRIFT, CA_SHOAL, CA_GIANTS, CA_VOID, CA_COUNT, CA_DEFAULT = CA_COUNT };
+static const char *CA_NAMES[CA_COUNT + 1] = { "DRIFT", "SHOAL", "GIANTS", "VOID", "DEFAULT" };
+//                       clust scat  csize band  near  side  giant  med    glow  energy
+static const CrystalArch CA_TABLE[CA_COUNT + 1] = {
+    [CA_DRIFT]   = { { 1.00f, 1.00f, 1.0f, 1.00f, 1.0f, 1.00f,  1.0f, 1.00f }, 1.0f, 0.45f },   // the concept framing
+    [CA_SHOAL]   = { { 1.80f, 2.20f, 1.3f, 0.55f, 1.6f, 0.80f,  0.0f, 1.15f }, 0.9f, 0.85f },   // dense small shapes close to the lane
+    [CA_GIANTS]  = { { 0.50f, 0.50f, 0.4f, 1.00f, 0.5f, 1.33f, 20.0f, 0.60f }, 1.2f, 0.30f },   // a few huge shapes at the frame edges
+    [CA_VOID]    = { { 0.08f, 0.15f, 0.6f, 1.00f, 0.8f, 1.00f,  0.0f, 0.80f }, 2.4f, 0.10f },   // almost empty, the glow brightens
+    [CA_DEFAULT] = { { 1.00f, 1.00f, 1.0f, 1.00f, 1.0f, 1.00f,  1.0f, 1.00f }, 1.0f, 0.45f },
+};
+static const int CA_RUN_MIN[CA_COUNT] = { 4, 2, 2, 1 };
+static const int CA_RUN_MAX[CA_COUNT] = { 8, 4, 4, 2 };
+static const float CA_TRANSITION[CA_COUNT][CA_COUNT] = {
+    { 0.00f, 0.45f, 0.35f, 0.20f },
+    { 0.60f, 0.00f, 0.15f, 0.25f },
+    { 0.55f, 0.25f, 0.00f, 0.20f },
+    { 0.50f, 0.30f, 0.20f, 0.00f },
+};
+static const PacingTable CA_PACING = { CA_COUNT, CA_DRIFT, CA_RUN_MIN, CA_RUN_MAX, &CA_TRANSITION[0][0] };
+#define ARCH_CACHE 8   // chunks around the one being built (groups sample their own chunk only)
 typedef struct CrystalParams {
     float bgGlow, dust;
     float fogStart, fogEnd;
-    bool  showBackground, showStreaks, showShapes, showFaces;
+    bool  showBackground, showStreaks, showShapes, showFaces, pacing;
+    int   forceArch;     // -1 = pacing chain, else every chunk is this archetype
     float whiteCore, faceFresnel;
     float clearStrength, clearRadius, clearNear, clearFar;
     CrystalFieldParams field;
@@ -42,6 +72,8 @@ typedef struct CrystalState {
     PathStyle    path;
     CrystalParams p;
     StreakSystem streaks;
+    bool         archValid;
+    int          archK0, archCache[ARCH_CACHE];   // archetypes of chunks archK0.. (build scratch)
 } CrystalState;
 
 static const Color CF_BG   = { 0x05, 0x07, 0x0D, 255 };
@@ -79,6 +111,8 @@ static void cf_register(Environment *env, ParamRegistry *reg)
     g = "Crystal Field";
     CrystalFieldParams *f = &p->field;
     params_bool(reg, g, "cfShowShapes", &p->showShapes, true);
+    params_bool(reg, g, "cfPacing", &p->pacing, true);
+    params_int(reg, g, "cfArchetype", &p->forceArch, -1, -1, CA_COUNT - 1);   // DRIFT SHOAL GIANTS VOID
     params_float(reg, g, "cfClearance", &f->clearance, 3.0f, 0.0f, 20.0f);
     params_float(reg, g, "cfBandMax", &f->bandMax, 90.0f, 20.0f, 200.0f);
     params_float(reg, g, "cfClusters", &f->clusters, 3.0f, 0.0f, 10.0f);
@@ -145,7 +179,46 @@ static void cf_init(Environment *env, uint64_t seed, ShaderLib *sl)
     streaks_init(&st->streaks, sl, STREAK_COUNT);
 }
 
-static void cf_reseed(Environment *env, uint64_t seed) { ((CrystalState *)env->state)->seed = seed; }
+static void cf_reseed(Environment *env, uint64_t seed)
+{
+    CrystalState *st = (CrystalState *)env->state;
+    st->seed = seed;
+    st->archValid = false;
+}
+
+static uint64_t pacing_base(const CrystalState *st) { return ct_hash64_3(st->seed, ENV_CRYSTAL, F_PACING); }
+
+static int archetype_of_chunk(const CrystalState *st, int k)
+{
+    if (!st->p.pacing) return CA_DEFAULT;
+    if (st->p.forceArch >= 0) return st->p.forceArch;
+    if (k < 0) k = 0;
+    if (st->archValid && k >= st->archK0 && k < st->archK0 + ARCH_CACHE) return st->archCache[k - st->archK0];
+    return pacing_archetype(&CA_PACING, pacing_base(st), k);   // every flight starts in a drift
+}
+
+// Blended archetype at s. Depends only on (seed, s), never on the chunk being built.
+static CrystalArch arch_at(const CrystalState *st, double s)
+{
+    int k = chunk_index_at(s);
+    int a = archetype_of_chunk(st, k - 1), b = archetype_of_chunk(st, k);
+    if (a == b) return CA_TABLE[b];
+    CrystalArch r;
+    pacing_lerp(&r.mod.clusters, &CA_TABLE[a].mod.clusters, &CA_TABLE[b].mod.clusters,
+                (int)(sizeof(CrystalArch) / sizeof(float)), pacing_blend_t(s, k * CHUNK_LEN, CHUNK_LEN));
+    return r;
+}
+
+static CrystalMod field_mod_cb(const void *user, double s) { return arch_at((const CrystalState *)user, s).mod; }
+
+static void cache_archetypes(CrystalState *st, int k)
+{
+    st->archValid = false;
+    if (!st->p.pacing) return;
+    st->archK0 = k - ARCH_CACHE / 2;
+    pacing_archetypes(&CA_PACING, pacing_base(st), st->archK0, ARCH_CACHE, st->archCache);
+    st->archValid = true;
+}
 
 // The flight model clamps the ship to steerLimit x radius. Read it from the registry when the
 // flight parameters are present (in the running module); tests fall back to the default.
@@ -161,17 +234,22 @@ static CrystalFieldParams field_params(const CrystalState *st)
 static void cf_build_chunk(Environment *env, const PathSystem *path, int chunkIndex, ChunkCpu *out)
 {
     CrystalState *st = (CrystalState *)env->state;
+    cache_archetypes(st, chunkIndex);
+    out->archetype = archetype_of_chunk(st, chunkIndex);
     if (!st->p.showShapes) return;
     CrystalFieldParams f = field_params(st);
     static CrystalShape shapes[CF_MAX_SHAPES];
     uint64_t base = ct_hash64_3(st->seed, ((uint64_t)ENV_CRYSTAL << 8) | F_FIELD, (uint64_t)(int64_t)chunkIndex);
-    int n = crystal_field_plan(&f, path, base, out->s0, out->s1, shapes, CF_MAX_SHAPES);
+    int n = crystal_field_plan(&f, path, base, out->s0, out->s1, field_mod_cb, st, shapes, CF_MAX_SHAPES);
     crystal_field_build(&f, shapes, n, out->origin, &out->geo[CB_EDGES], &out->geo[CB_FACES], out->uniforms);
 }
 
 static void cf_upload(Environment *env, ChunkCpu *in, ChunkGpu *out) { chunk_upload_default(in, out); }
 static void cf_release(Environment *env, ChunkGpu *gpu) { chunk_release_default(gpu); }
-static float cf_energy(const Environment *env, const PathSystem *path, double s) { return 0.3f; }
+static float cf_energy(const Environment *env, const PathSystem *path, double s)
+{
+    return arch_at((const CrystalState *)env->state, s).energy;
+}
 
 // Open void: fog toward the dark background, far shapes sink into it.
 static void cf_atmosphere(const Environment *env, Atmosphere *atmo)
@@ -185,6 +263,14 @@ static void cf_atmosphere(const Environment *env, Atmosphere *atmo)
 }
 
 static void cf_update(Environment *env, const FrameContext *ctx) { }
+
+// Archetype glow averaged over the stretch ahead, so the sky brightens as a void comes into view.
+static float glow_ahead(const CrystalState *st, double s)
+{
+    float g = 0.0f;
+    for (int i = 0; i < 4; i++) g += arch_at(st, s + 50.0 * i).glow;
+    return 0.25f * g;
+}
 
 static void cf_draw_background(Environment *env, const FrameContext *ctx)
 {
@@ -208,7 +294,7 @@ static void cf_draw_background(Environment *env, const FrameContext *ctx)
     sl_f1(sl, sh, "uTanHalf", tanf(ctx->fovy * 0.5f * DEG));
     sl_v3(sl, sh, "uBgColor", ct_srgb_to_linear(CF_BG));
     sl_v3(sl, sh, "uGlowColor", ct_srgb_to_linear(CF_GLOW));
-    sl_f1(sl, sh, "uGlow", st->p.bgGlow * (0.6f + 0.8f * ctx->intensity));
+    sl_f1(sl, sh, "uGlow", st->p.bgGlow * glow_ahead(st, ctx->sShip) * (0.6f + 0.8f * ctx->intensity));
     sl_f1(sl, sh, "uDust", st->p.dust);
     sl_f1(sl, sh, "uGlowFocus", 1.0f);
     pipe_fullscreen_quad();
@@ -265,7 +351,10 @@ static void cf_draw_emissive(Environment *env, const FrameContext *ctx, const Ch
     if (st->p.showStreaks) streaks_draw(&st->streaks, &st->p.streaks, ctx);
 }
 
-static const char *cf_label(const Environment *env, int archetype) { return "CRYSTAL"; }
+static const char *cf_label(const Environment *env, int archetype)
+{
+    return (archetype >= 0 && archetype <= CA_COUNT) ? CA_NAMES[archetype] : "?";
+}
 
 static void cf_unload(Environment *env)
 {

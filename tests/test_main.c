@@ -717,6 +717,13 @@ static double seg_distance(DVec3 p, DVec3 a, DVec3 b)
 
 // Crystal field: solid topology, no shape inside the steering box keep-out at any arc length,
 // build time and vertex budget.
+// Denser, closer and more giant than any crystal archetype, for the keep-out and cap checks.
+static CrystalMod crystal_extreme_mod(const void *user, double s)
+{
+    (void)user; (void)s;
+    return (CrystalMod){ 2.5f, 2.5f, 1.3f, 0.5f, 1.6f, 1.33f, 15.0f, 1.2f };
+}
+
 static void test_crystal_field(void)
 {
     static const int edges[CF_KIND_COUNT] = { 6, 12, 30, 12, 9, 18 };
@@ -759,14 +766,17 @@ static void test_crystal_field(void)
     double keep = crystal_keepout(&f), worst = 1e9, reach = crystal_path_reach(&f);
     CHECK(reach <= env.pathReach, "crystal placement reach %.0f within pathReach %.0f", reach, env.pathReach);
     static CrystalShape sh[CF_MAX_SHAPES];
+    for (int m = 0; m < 2; m++) {
+    CrystalModFn mod = m ? crystal_extreme_mod : NULL;
     int total = 0, maxN = 0, giants = 0;
+    worst = 1e9;
     for (int seed = 1; seed <= 3; seed++) {
         PathSystem p;
         path_init(&p, (uint64_t)seed * 104729u, st);
         for (int k = 0; k < 80; k++) {
             double s0 = k * CHUNK_LEN, s1 = s0 + CHUNK_LEN;
             path_ensure(&p, fmax(0.0, s0 - env.pathReach), s1 + env.pathReach);
-            int n = crystal_field_plan(&f, &p, ct_hash64_2((uint64_t)seed, (uint64_t)k), s0, s1, sh, CF_MAX_SHAPES);
+            int n = crystal_field_plan(&f, &p, ct_hash64_2((uint64_t)seed, (uint64_t)k), s0, s1, mod, NULL, sh, CF_MAX_SHAPES);
             total += n;
             if (n > maxN) maxN = n;
             for (int i = 0; i < n; i++) {
@@ -783,29 +793,35 @@ static void test_crystal_field(void)
         }
         path_free(&p);
     }
-    printf("  crystal field (3 seeds x 80 chunks): %d shapes, %.1f per chunk (max %d), %d giants; keep-out %.2f, worst margin %.3f\n",
-           total, total / 240.0, maxN, giants, keep, worst);
+    printf("  crystal field%s (3 seeds x 80 chunks): %d shapes, %.1f per chunk (max %d), %d giants; keep-out %.2f, worst margin %.3f\n",
+           m ? " (extreme pacing)" : "", total, total / 240.0, maxN, giants, keep, worst);
     CHECK(worst >= -1e-6, "no crystal inside the steering box keep-out (worst margin %.3f)", worst);
     CHECK(maxN < CF_MAX_SHAPES, "crystal shapes per chunk below the cap (%d)", maxN);
+    }
 
     // Full chunk builds: time and vertex budget.
     PathSystem p;
     path_init(&p, 41, st);
     static ChunkCpu c;
     double worstMs = 0.0;
-    int maxVerts = 0;
-    for (int k = 0; k < 60; k++) {
+    int maxVerts = 0, seen[8] = { 0 }, labels = 0;
+    const char *names[8];
+    for (int k = 0; k < 400; k++) {
         ensure_for_chunk(&p, &env, k);
         chunk_cpu_begin(&c, &p, k);
         double t0 = build_timer_seconds();
         env.buildChunk(&env, &p, k, &c);
+        if (c.archetype >= 0 && c.archetype < 8 && !seen[c.archetype]++) names[labels++] = env.chunkLabel(&env, c.archetype);
         double ms = (build_timer_seconds() - t0) * 1000.0;
         if (ms > worstMs) worstMs = ms;
         int v = 0;
         for (int b = 0; b < CHUNK_BATCHES; b++) v += c.geo[b].vcount;
         if (v > maxVerts) maxVerts = v;
     }
-    printf("  crystal chunks: worst build %.2f ms, max %d vertices\n", worstMs, maxVerts);
+    printf("  crystal chunks (400): worst build %.2f ms, max %d vertices; archetypes", worstMs, maxVerts);
+    for (int i = 0; i < labels; i++) printf(" %s", names[i]);
+    printf("\n");
+    CHECK(labels == 4, "crystal pacing visits all four archetypes in 400 chunks (%d)", labels);
     CHECK(worstMs < 3.0, "crystal chunk build < 3 ms (%.2f ms)", worstMs);
     CHECK(maxVerts <= 60000, "crystal chunk <= 60k vertices (%d)", maxVerts);
     for (int b = 0; b < CHUNK_BATCHES; b++) lg_free(&c.geo[b]);

@@ -217,11 +217,33 @@ static bool clear_lane(const CrystalFieldParams *p, const PathSystem *path, doub
     return false;
 }
 
+static float clamp01(float x) { return x < 0.0f ? 0.0f : (x > 1.0f ? 1.0f : x); }
+
+// The field parameters scaled by m.
+static CrystalFieldParams apply_mod(const CrystalFieldParams *p, const CrystalMod *m)
+{
+    CrystalFieldParams q = *p;
+    q.clusters *= m->clusters;
+    q.scatter *= m->scatter;
+    q.clusterMin = (int)lroundf((float)p->clusterMin * m->clusterSize);
+    q.clusterMax = (int)lroundf((float)p->clusterMax * m->clusterSize);
+    if (q.clusterMin < 1) q.clusterMin = 1;
+    if (q.clusterMax < q.clusterMin) q.clusterMax = q.clusterMin;
+    q.bandMax *= fminf(m->band, 1.0f);
+    q.nearBias *= m->nearBias;
+    q.sideBias = clamp01(p->sideBias * m->side);
+    q.giantFrac = clamp01(p->giantFrac * m->giant);
+    q.mediumFrac = fminf(p->mediumFrac * m->medium, 1.0f - q.giantFrac);
+    return q;
+}
+
 int crystal_field_plan(const CrystalFieldParams *p, const PathSystem *path, uint64_t base, double s0, double s1,
-                       CrystalShape *out, int max)
+                       CrystalModFn mod, const void *modUser, CrystalShape *out, int max)
 {
     Pcg32 r = pcg32_seed(base);
-    int nc = poisson_count(&r, p->clusters), ns = poisson_count(&r, p->scatter);
+    CrystalFieldParams pc = *p;
+    if (mod) { CrystalMod m = mod(modUser, 0.5 * (s0 + s1)); pc = apply_mod(p, &m); }
+    int nc = poisson_count(&r, pc.clusters), ns = poisson_count(&r, pc.scatter);
     double keep = crystal_keepout(p);
     int n = 0;
     for (int g = 0; g < nc + ns && n < max; g++) {
@@ -229,16 +251,18 @@ int crystal_field_plan(const CrystalFieldParams *p, const PathSystem *path, uint
         Pcg32 gr = pcg32_seed(ct_hash64_2(base, (uint64_t)g + 1));
         bool cluster = g < nc;
         double s = s0 + (s1 - s0) * pcg32_float(&gr);
+        CrystalFieldParams pg = *p;
+        if (mod) { CrystalMod m = mod(modUser, s); pg = apply_mod(p, &m); }
         PathSample ps = path_sample(path, s);
-        float crad = cluster ? pcg32_range(&gr, p->clusterRadMin, p->clusterRadMax) : 0.0f;
+        float crad = cluster ? pcg32_range(&gr, pg.clusterRadMin, pg.clusterRadMax) : 0.0f;
         double theta;
-        if (pcg32_chance(&gr, p->sideBias)) theta = (pcg32_chance(&gr, 0.5f) ? 0.0 : CF_PI) + (pcg32_float(&gr) - 0.5f) * 1.2f;
+        if (pcg32_chance(&gr, pg.sideBias)) theta = (pcg32_chance(&gr, 0.5f) ? 0.0 : CF_PI) + (pcg32_float(&gr) - 0.5f) * 1.2f;
         else theta = pcg32_float(&gr) * 2.0 * CF_PI;
-        double rmin = keep + 0.5 * crad + 1.0, rmax = fmax(rmin, (double)p->bandMax);
-        double rc = rmin + (rmax - rmin) * pow(pcg32_float(&gr), p->nearBias);
+        double rmin = keep + 0.5 * crad + 1.0, rmax = fmax(rmin, (double)pg.bandMax);
+        double rc = rmin + (rmax - rmin) * pow(pcg32_float(&gr), pg.nearBias);
         DVec3 dir = dv_add(dv_scale(ps.B, cos(theta)), dv_scale(ps.N, sin(theta)));
         DVec3 centre = dv_madd(ps.pos, dir, rc);
-        int count = cluster ? pcg32_int(&gr, p->clusterMin, p->clusterMax) : 1;
+        int count = cluster ? pcg32_int(&gr, pg.clusterMin, pg.clusterMax) : 1;
         for (int i = 0; i < count && n < max; i++) {
             DVec3 pos = centre;
             if (cluster) {
@@ -248,7 +272,7 @@ int crystal_field_plan(const CrystalFieldParams *p, const PathSystem *path, uint
                 while (x * x + y * y + z * z > 1.0);
                 pos = dv_add(pos, dv_add(dv_scale(ps.B, x * crad), dv_add(dv_scale(ps.N, y * crad), dv_scale(ps.T, z * crad))));
             }
-            CrystalShape sh = make_shape(p, &gr, pos);
+            CrystalShape sh = make_shape(&pg, &gr, pos);
             if (clear_lane(p, path, s, ps.pos, &sh)) out[n++] = sh;
         }
     }

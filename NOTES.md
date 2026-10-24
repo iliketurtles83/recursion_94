@@ -843,3 +843,29 @@ Plan: `PLAN_ENV4_CRYSTAL_FIELD.md`. Targets: `reference/concepts/env4-crystal-fi
   calls, max chunk build 0.27 ms, streaming ≤ 0.31 ms per frame, max GL coordinate 1362, 75k vertices.
   Shots: `shots/env4/c_f025.png` (defaults) against `reference/concepts/env4-crystal-field_*.png`.
   Shimmer at distance still needs a live look.
+- **User feedback (Phase C):** "looking beautiful". Committed as is.
+
+## Phase D — Pacing archetypes (2026-10-21)
+
+- Same scheme as the corridor: `core/pacing` Markov chain over runs of chunks (seeded with
+  `ct_hash64_3(seed, ENV_CRYSTAL, F_PACING)`), the previous chunk's archetype blended into this one across the
+  chunk. The flight starts in DRIFT.
+- Archetypes are multipliers on the field parameters (`CrystalMod` in `crystal_field.h`), so the panel values
+  still set the base look. The plan scales the counts by the archetype at the chunk middle and each group by the
+  archetype at its own arc length. `band` never exceeds 1, so `pathReach` stays valid.
+
+  | Archetype | clusters / scatter | cluster size | band | near bias | side | giants | medium | glow | energy | run |
+  |---|---|---|---|---|---|---|---|---|---|---|
+  | DRIFT | 1 / 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0.45 | 4–8 |
+  | SHOAL | 1.8 / 2.2 | 1.3 | 0.55 | 1.6 | 0.8 | 0 | 1.15 | 0.9 | 0.85 | 2–4 |
+  | GIANTS | 0.5 / 0.5 | 0.4 | 1 | 0.5 | 1.33 | 20 | 0.6 | 1.2 | 0.30 | 2–4 |
+  | VOID | 0.08 / 0.15 | 0.6 | 1 | 0.8 | 1 | 0 | 0.8 | 2.4 | 0.10 | 1–2 |
+
+- **Glow**: the background glow takes the archetype glow averaged over the next 150 units, so it brightens as a
+  VOID comes into view rather than when the ship enters it.
+- Params: `cfPacing` (on), `cfArchetype` (-1 = chain, 0–3 forces DRIFT / SHOAL / GIANTS / VOID, for tuning).
+  The overlay chunk label shows the archetype.
+- **Accept:** tests 114 passed (new: keep-out and cap under a mod denser and closer than any archetype, worst margin
+  +0.006, 120 shapes per chunk at most; 400 chunks visit all four archetypes, ≤ 10k vertices per chunk; build-order
+  independence with pacing on). Bench 20 s at speed 120: 39 draw calls, max chunk build 0.45 ms, streaming
+  ≤ 0.50 ms per frame, max GL coordinate 1362. Shots: `shots/env4/d_arch{0..3}.png` (seed 7, s 700, forced).
