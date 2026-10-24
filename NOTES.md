@@ -875,7 +875,7 @@ Plan: `PLAN_ENV4_CRYSTAL_FIELD.md`. Targets: `reference/concepts/env4-crystal-fi
 ## Phase E — Presets, docs, bench (2026-10-24)
 
 - Debug UI groups: Crystal Path (rebuilds the path), Crystal, Crystal Field (rebuilds chunks),
-  Crystal Look, Crystal Streaks. 44 crystal params, all `cf*`.
+  Crystal Look, Crystal Streaks. 42 crystal params, all `cf*`.
 - `presets/crystal.ini`: full snapshot (`--env 5 --write-preset crystal`); loading it renders
   byte-identically to the defaults (seed 7, s 700). Run: `./build/cybertunnel --sandbox --env 5 --preset crystal`.
 - `INTEGRATION.md`: §10b table row and keep-out note, `shape_solid` in the §11 building blocks, §12 params.
