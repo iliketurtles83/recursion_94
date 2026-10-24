@@ -869,3 +869,29 @@ Plan: `PLAN_ENV4_CRYSTAL_FIELD.md`. Targets: `reference/concepts/env4-crystal-fi
   +0.006, 120 shapes per chunk at most; 400 chunks visit all four archetypes, ≤ 10k vertices per chunk; build-order
   independence with pacing on). Bench 20 s at speed 120: 39 draw calls, max chunk build 0.45 ms, streaming
   ≤ 0.50 ms per frame, max GL coordinate 1362. Shots: `shots/env4/d_arch{0..3}.png` (seed 7, s 700, forced).
+- **User feedback (Phase D):** "looks good so far". Still undecided whether the field gets more scenery
+  (the user will come back to it). Destructible crystals are deliberately not implemented yet.
+
+## Phase E — Presets, docs, bench (2026-10-24)
+
+- Debug UI groups: Crystal Path (rebuilds the path), Crystal, Crystal Field (rebuilds chunks),
+  Crystal Look, Crystal Streaks. 44 crystal params, all `cf*`.
+- `presets/crystal.ini`: full snapshot (`--env 5 --write-preset crystal`); loading it renders
+  byte-identically to the defaults (seed 7, s 700). Run: `./build/cybertunnel --sandbox --env 5 --preset crystal`.
+- `INTEGRATION.md`: §10b table row and keep-out note, `shape_solid` in the §11 building blocks, §12 params.
+- **Accept:**
+  - Tests: all suites pass.
+  - 10-minute bench (`--env 5 --bench 600 --speed 120 --vsync 0`, 1600×900, autopilot, final s = 72,088):
+    avg 0.197 ms, p99 0.286 ms, max frame 1.39 ms; max chunk build 0.51 ms; max streaming per frame
+    1.10 ms (< 4); max GL coordinate 1393 (< 2048); GPU meshes 16–20 (bounded); 39 draw calls (< 150);
+    84k vertices in flight, at most 10k per chunk (test, budget 60k).
+
+## Environment #4 summary
+
+The Crystal Field is complete per `PLAN_ENV4_CRYSTAL_FIELD.md`: open flight through a dark void
+past clusters of orange wireframe polyhedra (six convex solids from `shape_solid`) with faint
+glass faces, a few slowly tumbling per chunk, a warm vanishing glow, sparse white streaks and a
+clear centre; four pacing archetypes (DRIFT / SHOAL / GIANTS / VOID); `presets/crystal.ini`.
+Shapes keep out of the steering box with their whole bounding sphere; no collision. Open: the
+fly-through giant set piece (concept review first), more scenery (user undecided), destructible
+crystals (deliberately deferred).
