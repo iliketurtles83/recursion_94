@@ -503,6 +503,7 @@ void ct_set_input(CtTunnel *ct, const CtInput *in)
     ct->input.rollLeft = ct->input.rollLeft || in->rollLeft;
     ct->input.rollRight = ct->input.rollRight || in->rollRight;
 }
+void ct_set_beat(CtTunnel *ct, float pulse) { ct->post.beatPulse = pulse < 0.0f ? 0.0f : (pulse > 1.0f ? 1.0f : pulse); }
 void ct_set_intensity(CtTunnel *ct, float intensity) { ct->core.intensityOverride = intensity < 0.0f ? -1.0f : fminf(intensity, 1.0f); }
 void ct_set_ship_damage(CtTunnel *ct,float damage) { ct->shipDamage=fminf(fmaxf(damage,0),1); }
 void ct_trigger_whiteout(CtTunnel *ct) { ct->whiteoutT = 0.0f; }

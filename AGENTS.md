@@ -7,12 +7,15 @@ is five levels, each with its own environment, song and boss.
 
 ## Current state (transition)
 
-- The repo root is the **engine and sandbox harness** (formerly rec_tunnel's
-  `sandbox/cybertunnel`). `./build/recursion94` currently runs the sandbox only.
-- `legacy/` holds the original RECURSION_94 game: unbuilt reference code for
-  porting. Keep from it: the audio synth (`legacy/src/audio_synth.c`), the combat
-  logic and boss state machines (`legacy/src/gameplay.c`, logic functions only)
-  and the seed identity. Its environment and its ship, enemy and shot graphics are
+- The repo root is the **engine** (formerly rec_tunnel's `sandbox/cybertunnel`).
+  `src/game/` is the RECURSION_94 game layer: seed selector and run loop
+  (`game.c`), the procedural synth (`audio_synth.c`, ported) and the selector art
+  and seed palettes (`demoscene.c`, `palette.h`). `./build/recursion94` starts
+  the game in the server corridor (preset `r94_corridor`); `--sandbox` gives the
+  environment harness.
+- `legacy/` holds the rest of the original game: unbuilt reference code for
+  porting. Still to port: the combat logic and boss state machines
+  (`legacy/src/gameplay.c`, logic functions only). Its environment and its ship, enemy and shot graphics are
   being dropped. Delete legacy files once their content is ported.
   `archive/AGENTS_legacy.md` has the rules that applied to that code.
 - First milestone: a vertical slice (server corridor, engine flight, ported
@@ -31,7 +34,7 @@ is five levels, each with its own environment, song and boss.
 
 ```sh
 cmake -S . -B build && cmake --build build -j     # RelWithDebInfo by default
-ctest --test-dir build --output-on-failure         # engine_core, engine_ship, engine_vectoring
+ctest --test-dir build --output-on-failure         # engine_core, engine_ship, engine_vectoring, game_audio
 ./build/cybertunnel_tests                          # core determinism/continuity, no window or GL
 ```
 
@@ -49,7 +52,10 @@ ctest --test-dir build --output-on-failure         # engine_core, engine_ship, e
 ## Running and visual regression
 
 ```sh
-./build/recursion94 --env N [--seed N] [--preset NAME] [--set name=value ...]
+./build/recursion94                         # game: seed selector, then the run
+./build/recursion94 --seed 94               # skip the selector
+./build/recursion94 --seed 94 --game-shot 5 --out FILE --hidden   # deterministic game frame
+./build/recursion94 --sandbox --env N [--seed N] [--preset NAME] [--set name=value ...]
     [--shot DISTANCE --out FILE] [--bench SECONDS] [--list-params] [--write-preset NAME]
     [--boost] [--noship] [--hdr8] [--hidden]
 ```
@@ -58,7 +64,11 @@ ctest --test-dir build --output-on-failure         # engine_core, engine_ship, e
   (use `--preset greybox`), 5 crystal field. Presets: `city`, `corridor`, `crystal`,
   etc. `mission` and `mission_tunnel` carry the flight tuning (thrust vectoring,
   courier scale) inherited from rec_tunnel's game layer.
-- `--shot` jumps to a path distance, steps a fixed 1/60 s and saves after 2 s of
+- `--game-shot S` runs the game for S seconds on a fixed 1/60 s step with no
+  audio thread (beat pulse held at 0), saves a PNG and exits: byte-reproducible.
+  Flush the render batch (`rlDrawRenderBatchActive`) before reading the
+  framebuffer, or 2D HUD draws are missing from the capture.
+- Sandbox `--shot` jumps to a path distance, steps a fixed 1/60 s and saves after 2 s of
   simulated time, so the same command gives a byte-identical PNG. Use it for
   before/after checks of any visual change. Debug renders go in `shots/` (ignored).
 - On this machine, run shots with `--hidden` and `DISPLAY=:1`,
@@ -100,6 +110,13 @@ ctest --test-dir build --output-on-failure         # engine_core, engine_ship, e
   every frame (as `env_corridor.c` does for `uWindows`, `uSkyline`, `uDetailRange`).
 - **Params**: every tunable has a globally unique name; group names become debug
   panel and ini sections. Editing a path-affecting group triggers a full rebuild.
+- **Audio**: `game_audio` checks the synth's deterministic PCM hash
+  (`AUDIO_VALIDATION_HASH` in `src/game/audio_synth.c`); re-bless it only for
+  intentional synth changes. The synth runs in Raylib's audio callback thread;
+  the game talks to it through lock-free command queues (`UpdateAudioSynth`,
+  `TriggerSynthSFX`) and reads telemetry such as the beat pulse.
+- **Beat**: `ct_set_beat(pulse)` scales bloom by the `beatBloom` parameter
+  (default 0, so sandbox looks are unchanged; `r94_corridor` sets 0.35).
 - **Game hook**: game code uses only `src/cybertunnel.h`. It feeds input via
   `ct_set_input`, may own the camera (`ownCamera=false`), and draws its objects into
   the HDR scene with `ct_set_scene_draw`.

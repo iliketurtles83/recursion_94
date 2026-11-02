@@ -12,6 +12,7 @@ void post_register_params(PostSettings *s, ParamRegistry *reg)
     params_float(reg, g, "bloomKnee", &s->bloomKnee, 0.6f, 0.0f, 2.0f);
     params_float(reg, g, "bloomIntensity", &s->bloomIntensity, 0.8f, 0.0f, 4.0f);
     params_float(reg, g, "bloomRadius", &s->bloomRadius, 0.85f, 0.0f, 1.5f);
+    params_float(reg, g, "beatBloom", &s->beatBloom, 0.0f, 0.0f, 2.0f);
     params_int(reg, g, "bloomMips", &s->bloomMips, 6, 1, PIPE_MAX_MIPS);
     params_bool(reg, g, "bloomQuarterRes", &s->bloomQuarterRes, false);
     params_bool(reg, g, "zoomBlurOn", &s->zoomBlurOn, true);
@@ -289,7 +290,8 @@ void pipe_post(Pipeline *p, const PostSettings *s, RenderTexture2D *dst, int out
     int c = p->shComposite;
     BeginShaderMode(sl_shader(sl, c));
     sl_tex(sl, c, "uBloom", bloomTex);
-    sl_f1(sl, c, "uBloomIntensity", (s->bloomOn && mips > 0) ? s->bloomIntensity : 0.0f);
+    float bloomGain = s->bloomIntensity * (1.0f + s->beatBloom * s->beatPulse);
+    sl_f1(sl, c, "uBloomIntensity", (s->bloomOn && mips > 0) ? bloomGain : 0.0f);
     sl_f2(sl, c, "uResolution", (float)outW, (float)outH);
     sl_f2(sl, c, "uVanish", vanishingUV.x, vanishingUV.y);
     sl_f1(sl, c, "uZoom", s->zoomBlurOn ? zoomStrength : 0.0f);

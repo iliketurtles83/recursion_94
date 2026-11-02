@@ -1,5 +1,8 @@
-// RECURSION_94 sandbox harness: window, input, CLI. Talks to the module only through cybertunnel.h.
+// RECURSION_94 entry point: the game by default, the environment sandbox with --sandbox
+// (or any of the sandbox tools: --shot, --bench, --list-params, --write-preset).
+// Talks to the engine only through cybertunnel.h.
 #include "cybertunnel.h"
+#include "game/game.h"
 #include "core/resources.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,7 +17,8 @@ typedef struct Cli {
     int    w, h, vsync, fps, env;
     double bench, speed;
     double shot;
-    bool   hasShot, hdr8, noShip, ui, whiteout, boost, hidden;
+    bool   hasShot, hasSeed, hasEnv, sandbox, hdr8, noShip, ui, whiteout, boost, hidden;
+    double gameShot;
     const char *preset;
     const char *shotOut;
     const char *writePreset;
@@ -25,23 +29,23 @@ typedef struct Cli {
 
 static void usage(void)
 {
-    printf("recursion94 [--seed N] [--w W --h H] [--vsync 0|1] [--fps N] [--env 0..5]\n"
+    printf("recursion94 [--seed N] [--w W --h H] [--vsync 0|1] [--fps N] [--env 0..5] [--game-shot SECONDS [--out FILE]]\n"
            "            [--bench SECONDS [--speed U]] [--shot S [--out FILE]] [--preset NAME] [--write-preset NAME] [--list-params] [--hdr8] [--noship] [--ui] [--whiteout] [--boost]\n"
            "            [--set NAME=VALUE ...] [--hidden] [--sandbox]\n");
 }
 
 static Cli parse(int argc, char **argv)
 {
-    Cli c = { .seed = 1, .w = 1600, .h = 900, .vsync = 1, .speed = 120.0 };
+    Cli c = { .seed = 1, .w = 1600, .h = 900, .vsync = 1, .speed = 120.0, .gameShot = -1.0 };
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
         const char *v = i + 1 < argc ? argv[i + 1] : NULL;
-        if (!strcmp(a, "--seed") && v) { c.seed = strtoull(v, NULL, 10); i++; }
+        if (!strcmp(a, "--seed") && v) { c.seed = strtoull(v, NULL, 10); c.hasSeed = true; i++; }
         else if (!strcmp(a, "--w") && v) { c.w = atoi(v); i++; }
         else if (!strcmp(a, "--h") && v) { c.h = atoi(v); i++; }
         else if (!strcmp(a, "--vsync") && v) { c.vsync = atoi(v); i++; }
         else if (!strcmp(a, "--fps") && v) { c.fps = atoi(v); i++; }
-        else if (!strcmp(a, "--env") && v) { c.env = atoi(v); i++; }
+        else if (!strcmp(a, "--env") && v) { c.env = atoi(v); c.hasEnv = true; i++; }
         else if (!strcmp(a, "--bench") && v) { c.bench = atof(v); i++; }
         else if (!strcmp(a, "--speed") && v) { c.speed = atof(v); i++; }
         else if (!strcmp(a, "--shot") && v) { c.shot = atof(v); c.hasShot = true; i++; }
@@ -56,7 +60,8 @@ static Cli parse(int argc, char **argv)
         else if (!strcmp(a, "--whiteout")) c.whiteout = true;
         else if (!strcmp(a, "--boost")) c.boost = true;
         else if (!strcmp(a, "--hidden")) c.hidden = true;
-        else if (!strcmp(a, "--sandbox")) { }   // accepted for compatibility; the sandbox is the only mode for now
+        else if (!strcmp(a, "--sandbox")) c.sandbox = true;
+        else if (!strcmp(a, "--game-shot") && v) { c.gameShot = atof(v); i++; }
         else if (!strcmp(a, "--help") || !strcmp(a, "-h")) { usage(); exit(0); }
         else { fprintf(stderr, "unknown argument: %s\n", a); usage(); exit(1); }
     }
@@ -96,12 +101,16 @@ int main(int argc, char **argv)
         fprintf(stderr,"recursion94: resources are unavailable\n");return 2;
     }
     bool bench = cli.bench > 0.0;
+    bool game = !cli.sandbox && !bench && !cli.hasShot && !cli.listParams && !cli.writePreset;
+    // The vertical slice flies the server corridor with the game's flight tuning.
+    if (game && !cli.hasEnv) cli.env = CT_ENV_CORRIDOR;
+    if (game && !cli.preset) cli.preset = "r94_corridor";
     unsigned int flags = FLAG_WINDOW_RESIZABLE;
     if (cli.hidden) flags |= FLAG_WINDOW_HIDDEN;
     if (cli.vsync && !bench) flags |= FLAG_VSYNC_HINT;
     SetConfigFlags(flags);
     SetTraceLogLevel(LOG_WARNING);
-    InitWindow(cli.w, cli.h, "RECURSION_94 sandbox");
+    InitWindow(cli.w, cli.h, game ? "RECURSION_94" : "RECURSION_94 sandbox");
     SetWindowMinSize(800,450);
     SetExitKey(KEY_NULL);
     if (cli.fps > 0) SetTargetFPS(cli.fps);
@@ -142,6 +151,14 @@ int main(int argc, char **argv)
         ct_destroy(ct);
         CloseWindow();
         return ok ? 0 : 1;
+    }
+    if (game) {
+        GameOptions options = { .seed = cli.hasSeed ? (uint32_t)cli.seed : 94u, .skipSelector = cli.hasSeed,
+                                .shotSeconds = cli.gameShot, .shotOut = cli.shotOut };
+        int result = game_run(ct, &options);
+        ct_destroy(ct);
+        CloseWindow();
+        return result;
     }
     float *frameTimes = NULL;
     int frameCount = 0, frameCap = 0;

@@ -14,6 +14,8 @@
 typedef struct PostSettings {
     bool  bloomOn, zoomBlurOn, caOn, tonemapOn, vignetteOn, grainOn, fxaaOn;
     float bloomThreshold, bloomKnee, bloomIntensity, bloomRadius;
+    float beatBloom;             // extra bloom per unit of beat pulse; 0 = no beat response
+    float beatPulse;             // runtime input from ct_set_beat (not a parameter)
     int   bloomMips;
     bool  bloomQuarterRes;
     float zoomBlur, zoomBlurAtBase, zoomBlurInner, zoomBlurOuter;   // zoomBlur: strength at full boost

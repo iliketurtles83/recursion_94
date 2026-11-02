@@ -12,7 +12,8 @@ RECURSION_94 is being rebuilt. The original floppy-sized game (in `legacy/`, not
 built) is being merged with the procedural flight engine and environments from the
 rec_tunnel sandbox, which now live at the repo root. The plan is five levels, each
 with its own environment, song and boss. The first milestone is a one-level
-vertical slice. Today the executable runs the environment sandbox.
+vertical slice. Today the executable runs a playable flight shell: pick a seed, then fly the
+server corridor with its procedurally synthesized soundtrack. Combat comes next.
 
 ## Build
 
@@ -28,13 +29,23 @@ ctest --test-dir build --output-on-failure
 To build offline, pass local checkouts:
 `-DFETCHCONTENT_SOURCE_DIR_RAYLIB=/path/to/raylib-6.0 -DFETCHCONTENT_SOURCE_DIR_RAYGUI=/path/to/raygui`.
 
-## Run the sandbox
+## Play
 
 ```sh
-./build/recursion94 --env 3 --preset corridor     # server corridor
-./build/recursion94 --env 0                       # data vortex
-./build/recursion94 --env 2 --preset city         # grid city
-./build/recursion94 --env 5 --preset crystal      # crystal field
+./build/recursion94              # seed selector: Left/Right +-1, Up/Down +-100, Enter to start
+./build/recursion94 --seed 94    # start a run directly
+```
+
+Arrows/WASD steer, Space boosts (the music opens up while boosting), Q/E
+barrel-roll, P pauses, Esc returns to the seed selector (Esc there quits).
+
+## Environment sandbox
+
+```sh
+./build/recursion94 --sandbox --env 3 --preset corridor   # server corridor
+./build/recursion94 --sandbox --env 0                     # data vortex
+./build/recursion94 --sandbox --env 2 --preset city       # grid city
+./build/recursion94 --sandbox --env 5 --preset crystal    # crystal field
 ```
 
 Arrow keys steer, Shift/Space boosts, Q/E barrel-roll. F1 opens the parameter

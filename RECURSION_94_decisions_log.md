@@ -2,6 +2,26 @@
 
 This log is the source of truth for architectural choices, visual uplift milestones, feature statuses (Confirmed, Provisional, Rejected), and binary size tracking. The 1.44MB (1,474,560 bytes) contest limit applied to entries before 2026-11-03.
 
+## [Game shell] Seed selector, corridor run and ported synth
+
+- Date: 2026-11-03. Status: Step 1 CONFIRMED on Linux; audio verified only
+  by a crash-free 8-second run (not listened to).
+- `src/game/`: seed selector (legacy `DrawSeedSelector`, Left/Right +-1,
+  Up/Down +-100) and a run loop on the engine API. The game is the default
+  mode; `--sandbox`, `--shot`, `--bench` and the param tools keep the harness.
+- Synth ported unchanged (`git mv`, history kept). Boost adds 0.48 music
+  intensity as in the original. Elapsed time x 30 units/s feeds the song
+  structure, preserving its original intro/buildup pacing (the engine's
+  32-65 u/s would otherwise rush it). The PCM hash test is now the `game_audio`
+  ctest and passes (`a2b83674276419d1`).
+- Engine: `ct_set_beat()` + `beatBloom` parameter (default 0). Sandbox shots
+  are byte-identical to Step 0. `presets/r94_corridor.ini` = corridor look +
+  the mission flight/camera/ship tuning + `beatBloom=0.35`.
+- `--game-shot S` gives reproducible game frames (no audio thread).
+- Not yet: pause menu with quit confirmation, fullscreen toggle, ship choice.
+
+---
+
 ## [Unified engine] RECURSION_94 rebuilt on the rec_tunnel engine
 
 - Date: 2026-11-03. Status: Step 0 CONFIRMED on Linux (GCC, Raylib 6.0).

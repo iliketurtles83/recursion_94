@@ -117,6 +117,9 @@ void         ct_get_stats(const CtTunnel *ct, CtStats *out);
 
 // Control
 void ct_set_intensity(CtTunnel *ct, float intensity);   // < 0 = automatic pacing
+// Music beat pulse (0..1, decaying after each beat). Scaled by the beatBloom parameter
+// (default 0), so it has no effect unless a preset or the game enables it.
+void ct_set_beat(CtTunnel *ct, float pulse);
 void ct_trigger_whiteout(CtTunnel *ct);
 void ct_set_whiteout(CtTunnel *ct, float whiteout);     // manual override, < 0 = animation
 void ct_jump_to(CtTunnel *ct, double s);
