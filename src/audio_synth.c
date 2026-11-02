@@ -14,7 +14,10 @@
 #define SONG_BUILD_END_DISTANCE 1250.0f
 #define MUSIC_BUS_GAIN 1.42f
 #define SFX_BUS_GAIN 0.22f
-#define AUDIO_VALIDATION_HASH UINT64_C(0xe5b8d4ab7e1fd136)
+// Golden PCM hash of the validation render (seed 94). Output has been stable
+// since 57966d2 across GCC/glibc and MinGW; the value stored there was never
+// produced by that code. Re-bless only for intentional synth changes.
+#define AUDIO_VALIDATION_HASH UINT64_C(0xa2b83674276419d1)
 
 _Static_assert(ATOMIC_INT_LOCK_FREE == 2,
                "The audio callback requires lock-free atomic integers");

@@ -5,6 +5,7 @@
 #include "audio_synth.h"
 #include "gameplay.h"
 #include "demoscene.h"
+#include "material_atlas.h"
 #include "shader_sources.h"
 #include <math.h>
 #include <stdint.h>
@@ -303,7 +304,8 @@ int main(int argc, char **argv) {
              generationReport.unsupportedRavineStructures,
              generationReport.unsupportedFarStructures,
              generationReport.droppedStructures);
-    return generationValid ? 0 : 1;
+    bool atlasValid = ValidateMaterialAtlases();
+    return generationValid && atlasValid ? 0 : 1;
 #elif defined(RECURSION_VALIDATE_GAMEPLAY)
     (void)argc;
     (void)argv;

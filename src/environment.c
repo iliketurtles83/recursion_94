@@ -3,8 +3,7 @@
 #include "shader_sources.h"
 #include "raymath.h"
 #include "rlgl.h"
-#include "detail_atlas.h"
-#include "facade_atlas.h"
+#include "material_atlas.h"
 #include <math.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -670,7 +669,7 @@ void InitEnvironment(EnvironmentSystem *env, uint32_t runSeed) {
     SetShaderValue(env->terrainMaterial.shader, env->terrainBodyLoc, &body, SHADER_UNIFORM_VEC3);
     SetShaderValue(env->terrainMaterial.shader, env->terrainSkyLoc, &skyHorizon, SHADER_UNIFORM_VEC3);
 
-    Image atlas={(void *)detail_atlas_bytes,DETAIL_ATLAS_SIDE,DETAIL_ATLAS_SIDE,1,
+    Image atlas={(void *)GetDetailAtlasBytes(),DETAIL_ATLAS_SIDE,DETAIL_ATLAS_SIDE,1,
                  PIXELFORMAT_UNCOMPRESSED_R8G8B8A8};
     env->detailAtlas=LoadTextureFromImage(atlas);
     if(env->detailAtlas.id) {
@@ -686,7 +685,7 @@ void InitEnvironment(EnvironmentSystem *env, uint32_t runSeed) {
         int enabled=env->detailAtlas.id!=0;
         SetShaderValue(m->shader,GetShaderLocation(m->shader,"uDetailEnabled"),&enabled,SHADER_UNIFORM_INT);
     }
-    Image facadeImage = { (void *)facade_atlas_bytes, FACADE_ATLAS_SIDE,
+    Image facadeImage = { (void *)GetFacadeAtlasBytes(), FACADE_ATLAS_SIDE,
                           FACADE_ATLAS_SIDE, 1, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8 };
     env->facadeAtlas = LoadTextureFromImage(facadeImage);
     if (env->facadeAtlas.id) {
@@ -701,10 +700,10 @@ void InitEnvironment(EnvironmentSystem *env, uint32_t runSeed) {
     SetShaderValue(env->towerMaterial.shader,
                    GetShaderLocation(env->towerMaterial.shader, "uFacadeEnabled"),
                    &facadeEnabled, SHADER_UNIFORM_INT);
-    TraceLog(LOG_INFO,"DETAIL: embedded atlas %u bytes, %d mip levels, ready=%d",
-             (unsigned int)sizeof(detail_atlas_bytes),env->detailAtlas.mipmaps,env->detailAtlas.id!=0);
-    TraceLog(LOG_INFO,"FACADE: embedded atlas %u bytes, %d mip levels, ready=%d",
-             (unsigned int)sizeof(facade_atlas_bytes),env->facadeAtlas.mipmaps,
+    TraceLog(LOG_INFO,"DETAIL: generated atlas %u bytes, %d mip levels, ready=%d",
+             (unsigned int)DETAIL_ATLAS_BYTES,env->detailAtlas.mipmaps,env->detailAtlas.id!=0);
+    TraceLog(LOG_INFO,"FACADE: generated atlas %u bytes, %d mip levels, ready=%d",
+             (unsigned int)FACADE_ATLAS_BYTES,env->facadeAtlas.mipmaps,
              env->facadeAtlas.id!=0);
 
     env->structureCount = 0;

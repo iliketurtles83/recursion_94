@@ -26,7 +26,7 @@ CFLAGS="-std=c11 -O2 -s -Wall -Wextra -Wpedantic -ffunction-sections -fdata-sect
 "$WINDOWS_CC" $CFLAGS -Wl,--gc-sections -static -static-libgcc \
     -Isrc -I"$RAYLIB_WIN_SOURCE" \
     -o bin/recursion94.exe \
-    main.c src/environment.c src/audio_synth.c src/gameplay.c src/demoscene.c \
+    main.c src/environment.c src/audio_synth.c src/gameplay.c src/demoscene.c src/material_atlas.c \
     bin/shader_sources.c \
     "$RAYLIB_WIN_SOURCE/libraylib.a" \
     -lopengl32 -lgdi32 -lwinmm

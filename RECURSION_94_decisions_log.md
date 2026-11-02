@@ -2,6 +2,29 @@
 
 This log is the source of truth for architectural choices, visual uplift milestones, feature statuses (Confirmed, Provisional, Rejected), and binary size tracking against the 1.44MB (1,474,560 bytes) contest limit.
 
+## [Runtime atlases and audio golden] Generate instead of embed
+
+- Date: 2026-11-02. Status: CONFIRMED on Linux (GCC, static Raylib 6.0, UPX 5.2.0).
+  Windows release not rebuilt in this pass (MinGW toolchain unavailable).
+- Moved the `tools/bake_detail.c` / `tools/bake_facade.c` recipes into
+  `src/material_atlas.c`, run once at startup into static BSS buffers. Removed
+  `src/detail_atlas.h`, `src/facade_atlas.h` and both bake tools.
+- Output is byte-identical to the former embedded arrays at -O0 and -O2
+  (detail FNV-1a `456b2ed1`, facade `13bcae23`). `powf(broad, 2.0f)` became
+  `broad * broad` to avoid libm variance across glibc/MinGW; bytes unchanged.
+  `VALIDATE_GENERATOR` now also checks both atlas hashes.
+- Size, Linux unpacked: 699,712 -> 294,208 bytes; xz -9e proxy for UPX LZMA:
+  465,704 -> 116,904 bytes. Real Linux release (`./build.sh`, `upx --best`):
+  1,230,908 -> 798,620 bytes (432,288 saved; headroom 243,652 -> 675,940).
+  Generator, gameplay and audio validation all pass with the release toolchain.
+- Audio golden: synth output has been `a2b83674276419d1` since `57966d2` (the
+  last synth change). That commit stored `e5b8d4ab7e1fd136`, which its code never
+  produced. GCC/glibc and MinGW agree on `a2b8…`. Golden updated; repeat-run
+  and seed-difference checks pass at -O0/-O2/-O3. This resolves the long-standing
+  "pre-existing audio golden-hash mismatch".
+
+---
+
 ## [Tuned boost-risk combat] Energy health restored, guidance softened
 
 - Date: 2026-09-16. Status: CONFIRMED for Windows x64.

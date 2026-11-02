@@ -27,7 +27,7 @@ fi
 
 gcc $CFLAGS -Wl,--gc-sections \
     -Isrc -o bin/recursion94 main.c src/environment.c src/audio_synth.c src/gameplay.c \
-    src/demoscene.c bin/shader_sources.c $LIBS
+    src/demoscene.c src/material_atlas.c bin/shader_sources.c $LIBS
 
 if [ "${VALIDATE_GENERATOR:-0}" = "1" ]; then
     bin/recursion94
