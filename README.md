@@ -12,8 +12,9 @@ RECURSION_94 is being rebuilt. The original floppy-sized game (in `legacy/`, not
 built) is being merged with the procedural flight engine and environments from the
 rec_tunnel sandbox, which now live at the repo root. The plan is five levels, each
 with its own environment, song and boss. The first milestone is a one-level
-vertical slice. Today the executable runs a playable flight shell: pick a seed, then fly the
-server corridor with its procedurally synthesized soundtrack. Combat comes next.
+vertical slice. Today the executable runs a playable combat slice: pick a seed, then fight
+through the server corridor to a procedurally synthesized soundtrack. Bosses
+come next.
 
 ## Build
 
@@ -36,8 +37,18 @@ To build offline, pass local checkouts:
 ./build/recursion94 --seed 94    # start a run directly
 ```
 
-Arrows/WASD steer, Space boosts (the music opens up while boosting), Q/E
-barrel-roll, P pauses, Esc returns to the seed selector (Esc there quits).
+- WASD / arrows: steer. Q / E: barrel roll.
+- J or left mouse: tap for a straight shot; hold to lock up to 4 (later 6)
+  targets and release for a homing volley.
+- K: spend 50 chain links on a piercing beam. L: spend 100 on a projectile-
+  clearing bomb.
+- Space: boost. Faster and louder, but regular enemies fire faster, their shots
+  home in mildly, and hits cost 15% more Core Energy.
+- P pauses, R restarts after game over, Esc returns to the seed selector (Esc
+  there quits).
+
+Kills build a chain that upgrades the weapon (x4, x8, x12); any hit resets it.
+The run ends when Core Energy reaches zero.
 
 ## Environment sandbox
 

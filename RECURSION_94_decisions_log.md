@@ -2,6 +2,34 @@
 
 This log is the source of truth for architectural choices, visual uplift milestones, feature statuses (Confirmed, Provisional, Rejected), and binary size tracking. The 1.44MB (1,474,560 bytes) contest limit applied to entries before 2026-11-03.
 
+## [Combat port] Original combat on the engine, in neon vector style
+
+- Date: 2026-11-03. Status: Step 2 CONFIRMED on Linux by tests and scripted
+  screenshots; not yet hand-played.
+- `gameplay.c` moved from legacy (history kept). Its rendering, camera and
+  keyboard reads were removed; logic is unchanged. `UpdateGameplay` takes a
+  `GameplayInput` (ship position from the engine, fire/beam/bomb buttons).
+- Arena mapping: uniform 0.4 world units per arena unit, riding the path.
+  The corridor box becomes an arena about 26 x 17 (original: 30 x 6.2).
+  Formation placement is bounds-relative and reproduces the original numbers
+  in the original box. The original VALIDATE_GAMEPLAY suite is now the
+  `game_combat` ctest: all 18 checks pass.
+- Presentation (`combat_draw.c`): wireframe polyhedra with dark bodies
+  (drifter octahedron + ring, chaser dart, splitter nested cubes), light
+  ribbons for shots, debris streaks and shockwave rings, telegraph and lock
+  rings, segmented beam lance and bomb rings. One embedded shader; vertex
+  alpha encodes HDR gain for the bloom. Objects compile in over the spawn band.
+- HUD: energy and chain-link meters, score, weapon tier, chain, lock count,
+  boost warning, edge-only hit flash, game over/restart.
+- Framing: the mission camera made the arena a narrow cone far ahead. The
+  game preset now uses courierScale 0.55, camDistance 4.2, camHeight 1.5,
+  lookAhead 16, camFollowLateral 0.85.
+- Music now follows the original mix (difficulty, chain, boost; glitch on
+  hit) and the original distance accumulator, so the song structure matches.
+- Bosses disabled until Step 3. Leviathan gravity not applied yet.
+
+---
+
 ## [Game shell] Seed selector, corridor run and ported synth
 
 - Date: 2026-11-03. Status: Step 1 CONFIRMED on Linux; audio verified only

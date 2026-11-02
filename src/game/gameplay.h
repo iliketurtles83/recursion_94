@@ -87,8 +87,23 @@ typedef struct {
     float invulnerability;
     float chargeTime;
     float bank;
+    Vector2 pull;          // Leviathan gravity request (arena units/s), applied by the flight model
     bool fireHeldLast;
 } PlayerState;
+
+// Per-frame input. The ship position comes from the engine's flight model,
+// converted into arena units (x lateral, y up, z = -distance ahead).
+typedef struct {
+    float playerX, playerY;
+    float velocityX, velocityY;
+    bool fireHeld;
+    bool beamPressed;
+    bool bombPressed;
+} GameplayInput;
+
+typedef struct {
+    float minX, maxX, minY, maxY;
+} GameplayArena;
 
 typedef struct {
     int tapShots;
@@ -163,6 +178,8 @@ typedef struct {
     float loopTransitionTimer;
     float runTime;
     int weaponTier;
+    GameplayArena arena;
+    bool bossesEnabled;    // false until the boss presentation is ported (vertical slice step 3)
     bool suppressLinkRewards;
     bool overdriveActive;
     bool gameOver;
@@ -175,12 +192,9 @@ int GetGameplayRecursionDepth(const GameplaySystem *game);
 bool CanGameplayBoost(const GameplaySystem *game);
 float GetGameplayTravelSpeed(const GameplaySystem *game, double virtualPlayerZ,
                              bool boosting);
+void SetGameplayArena(GameplaySystem *game, GameplayArena arena);
 GameplayEvents UpdateGameplay(GameplaySystem *game, float dt, double virtualPlayerZ,
-                              bool boosting);
-void UpdateGameplayCamera(const GameplaySystem *game, Camera3D *camera, float dt, bool boosting);
-void DrawGameplay3D(const GameplaySystem *game, Shader craftShader, int objectClassLoc,
-                    int enemyTypeLoc, int objectOriginLoc);
-void DrawGameplayHUD(const GameplaySystem *game, Camera3D camera, int screenWidth, int screenHeight);
+                              bool boosting, const GameplayInput *input);
 bool ValidateGameplaySpecials(void);
 
 #endif // GAMEPLAY_H

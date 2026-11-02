@@ -9,13 +9,24 @@ is five levels, each with its own environment, song and boss.
 
 - The repo root is the **engine** (formerly rec_tunnel's `sandbox/cybertunnel`).
   `src/game/` is the RECURSION_94 game layer: seed selector and run loop
-  (`game.c`), the procedural synth (`audio_synth.c`, ported) and the selector art
-  and seed palettes (`demoscene.c`, `palette.h`). `./build/recursion94` starts
+  (`game.c`), combat logic (`gameplay.c`, ported), its neon presentation and HUD
+  (`combat_draw.c`), the procedural synth (`audio_synth.c`, ported) and the
+  selector art and seed palettes (`demoscene.c`, `palette.h`). `./build/recursion94` starts
   the game in the server corridor (preset `r94_corridor`); `--sandbox` gives the
   environment harness.
-- `legacy/` holds the rest of the original game: unbuilt reference code for
-  porting. Still to port: the combat logic and boss state machines
-  (`legacy/src/gameplay.c`, logic functions only). Its environment and its ship, enemy and shot graphics are
+- `legacy/` holds the rest of the original game (environment, old main loop):
+  unbuilt reference only. Combat and bosses are ported; boss presentation is
+  next. The original boss chassis drawing code is in git history
+  (`git show 1a7c6ca:legacy/src/gameplay.c`, `Draw*Boss`).
+- **Arena mapping.** Combat runs in arena units: x lateral, y up, z = -distance
+  ahead of the ship. 1 arena unit = `ARENA_SCALE` (0.4) world units on all axes,
+  riding the path (`ArenaMap`, `arena_to_world` in `combat_draw.c`). The arena
+  bounds come from the engine's steering box each frame (`SetGameplayArena`);
+  formation placement is bounds-relative, and with the original box it gives
+  the original numbers (so `game_combat` checks stay valid). The ship position
+  is read from the engine (`ct_ship_world` vs the path frame); the engine owns
+  flight. Leviathan gravity is reported in `player.pull` but not applied yet.
+  Bosses are disabled (`bossesEnabled = false`) until their presentation lands. Its environment and its ship, enemy and shot graphics are
   being dropped. Delete legacy files once their content is ported.
   `archive/AGENTS_legacy.md` has the rules that applied to that code.
 - First milestone: a vertical slice (server corridor, engine flight, ported
@@ -34,7 +45,7 @@ is five levels, each with its own environment, song and boss.
 
 ```sh
 cmake -S . -B build && cmake --build build -j     # RelWithDebInfo by default
-ctest --test-dir build --output-on-failure         # engine_core, engine_ship, engine_vectoring, game_audio
+ctest --test-dir build --output-on-failure         # engine_core/_ship/_vectoring, game_audio, game_combat
 ./build/cybertunnel_tests                          # core determinism/continuity, no window or GL
 ```
 
@@ -65,7 +76,8 @@ ctest --test-dir build --output-on-failure         # engine_core, engine_ship, e
   etc. `mission` and `mission_tunnel` carry the flight tuning (thrust vectoring,
   courier scale) inherited from rec_tunnel's game layer.
 - `--game-shot S` runs the game for S seconds on a fixed 1/60 s step with no
-  audio thread (beat pulse held at 0), saves a PNG and exits: byte-reproducible.
+  audio thread (beat pulse held at 0) and a scripted pilot that weaves, taps
+  and charges, saves a PNG and exits: byte-reproducible.
   Flush the render batch (`rlDrawRenderBatchActive`) before reading the
   framebuffer, or 2D HUD draws are missing from the capture.
 - Sandbox `--shot` jumps to a path distance, steps a fixed 1/60 s and saves after 2 s of
