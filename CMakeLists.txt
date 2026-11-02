@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(cybertunnel C)
+project(recursion94 C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -17,7 +17,7 @@ set(BUILD_GAMES OFF CACHE BOOL "" FORCE)
 set(CUSTOMIZE_BUILD OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(raylib
   GIT_REPOSITORY https://github.com/raysan5/raylib.git
-  GIT_TAG 5.5
+  GIT_TAG 6.0
   GIT_SHALLOW TRUE)
 FetchContent_Declare(raygui
   GIT_REPOSITORY https://github.com/raysan5/raygui.git
@@ -80,9 +80,9 @@ if(NOT WIN32)
   target_link_libraries(cybertunnel_lib PUBLIC m)
 endif()
 
-add_executable(cybertunnel src/main.c src/core/resources.c src/game/game.c src/game/mission.c src/game/techno.c)
+add_executable(recursion94 src/main.c src/core/resources.c)
 if(WIN32)
-  set_target_properties(cybertunnel PROPERTIES WIN32_EXECUTABLE TRUE)
+  set_target_properties(recursion94 PROPERTIES WIN32_EXECUTABLE TRUE)
   enable_language(RC)
   file(GLOB CT_SHADERS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/*")
   file(GLOB CT_PRESETS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/presets/*")
@@ -106,22 +106,22 @@ if(WIN32)
   file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/resources_catalog.h" CONTENT "${CT_RESOURCE_CATALOG}")
   set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/game_assets.rc" PROPERTIES
     OBJECT_DEPENDS "${CT_SHADERS};${CT_PRESETS};${CT_ASSETS}")
-  target_sources(cybertunnel PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/game_assets.rc")
-  target_include_directories(cybertunnel PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+  target_sources(recursion94 PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/game_assets.rc")
+  target_include_directories(recursion94 PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 endif()
-target_compile_options(cybertunnel PRIVATE ${CT_WARN})
-target_link_libraries(cybertunnel PRIVATE cybertunnel_lib)
+target_compile_options(recursion94 PRIVATE ${CT_WARN})
+target_link_libraries(recursion94 PRIVATE cybertunnel_lib)
 if(WIN32 AND MINGW)
-  target_link_options(cybertunnel PRIVATE -static -static-libgcc)
+  target_link_options(recursion94 PRIVATE -static -static-libgcc)
 endif()
 
-add_custom_command(TARGET cybertunnel POST_BUILD
+add_custom_command(TARGET recursion94 POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_directory
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders" "$<TARGET_FILE_DIR:cybertunnel>/shaders"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders" "$<TARGET_FILE_DIR:recursion94>/shaders"
   COMMAND ${CMAKE_COMMAND} -E copy_directory
-    "${CMAKE_CURRENT_SOURCE_DIR}/presets" "$<TARGET_FILE_DIR:cybertunnel>/presets"
+    "${CMAKE_CURRENT_SOURCE_DIR}/presets" "$<TARGET_FILE_DIR:recursion94>/presets"
   COMMAND ${CMAKE_COMMAND} -E copy_directory
-    "${CMAKE_CURRENT_SOURCE_DIR}/assets" "$<TARGET_FILE_DIR:cybertunnel>/assets")
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets" "$<TARGET_FILE_DIR:recursion94>/assets")
 
 add_executable(cybertunnel_tests tests/test_main.c)
 target_compile_options(cybertunnel_tests PRIVATE ${CT_WARN})
@@ -131,54 +131,22 @@ if(WIN32 AND MINGW)
 endif()
 
 enable_testing()
-add_test(NAME cybertunnel_core COMMAND cybertunnel_tests)
-add_executable(mission_tests tests/test_mission.c src/game/mission.c)
-target_include_directories(mission_tests PRIVATE src)
-target_compile_options(mission_tests PRIVATE ${CT_WARN})
-target_link_libraries(mission_tests PRIVATE cybertunnel_lib)
-if(NOT WIN32)
-  target_link_libraries(mission_tests PRIVATE m)
-elseif(MINGW)
-  target_link_options(mission_tests PRIVATE -static -static-libgcc)
-endif()
-add_test(NAME data_run_mission COMMAND mission_tests)
-add_executable(music_tests tests/test_music.c src/game/techno.c)
-target_include_directories(music_tests PRIVATE src)
-target_compile_options(music_tests PRIVATE ${CT_WARN})
+add_test(NAME engine_core COMMAND cybertunnel_tests)
 add_executable(ship_tests tests/test_ship.c)
 target_compile_options(ship_tests PRIVATE ${CT_WARN})
 target_link_libraries(ship_tests PRIVATE cybertunnel_lib)
-if(NOT WIN32)
-  target_link_libraries(music_tests PRIVATE m)
-elseif(MINGW)
-  target_link_options(music_tests PRIVATE -static -static-libgcc)
+if(WIN32 AND MINGW)
   target_link_options(ship_tests PRIVATE -static -static-libgcc)
 endif()
-add_test(NAME data_run_techno COMMAND music_tests)
-add_test(NAME data_run_ship COMMAND ship_tests)
+add_test(NAME engine_ship COMMAND ship_tests)
 add_executable(vectoring_tests tests/test_vectoring.c)
 target_compile_options(vectoring_tests PRIVATE ${CT_WARN})
 target_link_libraries(vectoring_tests PRIVATE cybertunnel_lib)
 if(WIN32 AND MINGW)
   target_link_options(vectoring_tests PRIVATE -static -static-libgcc)
 endif()
-add_test(NAME data_run_vectoring COMMAND vectoring_tests)
-if(WIN32)
-  add_test(NAME data_run_endless COMMAND cybertunnel --hidden --autoplay --missions 6 --seed 83)
-  set_tests_properties(data_run_endless PROPERTIES TIMEOUT 60)
-  add_test(NAME data_run_startup COMMAND cybertunnel --hidden --startup-check)
-  set_tests_properties(data_run_startup PROPERTIES TIMEOUT 20)
-  add_test(NAME data_run_live_menu COMMAND cybertunnel --hidden --menu-check --seed 83)
-  set_tests_properties(data_run_live_menu PROPERTIES TIMEOUT 30)
-  add_test(NAME data_run_ship_systems COMMAND cybertunnel --hidden --ship-check --seed 83)
-  set_tests_properties(data_run_ship_systems PROPERTIES TIMEOUT 20)
-  add_test(NAME data_run_standalone COMMAND ${CMAKE_COMMAND}
-    "-DEXECUTABLE=$<TARGET_FILE:cybertunnel>" "-DCHECK_DIR=${CMAKE_CURRENT_BINARY_DIR}/standalone-check"
-    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_standalone.cmake")
-  set_tests_properties(data_run_standalone PROPERTIES TIMEOUT 20)
-endif()
-
-install(TARGETS cybertunnel RUNTIME DESTINATION . COMPONENT Runtime)
+add_test(NAME engine_vectoring COMMAND vectoring_tests)
+install(TARGETS recursion94 RUNTIME DESTINATION . COMPONENT Runtime)
 install(DIRECTORY src/render/shaders/ DESTINATION shaders COMPONENT Runtime)
 install(DIRECTORY presets/ DESTINATION presets COMPONENT Runtime)
 install(DIRECTORY assets/ DESTINATION assets COMPONENT Runtime)

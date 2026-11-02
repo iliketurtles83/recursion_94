@@ -71,15 +71,15 @@ bool resources_prepare(char *root,size_t capacity)
     }
     if(strlen(extractedRoot)>=capacity)goto failed;
     strcpy(root,extractedRoot);
-    printf("resources: using embedded shaders, presets, texture and font\n");
+    printf("resources: using embedded shaders, presets and texture\n");
     return true;
 failed:
     cleanup_resources();
-    fprintf(stderr,"resources: could not unpack embedded game assets\n");
+    fprintf(stderr,"resources: could not unpack embedded assets\n");
     return false;
 #else
     char path[1024];
-    snprintf(path,sizeof(path),"%s/shaders/mission.vs",root);
+    snprintf(path,sizeof(path),"%s/shaders/common.glsl",root);
     return FileExists(path);
 #endif
 }
