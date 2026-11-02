@@ -1,2 +1,4 @@
-recursion94
-audio_validation
+build/
+shots/
+presets/custom.ini
+screenshot*.png

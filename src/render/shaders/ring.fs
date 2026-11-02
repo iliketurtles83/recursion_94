@@ -1,0 +1,29 @@
+#version 330
+in vec2 fUV;
+in vec3 fColor;
+in float fIntensity;
+in float fDist;
+in vec2 fPulse;             // hash, frequency (0 = none)
+out vec4 finalColor;
+uniform float uPulseAmount;
+uniform float uPulseSpeed;
+uniform vec2 uDetailRange;
+#include "common.glsl"
+void main()
+{
+    float aa = fwidth(fUV.y) * 1.2;
+    // Distance simplification is opt-in: only the vortex sets uDetailRange. Left at (0,0)
+    // (corridor holo rings) the original look applies: no fade, 0.3 halo.
+    bool ranged=uDetailRange.y>uDetailRange.x;
+    float distant=ranged?smoothstep(uDetailRange.x,uDetailRange.y,fDist):0.0;
+    bool guide=fPulse.y<0.0;
+    float detail=guide?distant:(1.0-distant)*(1.0-distant);
+    vec3 lc = line_color(fColor, fUV.y, aa, guide?0.0:(ranged?0.22:0.3));
+    float pulse = 0.0;
+    if (fPulse.y > 0.0) {
+        float ph = fract(fUV.x * fPulse.y - uTime * uPulseSpeed * (0.5 + fPulse.x) + fPulse.x * 17.0);
+        pulse = smoothstep(0.82, 0.97, ph) * (1.0 - smoothstep(0.97, 1.0, ph)) * uPulseAmount;
+    }
+    vec3 col = lc * fIntensity * detail * (1.0 + pulse*(1.0-distant)) * (0.7 + 0.6 * uIntensity);
+    finalColor = vec4(apply_atmo(col, fDist), 1.0);
+}
