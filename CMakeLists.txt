@@ -70,7 +70,8 @@ set(CT_MODULE_SRC
 
 # The module as a static library so the game can link it later.
 add_library(cybertunnel_lib STATIC ${CT_MODULE_SRC})
-target_include_directories(cybertunnel_lib PUBLIC src ${raygui_SOURCE_DIR}/src)
+target_include_directories(cybertunnel_lib PUBLIC src)
+target_include_directories(cybertunnel_lib SYSTEM PUBLIC ${raygui_SOURCE_DIR}/src)   # vendor header: keep its warnings out
 target_compile_options(cybertunnel_lib PRIVATE ${CT_WARN})
 target_compile_definitions(cybertunnel_lib PUBLIC
   CT_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders"
