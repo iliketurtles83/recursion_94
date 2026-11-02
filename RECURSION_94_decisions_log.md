@@ -1,6 +1,33 @@
 # RECURSION_94 — Decisions Log
 
-This log is the source of truth for architectural choices, visual uplift milestones, feature statuses (Confirmed, Provisional, Rejected), and binary size tracking against the 1.44MB (1,474,560 bytes) contest limit.
+This log is the source of truth for architectural choices, visual uplift milestones, feature statuses (Confirmed, Provisional, Rejected), and binary size tracking. The 1.44MB (1,474,560 bytes) contest limit applied to entries before 2026-11-03.
+
+## [Unified engine] RECURSION_94 rebuilt on the rec_tunnel engine
+
+- Date: 2026-11-03. Status: Step 0 CONFIRMED on Linux (GCC, Raylib 6.0).
+- Decision: one game. The rec_tunnel sandbox engine (path, chunk streaming,
+  flight/camera, HDR pipeline, environments) becomes the base. The original
+  synth, combat logic, bosses and seed identity are ported onto it. The old
+  environment and ship/enemy/shot graphics are dropped. Planned structure:
+  five levels, each with its own environment, song and boss. First milestone:
+  a server-corridor vertical slice.
+- The 1.44 MB limit is retired (contest missed). Procedural and demoscene
+  spirit stays; generated assets are allowed where they earn their place.
+- Imported rec_tunnel's `sandbox/cybertunnel` at the repo root with history
+  (46 commits). Reference video, keyframes and screenshots were filtered out
+  (repo `.git` is 6.5 MB, not +118 MB); they remain in the rec_tunnel repo.
+  Original code moved to `legacy/`, unbuilt.
+- Removed DATA // RUN (an unapproved game layer by another contributor) and
+  its font and tests. Kept `presets/mission*.ini`: they hold the flight
+  tuning (thrust vectoring, courier scale) the slice builds on. Kept the
+  courier jet (by the same contributor, who approved reuse) for a future
+  ship selection.
+- Raylib 5.5 -> 6.0 via FetchContent. Warning-free build, `ctest` 3/3 pass.
+  `--shot` is byte-reproducible on 6.0. Against 5.5, about 0.2-0.3% of pixels
+  differ in vortex/city/corridor/crystal shots, mostly by 1 level; larger
+  differences (max 69) are confined to the jet's mipmapped texture.
+
+---
 
 ## [Runtime atlases and audio golden] Generate instead of embed
 

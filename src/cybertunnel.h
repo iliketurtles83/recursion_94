@@ -129,7 +129,7 @@ void ct_set_paused(CtTunnel *ct, bool paused);
 void ct_set_time_scale(CtTunnel *ct, float scale);
 void ct_rebuild(CtTunnel *ct);                           // regenerate path and chunks
 
-// Parameters (names as listed in INTEGRATION.md)
+// Parameters (names as listed in docs/engine/INTEGRATION.md)
 bool  ct_param_set(CtTunnel *ct, const char *name, float value);
 float ct_param_get(CtTunnel *ct, const char *name);
 bool  ct_preset_save(CtTunnel *ct, const char *nameOrPath);

@@ -1,6 +1,6 @@
 // Crystal field (Env #4): a dark open void filled with floating orange wireframe polyhedra,
 // clusters on both sides of a clear lane that leads to a warm glow at the vanishing point.
-// See PLAN_ENV4_CRYSTAL_FIELD.md.
+// See archive/rec_tunnel/PLAN_ENV4_CRYSTAL_FIELD.md.
 //
 // Open space with no floor and no walls: the lane exists only where the shapes are not, and
 // the flight model's steering box is the only limit on the ship.

@@ -1,6 +1,6 @@
 // Environment #3: "Server Corridor" — low flight over the shared neon grid floor between
 // walls of server pillars with green code rain and white stepped outlines, under a broken
-// lattice of circuit-covered beams. See PLAN_ENV3_SERVER_CORRIDOR.md.
+// lattice of circuit-covered beams. See archive/rec_tunnel/PLAN_ENV3_SERVER_CORRIDOR.md.
 //
 // Phases done: A (path style: level, no twist, floor and ceiling, strong yaw spring; grid
 // floor, sky, reflection), B (pillar placement and stepped bodies, corridor_pillars.c),

@@ -1,91 +1,116 @@
 # AGENTS.md
 
-RECURSION_94 is a C11 + Raylib 6 procedural rail shooter. Worlds, geometry, music and SFX are generated at runtime from a 32-bit seed; material atlases are generated at startup from integer-hash recipes. The target is a 1.44MB contest executable: both build scripts require the UPX-packed binary to be strictly below 1,474,560 bytes.
+RECURSION_94 is a procedural treadmill shooter in C11 + Raylib 6: a love letter to
+the 90s floppy-disk era, the game scene and the demoscene. It is being rebuilt on
+the cybertunnel engine imported from the rec_tunnel sandbox. The planned structure
+is five levels, each with its own environment, song and boss.
 
-## Build and run
+## Current state (transition)
 
-- Linux: `./build.sh` → `bin/recursion94`. Requires `gcc`, `upx` (mandatory, not optional), and Raylib 6 at the hardcoded path `/usr/local/lib/libraylib.a`.
-- Windows cross-build: `bash ./build_windows.sh` (MinGW `x86_64-w64-mingw32-gcc` + `$HOME/raylib-win/src/libraylib.a`; override with `RAYLIB_WIN_SOURCE`, `UPX_BIN`).
-- Run: `./bin/recursion94` — no runtime asset dependency. `--seed N` skips the seed selector; `--boss N` starts just past the boss spawn.
-- No Makefile, no test framework, no linter. Flags include `-Wall -Wextra -Wpedantic` — don't introduce warnings.
+- The repo root is the **engine and sandbox harness** (formerly rec_tunnel's
+  `sandbox/cybertunnel`). `./build/recursion94` currently runs the sandbox only.
+- `legacy/` holds the original RECURSION_94 game: unbuilt reference code for
+  porting. Keep from it: the audio synth (`legacy/src/audio_synth.c`), the combat
+  logic and boss state machines (`legacy/src/gameplay.c`, logic functions only)
+  and the seed identity. Its environment and its ship, enemy and shot graphics are
+  being dropped. Delete legacy files once their content is ported.
+  `archive/AGENTS_legacy.md` has the rules that applied to that code.
+- First milestone: a vertical slice (server corridor, engine flight, ported
+  weapons/enemies, one boss, one song).
 
-## Validation (this is the test suite)
+## Spirit
 
-- `VALIDATE_GENERATOR=1 ./build.sh` — headless environment-generator check; exits after running.
-- `VALIDATE_GAMEPLAY=1 ./build.sh` — headless chain-link/special-attack check; exits after running.
-- `VALIDATE_AUDIO=1 ./build.sh` — builds and runs `bin/audio_validation` (deterministic PCM hash, golden `AUDIO_VALIDATION_HASH` in `src/audio_synth.c`); does not build the game. Re-bless the golden only for intentional synth changes.
-- `PROFILE_AUDIO=1 ./build.sh && ./bin/recursion94 --seed 94` — audio callback profiler; `F3` in game.
-- Order matters: the first two modes replace `bin/recursion94` with a validation-only binary. Re-run plain `./build.sh` before any gameplay run.
-- Headless environments: `GLFW: X11: Failed to open display` is expected, not a regression — use the validation modes above instead.
+- Procedural generation and demoscene-style math lead. Generated assets (ComfyUI)
+  are acceptable where they earn their place, such as the optional jet texture.
+  There is no hard size limit any more (the 1.44 MB contest is over), but prefer
+  clever code over stored data. Never pad with data.
+- Abstract, light-on-dark, rhythmic visuals. Don't drift back toward realistic
+  industrial clutter.
 
-## Codegen
+## Build and test
 
-- Shaders are embedded at build time: `tools/embed_shaders.sh` converts `shaders/*.vs/.fs` into `bin/shader_sources.c` (byte arrays), loaded via `LoadShaderFromMemory`.
-- Edit `shaders/`, never `bin/shader_sources.c` (generated, but tracked in git).
-- Surface materials use object-local or uncurved world coordinates. Keep `uObjectOrigin`
-  updated per craft after flushing the render batch, and pass the actual camera to
-  `BeginCraftPass`/`DrawEnvironment` for `uViewPosition`. Do not tie material patterns
-  to screen coordinates or runtime time; fine features need derivative-based filtering.
-- Post-processing uses `LoadSceneTarget` for sampleable depth. Pass the current
-  camera FOV to `DrawPostProcess`; depth reconstruction must match the actual
-  projection/clip planes. Resize by unloading/recreating the whole post system.
-  `UnloadRenderTexture` owns the attached depth texture: do not delete it twice.
-  If the depth-texture framebuffer fails, disable contact shading and retain the
-  standard renderbuffer target.
-- Near-field service hardware is material kind 17, with an 8,192-instance cap,
-  static CPU staging and `serviceInstancesVbo` allocated/freed by environment
-  lifecycle functions. Keep the specialized untextured GLSL 330 draw path and
-  restore vertex attributes/divisors after it. Do not replace it with a new
-  per-frame `DrawMeshInstanced` call (Raylib allocates temporary buffers there).
-- Both material atlases are generated at startup by `src/material_atlas.c`
-  (pure integer-hash recipes into static buffers; never embed baked byte arrays).
-  `VALIDATE_GENERATOR` checks their FNV-1a hashes against the goldens in
-  `src/material_atlas.h`; update a golden only for an intentional recipe change.
-- Detail atlas channels (height, roughness, oxidation, wear) are consumed by
-  terrain/tower shaders. `EnvironmentSystem.detailAtlas` owns the shared texture:
-  clear both material map references before `UnloadMaterial` and delete it
-  exactly once. The custom service batch must bind it on slot 1 and restore
-  active texture slot 0.
-- Facade atlas channels carry side-facade relief, roughness, oxidation and wear.
-  `EnvironmentSystem.facadeAtlas` owns the texture: clear the tower normal-map
-  reference before material teardown, then unload it once. The custom service
-  batch binds it on slot 2 and restores active slot 0. Keep facade bump and
-  paint non-emissive and derivative-filtered; do not turn fine grain into
-  distance shimmer.
-- Craft material classes 3/4 are beam/pulse effects; class 2 is other energy FX.
-  Flush before changing class/origin uniforms. Draw translucent attacks after
-  opaque geometry with additive blending, depth testing on and depth writes off.
-  Detail geometry must not change damage, timers, projectile pools or flight clearance.
-- Boss core visual form is chosen by `boss.encounterIndex % BOSSES_PER_RECURSION`.
-  Keep the five silhouettes in `src/gameplay.c` render-only: shared core/node
-  hit targets, health and attack state must not change accidentally. HUD names
-  use the same modulo mapping so later recursion depths repeat the identities.
-- Boost arms existing enemy projectiles for mild bounded lateral homing; the
-  flag persists on each shot after boost ends. Guidance commits in the last
-  4 world units so a dodge remains possible. Keep this within the fixed
-  128-shot pool, use swept crossing for collision, and preserve the original
-  Core Energy health system: normal hits cost 18, hits during active boost
-  cost 20.7, and boost drains one Energy per second. Regular-enemy fire timers,
-  not boss attack timers, accelerate
-  while boosting. Do not add a separate hull/damage system.
-- `main.c` disables Raylib's default Escape exit with `SetExitKey(KEY_NULL)`.
-  The menu state freezes all gameplay/world/camera updates and pauses the audio
-  stream; only rendering continues. When adding input, do not let a paused frame
-  fall through to `UpdateGameplay`. The bottom-right pause button and centered
-  menu rectangles are screen-size-derived for mouse hit testing and drawing.
+```sh
+cmake -S . -B build && cmake --build build -j     # RelWithDebInfo by default
+ctest --test-dir build --output-on-failure         # engine_core, engine_ship, engine_vectoring
+./build/cybertunnel_tests                          # core determinism/continuity, no window or GL
+```
+
+- Raylib 6.0 and raygui 4.0 are pinned through FetchContent. Offline, point CMake
+  at local checkouts with `-DFETCHCONTENT_SOURCE_DIR_RAYLIB=<raylib-6.0 dir>` and
+  `-DFETCHCONTENT_SOURCE_DIR_RAYGUI=<raygui dir>`.
+- Flags: `-Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers`.
+  Don't introduce warnings.
+- The executable loads shaders, presets and assets from copies next to it
+  (`build/shaders`, `build/presets`, `build/assets`), copied after each build.
+  After editing a shader or preset, rebuild (or copy it) before taking a shot.
+  Hot reload watches the `build/` copies. Windows builds embed them as RC
+  resources (`src/core/resources.c`).
+
+## Running and visual regression
+
+```sh
+./build/recursion94 --env N [--seed N] [--preset NAME] [--set name=value ...]
+    [--shot DISTANCE --out FILE] [--bench SECONDS] [--list-params] [--write-preset NAME]
+    [--boost] [--noship] [--hdr8] [--hidden]
+```
+
+- Environments: 0 vortex, 1 template, 2 grid city, 3 server corridor, 4 greybox
+  (use `--preset greybox`), 5 crystal field. Presets: `city`, `corridor`, `crystal`,
+  etc. `mission` and `mission_tunnel` carry the flight tuning (thrust vectoring,
+  courier scale) inherited from rec_tunnel's game layer.
+- `--shot` jumps to a path distance, steps a fixed 1/60 s and saves after 2 s of
+  simulated time, so the same command gives a byte-identical PNG. Use it for
+  before/after checks of any visual change. Debug renders go in `shots/` (ignored).
+- On this machine, run shots with `--hidden` and `DISPLAY=:1`,
+  `XAUTHORITY=/run/user/1000/xauth_*`. A visible window on `:1` never presents
+  and hangs. Without a display, GLFW fails.
+- Runtime keys: F1 param panel, F2 free cam, F3 overlay, T switch environment,
+  1–9 layer toggles, R reseed, F12 screenshot.
 
 ## Architecture
 
-- `main.c` — game loop, CLI parsing, post-processing, validation-mode entrypoints.
-- `src/environment.c` — deterministic procedural world (sectors/zones/districts) + `ValidateEnvironmentGenerator`.
-- `src/gameplay.c` — combat and runtime game state.
-- `src/audio_synth.c` — sample-by-sample synthesis in the Raylib audio callback.
-- `src/demoscene.c` — seed selector and background visuals.
-- `audio_validation.c` — standalone audio validation harness.
-- `recursion_94.md` — detailed design reference (gameplay, environment, audio, boss).
+- **Core / environment split** (`src/env/env.h`). The core owns the path, chunk
+  streaming, ship/flight, camera and HDR post. An `Environment` is a table of
+  callbacks: `pathStyle`, `registerParams`, `buildChunk`, `uploadChunk`,
+  `drawBackground/Opaque/Emissive`, `energyAt`, `atmosphere`. To add one, follow
+  `docs/engine/INTEGRATION.md` §11 (copy `env_template.c`, register it in `env.h`,
+  `cybertunnel.h`, `cybertunnel.c` and `CMakeLists.txt`).
+- **Determinism is a hard rule.** `buildChunk` is pure CPU with no GL calls; its
+  output depends only on (seed, params, chunkIndex, path). Seed RNGs with
+  `ct_hash64_3(seed, ENV_ID, chunkIndex)` and per-feature sub-streams. Never use
+  `rand()`, `GetRandomValue()` or `SetRandomSeed()`. Tests check build-order
+  independence. `init` is called with `shaders == NULL` in tests, so skip GL work
+  then.
+- **Path** (`core/path.c`): centripetal Catmull-Rom through noise-driven control
+  points, arc-length resampled into a ring buffer, with rotation-minimizing frames.
+  Open environments (city, corridor) set `floorDepth`, `maxPitchDeg=0` and
+  `twistRateMax=0` for a flat path with world-up normals.
+- **Precision**: world positions are double (`DVec3`). Rendering uses render space
+  = world − `renderOrigin` (floating origin); chunk geometry is stored relative to
+  `chunk->origin`.
+- **Rendering**: HDR scene target, then bloom, then the composite pass
+  (`render/pipeline.c`). Neon lines are camera-facing ribbons (`render/linegeo.c`).
+  Shared fog/fade/time uniforms come from `env_set_common_uniforms()` and
+  `shaders/common.glsl`. Shared building blocks: `render/streaks`, `render/shapes`,
+  `render/gridfloor`, `env/lattice_place`, `env/trace_route`, `core/pacing`.
+- **Shared shaders are shared state.** `ring.fs`, `tower.fs`, `sky.fs`, `grid.fs`,
+  `streak.vs` and `common.glsl` serve several environments, and `sl_load` caches
+  programs by shader pair, so uniform values persist across environment switches.
+  Make zero mean the old behaviour, and have every user set the uniform explicitly
+  every frame (as `env_corridor.c` does for `uWindows`, `uSkyline`, `uDetailRange`).
+- **Params**: every tunable has a globally unique name; group names become debug
+  panel and ini sections. Editing a path-affecting group triggers a full rebuild.
+- **Game hook**: game code uses only `src/cybertunnel.h`. It feeds input via
+  `ct_set_input`, may own the camera (`ownCamera=false`), and draws its objects into
+  the HDR scene with `ct_set_scene_draw`.
 
-## Constraints
+## Docs
 
-- Determinism: all procedural content derives from seeded integer hash functions — never `rand()`. The same seed must reproduce the same run.
-- No gameplay-time heap allocation; fixed-size pools for enemies, projectiles, particles, and environment structures (caps in `src/gameplay.h` / `src/environment.h`).
-- `archive/` holds finished plans, past release notes and superseded docs (including old copilot instructions with stale claims). Don't treat it as current guidance.
+- `docs/engine/INTEGRATION.md`: public API, GL ownership, parameter table.
+- `docs/engine/NOTES.md`: environment implementation log. Record new environment
+  work there in the same style.
+- `docs/engine/BACKLOG.md`: open engine items (steering box, engine trail, ...).
+- `recursion_94.md`: design reference for the original game (gameplay, audio and
+  boss sections are the spec being ported).
+- `RECURSION_94_decisions_log.md`: decisions and results log.
+- `archive/`: finished plans and superseded docs. Not current guidance.

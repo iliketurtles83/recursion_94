@@ -11,3 +11,8 @@ Finished, stale or superseded material, kept for history. Not current guidance.
   code that Phase 0 removed. Some technique notes may still be useful.
 - `copilot-instructions.md`: old Copilot instructions with stale claims (UPX
   "optional", shaders loaded from relative paths).
+- `AGENTS_legacy.md`: agent rules for the original game, now in `legacy/`. Still
+  useful when porting the audio synth (callback and determinism notes).
+- `rec_tunnel/`: the rec_tunnel sandbox's original brief (`BRIEF.md`, which sets
+  "no size constraint" and the Data Vortex look) and the environment plans for the
+  grid city, server corridor and crystal field (all implemented).

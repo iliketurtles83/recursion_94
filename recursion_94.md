@@ -1,5 +1,11 @@
 # RECURSION_94 — Project Design Reference (v2)
 
+> **Status (2026-11-03):** this describes the original game, now in `legacy/`
+> (paths below are relative to it). The game is being rebuilt on the imported
+> cybertunnel engine. The audio (§6), gameplay (§4, §7) and boss (§8) sections are
+> the spec being ported. The environment (§5) and the 1.44 MB target are
+> superseded. See `AGENTS.md`.
+
 **Developer:** Dream Software
 **Target:** 1.44MB Game Development Contest (UPX-packed executable)
 **Core Philosophy:** Bare-metal performance, zero external assets, procedural generation, synesthetic flow-state.

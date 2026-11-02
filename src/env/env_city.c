@@ -1,5 +1,5 @@
 // Environment #2: "Neon Grid City" — open flight low over an infinite neon grid floor
-// between circuit-traced monolith towers. See PLAN_ENV2_GRID_CITY.md.
+// between circuit-traced monolith towers. See archive/rec_tunnel/PLAN_ENV2_GRID_CITY.md.
 //
 // Phases done: A (path style: level, no twist, floor below the centerline; atmosphere),
 // B (grid floor, sky), C (tower placement and bodies, city_towers.c), D (circuit traces

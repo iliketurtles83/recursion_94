@@ -1,0 +1,91 @@
+# AGENTS.md
+
+RECURSION_94 is a C11 + Raylib 6 procedural rail shooter. Worlds, geometry, music and SFX are generated at runtime from a 32-bit seed; material atlases are generated at startup from integer-hash recipes. The target is a 1.44MB contest executable: both build scripts require the UPX-packed binary to be strictly below 1,474,560 bytes.
+
+## Build and run
+
+- Linux: `./build.sh` → `bin/recursion94`. Requires `gcc`, `upx` (mandatory, not optional), and Raylib 6 at the hardcoded path `/usr/local/lib/libraylib.a`.
+- Windows cross-build: `bash ./build_windows.sh` (MinGW `x86_64-w64-mingw32-gcc` + `$HOME/raylib-win/src/libraylib.a`; override with `RAYLIB_WIN_SOURCE`, `UPX_BIN`).
+- Run: `./bin/recursion94` — no runtime asset dependency. `--seed N` skips the seed selector; `--boss N` starts just past the boss spawn.
+- No Makefile, no test framework, no linter. Flags include `-Wall -Wextra -Wpedantic` — don't introduce warnings.
+
+## Validation (this is the test suite)
+
+- `VALIDATE_GENERATOR=1 ./build.sh` — headless environment-generator check; exits after running.
+- `VALIDATE_GAMEPLAY=1 ./build.sh` — headless chain-link/special-attack check; exits after running.
+- `VALIDATE_AUDIO=1 ./build.sh` — builds and runs `bin/audio_validation` (deterministic PCM hash, golden `AUDIO_VALIDATION_HASH` in `src/audio_synth.c`); does not build the game. Re-bless the golden only for intentional synth changes.
+- `PROFILE_AUDIO=1 ./build.sh && ./bin/recursion94 --seed 94` — audio callback profiler; `F3` in game.
+- Order matters: the first two modes replace `bin/recursion94` with a validation-only binary. Re-run plain `./build.sh` before any gameplay run.
+- Headless environments: `GLFW: X11: Failed to open display` is expected, not a regression — use the validation modes above instead.
+
+## Codegen
+
+- Shaders are embedded at build time: `tools/embed_shaders.sh` converts `shaders/*.vs/.fs` into `bin/shader_sources.c` (byte arrays), loaded via `LoadShaderFromMemory`.
+- Edit `shaders/`, never `bin/shader_sources.c` (generated, but tracked in git).
+- Surface materials use object-local or uncurved world coordinates. Keep `uObjectOrigin`
+  updated per craft after flushing the render batch, and pass the actual camera to
+  `BeginCraftPass`/`DrawEnvironment` for `uViewPosition`. Do not tie material patterns
+  to screen coordinates or runtime time; fine features need derivative-based filtering.
+- Post-processing uses `LoadSceneTarget` for sampleable depth. Pass the current
+  camera FOV to `DrawPostProcess`; depth reconstruction must match the actual
+  projection/clip planes. Resize by unloading/recreating the whole post system.
+  `UnloadRenderTexture` owns the attached depth texture: do not delete it twice.
+  If the depth-texture framebuffer fails, disable contact shading and retain the
+  standard renderbuffer target.
+- Near-field service hardware is material kind 17, with an 8,192-instance cap,
+  static CPU staging and `serviceInstancesVbo` allocated/freed by environment
+  lifecycle functions. Keep the specialized untextured GLSL 330 draw path and
+  restore vertex attributes/divisors after it. Do not replace it with a new
+  per-frame `DrawMeshInstanced` call (Raylib allocates temporary buffers there).
+- Both material atlases are generated at startup by `src/material_atlas.c`
+  (pure integer-hash recipes into static buffers; never embed baked byte arrays).
+  `VALIDATE_GENERATOR` checks their FNV-1a hashes against the goldens in
+  `src/material_atlas.h`; update a golden only for an intentional recipe change.
+- Detail atlas channels (height, roughness, oxidation, wear) are consumed by
+  terrain/tower shaders. `EnvironmentSystem.detailAtlas` owns the shared texture:
+  clear both material map references before `UnloadMaterial` and delete it
+  exactly once. The custom service batch must bind it on slot 1 and restore
+  active texture slot 0.
+- Facade atlas channels carry side-facade relief, roughness, oxidation and wear.
+  `EnvironmentSystem.facadeAtlas` owns the texture: clear the tower normal-map
+  reference before material teardown, then unload it once. The custom service
+  batch binds it on slot 2 and restores active slot 0. Keep facade bump and
+  paint non-emissive and derivative-filtered; do not turn fine grain into
+  distance shimmer.
+- Craft material classes 3/4 are beam/pulse effects; class 2 is other energy FX.
+  Flush before changing class/origin uniforms. Draw translucent attacks after
+  opaque geometry with additive blending, depth testing on and depth writes off.
+  Detail geometry must not change damage, timers, projectile pools or flight clearance.
+- Boss core visual form is chosen by `boss.encounterIndex % BOSSES_PER_RECURSION`.
+  Keep the five silhouettes in `src/gameplay.c` render-only: shared core/node
+  hit targets, health and attack state must not change accidentally. HUD names
+  use the same modulo mapping so later recursion depths repeat the identities.
+- Boost arms existing enemy projectiles for mild bounded lateral homing; the
+  flag persists on each shot after boost ends. Guidance commits in the last
+  4 world units so a dodge remains possible. Keep this within the fixed
+  128-shot pool, use swept crossing for collision, and preserve the original
+  Core Energy health system: normal hits cost 18, hits during active boost
+  cost 20.7, and boost drains one Energy per second. Regular-enemy fire timers,
+  not boss attack timers, accelerate
+  while boosting. Do not add a separate hull/damage system.
+- `main.c` disables Raylib's default Escape exit with `SetExitKey(KEY_NULL)`.
+  The menu state freezes all gameplay/world/camera updates and pauses the audio
+  stream; only rendering continues. When adding input, do not let a paused frame
+  fall through to `UpdateGameplay`. The bottom-right pause button and centered
+  menu rectangles are screen-size-derived for mouse hit testing and drawing.
+
+## Architecture
+
+- `main.c` — game loop, CLI parsing, post-processing, validation-mode entrypoints.
+- `src/environment.c` — deterministic procedural world (sectors/zones/districts) + `ValidateEnvironmentGenerator`.
+- `src/gameplay.c` — combat and runtime game state.
+- `src/audio_synth.c` — sample-by-sample synthesis in the Raylib audio callback.
+- `src/demoscene.c` — seed selector and background visuals.
+- `audio_validation.c` — standalone audio validation harness.
+- `recursion_94.md` — detailed design reference (gameplay, environment, audio, boss).
+
+## Constraints
+
+- Determinism: all procedural content derives from seeded integer hash functions — never `rand()`. The same seed must reproduce the same run.
+- No gameplay-time heap allocation; fixed-size pools for enemies, projectiles, particles, and environment structures (caps in `src/gameplay.h` / `src/environment.h`).
+- `archive/` holds finished plans, past release notes and superseded docs (including old copilot instructions with stale claims). Don't treat it as current guidance.
