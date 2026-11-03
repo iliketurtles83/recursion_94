@@ -4,7 +4,7 @@
 > (paths below are relative to it). The game is being rebuilt on the imported
 > cybertunnel engine. The audio (§6), gameplay (§4, §7) and boss (§8) sections are
 > the spec being ported. The environment (§5) and the 1.44 MB target are
-> superseded. See `AGENTS.md`.
+> superseded. §9 (Story) is new design for the rebuild. See `AGENTS.md`.
 
 **Developer:** Dream Software
 **Target:** 1.44MB Game Development Contest (UPX-packed executable)
@@ -157,3 +157,86 @@ The five boss bodies are assembled entirely from primitive draw calls (spheres, 
 - **Fractal Leviathan:** an open black aperture surrounded by broken rings and twelve long articulated truss arms; it does not reuse the ordinary turbine core.
 - **Firewall node satellites:** each a small mechanically detailed enemy mesh orbiting the core, connected back to the core by faint tether cylinders drawn only while active.
 - All boss geometry uses the shared `craft.fs`/`craft.vs` directional-lighting shader with restrained rim lighting — no luminous outer shells — keeping the boss legible against the busy backdrop.
+
+## 9. Story
+
+> **Status:** agreed direction for the rebuild (2026-11-03), not implemented yet.
+> Unlike §4–§8 it is new design, not a description of the legacy game.
+
+### 9.1 Premise
+
+The ship is a program: a small self-replicating intro left on a 1994 floppy by
+a demo group that no longer exists. It was written to do one thing: reach the
+bottom. Cyberspace is the call stack, each level is a deeper frame, and the
+fractal black hole at the end is the **base case**, the point where a recursion
+can finally return.
+
+It never returns. Every time the ship reaches the singularity, the black hole
+turns out to be another call: the world collapses, reseeds, and the ship wakes
+one level deeper. The ending is the loop. The game already plays this way
+(§4.6–4.7: a Leviathan clear collapses and reseeds the world and raises the
+recursion depth), so the story gives the existing structure its meaning rather
+than adding a new one. The seed selector "compiles the run", the recursion
+depth counter is the plot's progress meter, and `RECURSION_94` reads as the
+program's filename on the disk label.
+
+What the ship is reaching for is its **authors**: whatever is left of the
+group, or the last intact sector of the original disk. A final greeting.
+
+### 9.2 Levels and archetypes
+
+Each boss is an archetype the ship has to pass. In sequence they are close to
+the hero's journey: threshold, law, shadow, devouring, self. The archetype
+should drive each boss's attack style and visual language, not only its look.
+
+| # | Environment | Boss | Archetype | Meaning and play |
+|---|---|---|---|---|
+| 1 | Server corridor | Recursive Core | The Threshold Guardian | The firewall. Its shield nodes are literally the gate; it tests whether the ship may enter. |
+| 2 | Grid city | Iron Bastion | The Ruler | Order, law, the grid. A fortress that wants everything in its place: slow, heavy, walls of fire. |
+| 3 | Crystal field | Prism Wraith | The Shadow | The ship's own reflection, rendered from the other side. Mirror attacks, decoys, the player's own patterns fired back. |
+| 4 | Vortex | Siege Mantis | The Devourer | Hunger. It eats the tunnel, the light and the ship. Fast and predatory; the last thing before the drain. |
+| 5 | Black hole | Fractal Leviathan | The Self | Not an enemy so much as the ship's own shape repeated without end. Beating it is accepting the loop. |
+
+Environment assignments for levels 2–5 are provisional; the five environments
+themselves are still to be built or chosen (see `ROADMAP.md`).
+
+### 9.3 Telling it the demoscene way
+
+No cutscenes, dialogue boxes or voice. The story is told only in forms the
+scene itself used:
+
+- **Scrolltext between levels.** A sine scroller carrying fragments left by the
+  dead group: notes, greets, half-finished thoughts. Five short texts tell the
+  whole story in a few hundred bytes. It plays over the level transition, in
+  the music's quiet section.
+- **Boss title cards** in the HUD carry the archetype:
+  `THRESHOLD GUARDIAN // RECURSIVE CORE`.
+- **Depth changes the text.** The base texts play at depth 1. Deeper, they are
+  rewritten procedurally (hash of seed and depth, never stored variants):
+  corrupted characters, stuttering repeats, missing words, and later lines that
+  seem to answer the ship. The deeper it goes, the more the authors seem to
+  know it is there. The authors stay unseen and never confirm anything.
+
+### 9.4 Draft scrollers (depth 1)
+
+Working text, to be tuned in play. The group name is a placeholder.
+
+1. **Entering the server corridor:** "loader ok. hello, whoever is running
+   this. this is our last production. it has one job: go down until there is
+   no more down. the firewall will not like it. greets to everyone who ever
+   swapped a disk by mail..."
+2. **Entering the grid city:** "everything here has a place and a number. we
+   never fit in, and neither will you. the bastion keeps the order. order is
+   only a loop nobody questions. keep moving..."
+3. **Entering the crystal field:** "the wraith looks like you because it is you,
+   rendered from the other side. we wrote this part at four in the morning and
+   we are no longer sure which of us wrote it..."
+4. **Entering the vortex:** "this is where the disk got damaged. sectors
+   missing. if the scroller stutters, that is not a bug. the mantis eats
+   everything that falls this far. don't stop..."
+5. **Entering the black hole:** "base case ahead. we never got to test this
+   part. we only wanted to know what is at the bottom. if you get there, say
+   hi from us. return 0;"
+
+**On the collapse** (after the Leviathan, before the reseed), one line:
+"...it called itself again. of course it did. we wrote it."
