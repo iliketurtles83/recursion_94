@@ -23,6 +23,11 @@
 // Audio rendered but not yet heard, in device callbacks. Tune by ear: raise it
 // if hits land early against the kick, lower it if they land late.
 #define MUSIC_LATENCY_CALLBACKS 1.0
+// Boss push-in: from the first bar line after the boss spawns, the camera
+// tightens one notch per bar (eased over the bar's first beat) for this many
+// bars, to fovBase * (1 - BOSS_PUSH_AMOUNT). It eases back after the fight.
+#define BOSS_PUSH_BARS 4
+#define BOSS_PUSH_AMOUNT 0.20f
 
 typedef enum { STATE_SELECT, STATE_RUN } GameState;
 
@@ -41,6 +46,9 @@ typedef struct Game {
     float          lastPlayerX, lastPlayerY;
     bool           havePlayer;
     float          baseSpeed;    // preset engine cruise speed; scaled down during boss fights
+    float          baseFov;      // preset fovBase; narrowed by the boss push-in
+    float          push;         // current push-in, 0..1
+    double         pushStartStep; // music step of the first push bar (-1: no boss)
     bool           bossTest;     // --boss: start each run just short of the first boss
     MusicClock     music;
 } Game;
@@ -103,6 +111,9 @@ static void start_run(Game *g, uint32_t seed, bool withAudio)
     music_clock_reset(&g->music, GetSynthSeedBpm(seed));
     if (g->bossTest) g->virtualZ = g->play.boss.nextSpawnDistance - 40.0;
     ct_param_set(g->ct, "baseSpeed", g->baseSpeed);
+    ct_param_set(g->ct, "fovBase", g->baseFov);
+    g->push = 0.0f;
+    g->pushStartStep = -1.0;
     ct_set_paused(g->ct, false);
     ct_set_ship_damage(g->ct, 0.0f);
     ct_reset_route(g->ct, (uint64_t)seed);
@@ -205,6 +216,34 @@ static void update_clock(Game *g, float dt)
     SetGameplayMusicClock(&g->play, &g->music);
 }
 
+static float smooth01(float x)
+{
+    x = fminf(fmaxf(x, 0.0f), 1.0f);
+    return x * x * (3.0f - 2.0f * x);
+}
+
+// Boss push-in, stepped to the bars of the music.
+static void update_push(Game *g, float dt)
+{
+    const BossState *b = &g->play.boss;
+    if (b->active && g->pushStartStep < 0.0)
+        g->pushStartStep = (floor(g->music.step / MUSIC_BAR) + 1.0) * MUSIC_BAR;
+    if (b->active) {
+        double bars = (g->music.step - g->pushStartStep) / MUSIC_BAR;
+        float target = 0.0f;
+        if (bars >= 0.0) {
+            double whole = floor(bars);
+            float onBeat = smooth01((float)(bars - whole) * 4.0f);   // ease over the bar's first beat
+            target = fminf(((float)whole + onBeat) / BOSS_PUSH_BARS, 1.0f);
+        }
+        g->push = fmaxf(g->push, target);
+    } else {
+        g->pushStartStep = -1.0;
+        g->push = fmaxf(0.0f, g->push - dt * 0.4f);              // release over ~2.5 s
+    }
+    ct_param_set(g->ct, "fovBase", g->baseFov * (1.0f - BOSS_PUSH_AMOUNT * smooth01(g->push)));
+}
+
 static void update_run(Game *g, float dt, const Controls *c)
 {
     update_clock(g, dt);
@@ -231,6 +270,7 @@ static void update_run(Game *g, float dt, const Controls *c)
     play_events(g, &events);
     ct_set_ship_damage(g->ct, 1.0f - g->play.player.energy / 100.0f);
     update_music(g, boosting, dt);
+    update_push(g, dt);
     ct_set_beat(g->ct, g->beatPulse);
 }
 
@@ -269,7 +309,8 @@ int game_run(CtTunnel *ct, const GameOptions *o)
 {
     static Game g;   // large (combat pools); keep it off the stack
     g = (Game){ .ct = ct, .state = STATE_SELECT, .selectedSeed = o->seed, .runSeed = o->seed,
-                .baseSpeed = ct_param_get(ct, "baseSpeed"), .bossTest = o->bossTest };
+                .baseSpeed = ct_param_get(ct, "baseSpeed"),
+                .baseFov = ct_param_get(ct, "fovBase"), .bossTest = o->bossTest };
     combat_draw_init(&g.draw);
     ct_set_scene_draw(ct, scene_draw, &g);
     bool shotMode = o->shotSeconds >= 0.0;
@@ -329,6 +370,7 @@ int game_run(CtTunnel *ct, const GameOptions *o)
 
     stop_audio(&g);
     ct_param_set(ct, "baseSpeed", g.baseSpeed);
+    ct_param_set(ct, "fovBase", g.baseFov);
     ct_set_scene_draw(ct, NULL, NULL);
     combat_draw_unload(&g.draw);
     return 0;

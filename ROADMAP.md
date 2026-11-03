@@ -20,9 +20,11 @@ RECURSION_94.
   - [x] Turn on `bossesEnabled`; neon boss presentation.
   - [x] Slow the engine during the boss (legacy travel speed drops to 6 u/s).
   - [x] Boss music: intensity, preBossHush, boss riser.
-  - [ ] Optional: camera pull-back / FOV widening on arrival (original §8.3).
-        Preferred: a slow push-in on the boss timed to the music (bars), via
-        the music clock and curve timeline below.
+  - [x] Boss push-in timed to the music (replaces the original §8.3
+        pull-back): from the first bar line after the boss spawns, `fovBase`
+        tightens one notch per bar over 4 bars to 0.8x, eased over each bar's
+        first beat; it eases back after the fight (`update_push`, `game.c`).
+        Tune `BOSS_PUSH_BARS` / `BOSS_PUSH_AMOUNT` in the playtest.
 - [x] **Step 4: one song** tuned for the corridor (`SYNTH_SONG_CORRIDOR`).
 - [ ] **Step 5: playtest and tune.**
   - [ ] Hand-play: audio by ear, beat bloom (`beatBloom` 0.35), flight and

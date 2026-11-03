@@ -2,6 +2,19 @@
 
 This log is the source of truth for architectural choices, visual uplift milestones, feature statuses (Confirmed, Provisional, Rejected), and binary size tracking. The 1.44MB (1,474,560 bytes) contest limit applied to entries before 2026-11-03.
 
+## [Boss push-in] Camera tightens on the bars
+
+- Date: 2026-11-03. Status: CONFIRMED in shots; not yet hand-played.
+- Replaces the original pull-back idea. When the boss spawns, the push waits
+  for the next bar line, then narrows the engine's `fovBase` one notch per bar
+  for four bars (65 -> 52 with `r94_corridor`), each notch eased over the
+  bar's first beat. It holds for the fight and releases over about 2.5 s after
+  the kill; the preset value is restored on exit. At 20 s with `--boss` the
+  core reads about a third bigger. The ship grows too and reaches the
+  lower-left HUD at the edge of its weave: check in play.
+
+---
+
 ## [Music clock] Gameplay and flashes locked to the song
 
 - Date: 2026-11-03. Status: Step 6 CONFIRMED by tests and shots; not yet
