@@ -1,6 +1,7 @@
 #ifndef GAMEPLAY_H
 #define GAMEPLAY_H
 
+#include "music_clock.h"
 #include "raylib.h"
 #include <stdbool.h>
 #include <stdint.h>
@@ -179,6 +180,7 @@ typedef struct {
     float runTime;
     int weaponTier;
     GameplayArena arena;
+    MusicClock music;      // set each frame by the game; invalid in headless tests
     bool bossesEnabled;    // validation and the game enable them; tests may switch them off
     bool suppressLinkRewards;
     bool overdriveActive;
@@ -195,6 +197,7 @@ float GetGameplayCruiseSpeed(const GameplaySystem *game, double virtualPlayerZ);
 float GetGameplayTravelSpeed(const GameplaySystem *game, double virtualPlayerZ,
                              bool boosting);
 void SetGameplayArena(GameplaySystem *game, GameplayArena arena);
+void SetGameplayMusicClock(GameplaySystem *game, const MusicClock *clock);
 GameplayEvents UpdateGameplay(GameplaySystem *game, float dt, double virtualPlayerZ,
                               bool boosting, const GameplayInput *input);
 bool ValidateGameplaySpecials(void);

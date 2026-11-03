@@ -1,12 +1,92 @@
 // Headless combat checks ported from the original game's VALIDATE_GAMEPLAY mode:
 // chain-link costs and caps, beam/bomb, hit damage (normal and boost), boost
 // missile guidance and evade window, fire-rate pressure, swept hits, rounds,
-// Leviathan and recursion advance.
+// Leviathan and recursion advance. Plus the music clock: with a clock, formation
+// spawns land on beats and enemy shots on 16ths, at about the untimed rate.
 #include "gameplay.h"
+#include "music_clock.h"
 #include "raylib.h"
+
+#include <stdio.h>
+#include <string.h>
+
+typedef struct { int formations, shots, offGridFormations, offGridShots; } GridRun;
+
+static GridRun run_combat(bool withClock, float bpm, bool boss)
+{
+    static GameplaySystem game;
+    GridRun r = { 0 };
+    InitGameplay(&game, 94u);
+    game.bossesEnabled = boss;
+    MusicClock clock;
+    music_clock_reset(&clock, bpm);
+    clock.valid = withClock;
+    GameplayInput in = { 0 };
+    in.playerX = 0.0f; in.playerY = 2.4f;
+    const float dt = 1.0f / 60.0f;
+    for (int frame = 0; frame < 60 * 120; frame++) {
+        music_clock_advance(&clock, dt);
+        SetGameplayMusicClock(&game, &clock);
+        bool wasActive[MAX_ENEMY_PROJECTILES];
+        for (int i = 0; i < MAX_ENEMY_PROJECTILES; i++) wasActive[i] = game.projectiles[i].active;
+        float spawnBefore = game.spawnTimer;
+        game.player.energy = 100.0f;           // keep the run alive
+        game.player.invulnerability = 1.0f;
+        UpdateGameplay(&game, dt, boss ? 1800.0 : 600.0, false, &in);
+        if (game.spawnTimer > spawnBefore) {
+            r.formations++;
+            if (withClock && !music_clock_crossed(&clock, MUSIC_BEAT)) r.offGridFormations++;
+        }
+        for (int i = 0; i < MAX_ENEMY_PROJECTILES; i++) {
+            if (wasActive[i] || !game.projectiles[i].active) continue;
+            r.shots++;
+            if (withClock && !music_clock_crossed(&clock, MUSIC_STEP)) r.offGridShots++;
+        }
+    }
+    return r;
+}
+
+static bool check_clock_follow(void)
+{
+    // Follows a stair-stepped (per-callback) source smoothly and monotonically,
+    // and jumps back on a restart.
+    MusicClock c;
+    music_clock_reset(&c, 120.0f);
+    double source = 0.0, last = 0.0;
+    bool monotonic = true;
+    for (int frame = 0; frame < 600; frame++) {
+        if (frame % 3 == 0) source += 3.0 * (8.0 / 60.0);   // 8 steps/s, published every 3 frames
+        music_clock_follow(&c, 1.0f / 60.0f, source, 120.0f);
+        if (c.step < last) monotonic = false;
+        last = c.step;
+    }
+    bool tracks = c.step > source - 0.5 && c.step < source + 0.5;
+    music_clock_follow(&c, 1.0f / 60.0f, 0.0, 120.0f);       // synth restarted
+    bool restarts = c.step < 0.5;
+    return monotonic && tracks && restarts;
+}
 
 int main(void)
 {
     SetTraceLogLevel(LOG_INFO);
-    return ValidateGameplaySpecials() ? 0 : 1;
+    bool specials = ValidateGameplaySpecials();
+
+    GridRun plain = run_combat(false, 129.0f, false);
+    GridRun timed = run_combat(true, 129.0f, false);
+    GridRun bossPlain = run_combat(false, 129.0f, true);
+    GridRun bossTimed = run_combat(true, 129.0f, true);
+    float bossRatio = (float)bossTimed.shots / (float)(bossPlain.shots ? bossPlain.shots : 1);
+    bool bossOk = bossTimed.offGridShots == 0 && bossTimed.shots > 50 && bossRatio > 0.80f && bossRatio < 1.20f;
+    bool onGrid = timed.offGridFormations == 0 && timed.offGridShots == 0 &&
+                  timed.formations > 20 && timed.shots > 20;
+    float spawnRatio = (float)timed.formations / (float)(plain.formations ? plain.formations : 1);
+    float shotRatio = (float)timed.shots / (float)(plain.shots ? plain.shots : 1);
+    bool rateKept = spawnRatio > 0.85f && spawnRatio < 1.15f && shotRatio > 0.80f && shotRatio < 1.20f;
+    bool follow = check_clock_follow();
+    printf("MUSIC CLOCK boss: shots %d/%d off, rate x%.2f -> %s\n", bossTimed.offGridShots, bossTimed.shots,
+           bossRatio, bossOk ? "yes" : "no");
+    printf("MUSIC CLOCK: on-grid=%s (formations %d/%d off, shots %d/%d off) rate=%s (spawns x%.2f, shots x%.2f) follow=%s\n",
+           onGrid ? "yes" : "no", timed.offGridFormations, timed.formations, timed.offGridShots, timed.shots,
+           rateKept ? "yes" : "no", spawnRatio, shotRatio, follow ? "yes" : "no");
+    return specials && onGrid && rateKept && follow && bossOk ? 0 : 1;
 }

@@ -1,12 +1,14 @@
 // RECURSION_94 game: seed selector -> run. The engine flies the ship through the
 // corridor; the ported combat runs in arena units that ride the path ahead of it
 // (see combat_draw.h). The synth follows the game state, and its beat pulse feeds
-// back into the picture through ct_set_beat.
+// back into the picture through ct_set_beat, and its sample position drives the
+// music clock that gameplay timers and flashes lock to (music_clock.h).
 #include "game.h"
 #include "audio_synth.h"
 #include "combat_draw.h"
 #include "demoscene.h"
 #include "gameplay.h"
+#include "music_clock.h"
 #include "raylib.h"
 #include "rlgl.h"
 #include <math.h>
@@ -18,6 +20,9 @@
 // and taller. Combat timing stays exactly as tuned, because it runs in arena units.
 #define ARENA_SCALE 0.4f
 #define ARENA_FLOOR_Y 0.8f
+// Audio rendered but not yet heard, in device callbacks. Tune by ear: raise it
+// if hits land early against the kick, lower it if they land late.
+#define MUSIC_LATENCY_CALLBACKS 1.0
 
 typedef enum { STATE_SELECT, STATE_RUN } GameState;
 
@@ -37,6 +42,7 @@ typedef struct Game {
     bool           havePlayer;
     float          baseSpeed;    // preset engine cruise speed; scaled down during boss fights
     bool           bossTest;     // --boss: start each run just short of the first boss
+    MusicClock     music;
 } Game;
 
 static void stop_audio(Game *g)
@@ -94,6 +100,7 @@ static void start_run(Game *g, uint32_t seed, bool withAudio)
     g->virtualZ = 0.0;
     g->havePlayer = false;
     InitGameplay(&g->play, seed);
+    music_clock_reset(&g->music, GetSynthSeedBpm(seed));
     if (g->bossTest) g->virtualZ = g->play.boss.nextSpawnDistance - 40.0;
     ct_param_set(g->ct, "baseSpeed", g->baseSpeed);
     ct_set_paused(g->ct, false);
@@ -184,8 +191,23 @@ static void update_music(Game *g, bool boosting, float dt)
     g->beatPulse = GetSynthTelemetry(&g->synth).beatPulse;
 }
 
+// With audio the clock follows what is being heard; without (shot mode) it
+// free-runs at the seed's BPM, so shots stay reproducible.
+static void update_clock(Game *g, float dt)
+{
+    if (!g->audioOn) {
+        music_clock_advance(&g->music, dt);
+    } else {
+        SynthTelemetry t = GetSynthTelemetry(&g->synth);
+        double buffered = MUSIC_LATENCY_CALLBACKS * t.callbackFrames * (t.currentBpm / 15.0) / SAMPLE_RATE;
+        music_clock_follow(&g->music, dt, t.musicStep - buffered, t.currentBpm);
+    }
+    SetGameplayMusicClock(&g->play, &g->music);
+}
+
 static void update_run(Game *g, float dt, const Controls *c)
 {
+    update_clock(g, dt);
     update_arena(g);
     float px, py;
     ship_arena(g, &px, &py);

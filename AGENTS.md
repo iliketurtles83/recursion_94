@@ -141,6 +141,13 @@ ctest --test-dir build --output-on-failure         # engine_core/_ship/_vectorin
   unchanged. Tune with `./build/song_render corridor|none SEED OUT.wav`: it
   simulates a run (cruise, boosts, hush, boss, cruise), writes a WAV and
   prints per-layer RMS for each 10 s window.
+- **Music clock** (`src/game/music_clock.h`): the game's position in the song
+  in 16th steps. With audio it follows `SynthTelemetry.musicStep` minus the
+  buffered audio (`MUSIC_LATENCY_CALLBACKS`); `--game-shot` free-runs it at
+  the seed's BPM. Gameplay timers that are due act on the nearest grid line
+  (`TimerOnGrid` in `gameplay.c`); an invalid clock (headless tests) makes them
+  plain timers. `game_combat` checks spawns and shots land on the grid at the
+  tuned rate.
 - **Beat**: `ct_set_beat(pulse)` scales bloom by the `beatBloom` parameter
   (default 0, so sandbox looks are unchanged; `r94_corridor` sets 0.35).
 - **Game hook**: game code uses only `src/cybertunnel.h`. It feeds input via

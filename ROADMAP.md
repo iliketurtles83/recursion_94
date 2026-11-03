@@ -34,15 +34,20 @@ RECURSION_94.
   - [ ] Test resetting the noise seed on every snare (and clap/hat) hit so
         each hit is identical; compare by ear against the free-running stream.
         Re-bless the audio hashes only if kept.
-- [ ] **Step 6: music clock.** Sync the game to the audio clock instead of
-      frame `dt`.
-  - [ ] Synth telemetry reports a sample-accurate musical position (bar,
-        16th step, phase within the step), derived from rendered samples.
-  - [ ] `--game-shot` (no audio thread) advances a deterministic fake clock
-        at the seed's BPM, so shots stay byte-reproducible.
-  - [ ] Gameplay reads it: boss volleys and enemy spawns snapped to the
-        16th grid, formations starting on phrase boundaries.
-  - [ ] Visuals read it: boss node flashes on the downbeat, HUD bar pulse.
+- [x] **Step 6: music clock.** Sync the game to the audio clock instead of
+      frame `dt` (`src/game/music_clock.h`).
+  - [x] Synth telemetry reports a sample-accurate musical position
+        (`SynthTelemetry.musicStep`, 16ths since the synth started).
+  - [x] `--game-shot` (no audio thread) free-runs the clock at the seed's BPM,
+        so shots stay byte-reproducible.
+  - [x] Gameplay reads it: formation spawns and boss reinforcements on beats,
+        boss volleys and enemy shots on 16ths, average rates as tuned.
+        (Phrase-boundary formations dropped: a phrase is about 7 s, far longer
+        than the spawn interval.)
+  - [x] Visuals read it: boss firewall nodes and tethers flash on the
+        downbeat, unlit HUD meter segments pulse on each bar.
+  - [ ] By ear: tune `MUSIC_LATENCY_CALLBACKS` (`game.c`) so shots sit on
+        the kick, not ahead of or behind it.
 
 ## After the slice
 

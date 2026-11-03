@@ -256,6 +256,7 @@ static float MetallicTone(SynthSystem *synth, float dt) {
 }
 
 static void TriggerStep(SynthSystem *synth, float intensity, float bossIntensity) {
+    synth->stepCount++;
     synth->currentStep = (synth->currentStep + 1) & 15;
     int step = synth->currentStep;
     if (step == 0) {
@@ -401,6 +402,7 @@ static void RenderAudioFrames(SynthSystem *synth, short *output, unsigned int fr
         synth->drumGate = 0.0f;
         synth->barCount = 0;
         synth->currentStep = 15;
+        synth->stepCount = 0u;
         synth->bassEnv = 0.0f;
         synth->bassFilterEnv = 0.0f;
         synth->subEnv = 0.0f;
@@ -915,6 +917,9 @@ static void PublishSynthTelemetry(SynthSystem *synth, unsigned int frames,
                           memory_order_relaxed);
     atomic_store_explicit(&synth->telemetryBpm, FloatBits(synth->currentBpm),
                           memory_order_relaxed);
+    float stepPhase = fminf(fmaxf(synth->stepTimer * synth->currentBpm / 15.0f, 0.0f), 0.999f);
+    atomic_store_explicit(&synth->telemetryStepCount, synth->stepCount, memory_order_relaxed);
+    atomic_store_explicit(&synth->telemetryStepPhase, FloatBits(stepPhase), memory_order_relaxed);
     atomic_store_explicit(&synth->lastCallbackFrames, frames, memory_order_relaxed);
     unsigned int previousMax = atomic_load_explicit(&synth->maxCallbackMicros,
                                                     memory_order_relaxed);
@@ -1033,6 +1038,8 @@ static void InitializeSynthState(SynthSystem *synth, uint32_t runSeed,
     atomic_init(&synth->telemetryBeatPulse, FloatBits(0.0f));
     atomic_init(&synth->telemetryDrumGate, FloatBits(0.0f));
     atomic_init(&synth->telemetryBpm, FloatBits(0.0f));
+    atomic_init(&synth->telemetryStepCount, 0u);
+    atomic_init(&synth->telemetryStepPhase, FloatBits(0.0f));
     atomic_init(&synth->maxCallbackMicros, 0u);
     atomic_init(&synth->lastCallbackFrames, 0u);
     atomic_init(&synth->telemetrySequence, 0u);
@@ -1050,6 +1057,7 @@ static void InitializeSynthState(SynthSystem *synth, uint32_t runSeed,
     synth->preBossHush = 0.0f;
     synth->songBuildProgress = 0.0f;
     synth->currentStep = 15;
+    synth->stepCount = 0u;
     synth->stepTimer = (60.0f / synth->ambientBpm) * 0.25f;
     synth->kickTime = 1.0f;
     synth->hatTime = 1.0f;
@@ -1117,6 +1125,7 @@ void InitAudioSynthOffline(SynthSystem *synth, uint32_t runSeed, const SynthSong
 
 void RenderAudioSynthOffline(SynthSystem *synth, short *stereoOut, unsigned int frames) {
     RenderAudioFrames(synth, stereoOut, frames);
+    PublishSynthTelemetry(synth, frames, 0u);
 }
 
 void InitAudioSynthConfigured(SynthSystem *synth, uint32_t runSeed,
@@ -1283,6 +1292,10 @@ SynthTelemetry GetSynthTelemetry(const SynthSystem *synth) {
             &synth->telemetryDrumGate, memory_order_relaxed));
         telemetry.currentBpm = BitsFloat(atomic_load_explicit(
             &synth->telemetryBpm, memory_order_relaxed));
+        telemetry.musicStep = (double)atomic_load_explicit(&synth->telemetryStepCount,
+                                                           memory_order_relaxed) - 1.0 +
+                              (double)BitsFloat(atomic_load_explicit(
+                                  &synth->telemetryStepPhase, memory_order_relaxed));
         telemetry.maxCallbackMicros = atomic_load_explicit(
             &synth->maxCallbackMicros, memory_order_relaxed);
         telemetry.callbackFrames = atomic_load_explicit(

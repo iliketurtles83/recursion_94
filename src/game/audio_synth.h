@@ -104,6 +104,10 @@ typedef struct {
     float beatPulse;
     float drumGate;
     float currentBpm;
+    // Musical position of the last rendered sample, in 16th steps since the
+    // synth started (step n begins at n.0; bar b starts at step 16 b). Audio
+    // still in the device buffer is not yet heard: subtract callbackFrames.
+    double musicStep;
     unsigned int maxCallbackMicros;
     unsigned int callbackFrames;
     unsigned int controlDrops;
@@ -196,6 +200,7 @@ typedef struct {
     float hitVelocity;
     int currentStep;
     int barCount;
+    unsigned int stepCount;   // steps triggered since init or reseed (music clock)
     unsigned char progressionVariant;
     unsigned char introMotifVariant;
     unsigned char introTimbreVariant;
@@ -286,6 +291,8 @@ typedef struct {
     atomic_uint telemetryBeatPulse;
     atomic_uint telemetryDrumGate;
     atomic_uint telemetryBpm;
+    atomic_uint telemetryStepCount;
+    atomic_uint telemetryStepPhase;
     atomic_uint maxCallbackMicros;
     atomic_uint lastCallbackFrames;
     atomic_uint telemetrySequence;

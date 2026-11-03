@@ -37,6 +37,29 @@ static uint64_t RenderSong(uint32_t seed, const SynthSong *song, bool *signal, i
     return hash;
 }
 
+// The music position advances with the tempo, one 16th per BPM/15 seconds.
+static bool CheckMusicStep(void)
+{
+    static SynthSystem synth;
+    static short buf[1024 * 2];
+    InitAudioSynthOffline(&synth, 94u, &SYNTH_SONG_CORRIDOR);
+    double last = -2.0;
+    bool ok = true;
+    for (int block = 0; block < 400; block++) {          // ~9.3 s
+        UpdateAudioSynth(&synth, 0.5f, 0.0f, 0.0f, 600.0f, 0.0f);
+        RenderAudioSynthOffline(&synth, buf, 1024);
+        SynthTelemetry t = GetSynthTelemetry(&synth);
+        if (block > 0) {
+            double expected = 1024.0 * t.currentBpm / 15.0 / SAMPLE_RATE;
+            double delta = t.musicStep - last;
+            if (delta < expected * 0.5 || delta > expected * 1.5) ok = false;
+        }
+        last = t.musicStep;
+    }
+    printf("MUSIC STEP: tracks tempo=%s (%.2f steps after 400 blocks)\n", ok ? "yes" : "no", last);
+    return ok;
+}
+
 int main(void) {
     uint64_t pcmHash = 0;
     bool valid = ValidateAudioSynth(&pcmHash);
@@ -51,5 +74,6 @@ int main(void) {
     bool songOk = s1 && s2 && a == b && a != o && p1 < 29000 && a == SONG_CORRIDOR_HASH;
     printf("SONG corridor: deterministic=%s hash=%016" PRIx64 " peak=%d (original arrangement peak=%d)\n",
            songOk ? "yes" : "no", a, p1, p3);
-    return valid && songOk ? 0 : 1;
+    bool stepOk = CheckMusicStep();
+    return valid && songOk && stepOk ? 0 : 1;
 }

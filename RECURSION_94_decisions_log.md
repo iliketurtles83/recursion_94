@@ -2,6 +2,28 @@
 
 This log is the source of truth for architectural choices, visual uplift milestones, feature statuses (Confirmed, Provisional, Rejected), and binary size tracking. The 1.44MB (1,474,560 bytes) contest limit applied to entries before 2026-11-03.
 
+## [Music clock] Gameplay and flashes locked to the song
+
+- Date: 2026-11-03. Status: Step 6 CONFIRMED by tests and shots; not yet
+  heard or hand-played.
+- The synth counts triggered steps and publishes its position in 16ths
+  (`musicStep`) with its telemetry. The game's `MusicClock` follows it minus
+  one callback of buffered audio, easing out the per-callback stair steps and
+  never running backwards except on a restart. Without audio it free-runs at
+  the seed's BPM, so `--game-shot` stays byte-identical.
+- Gameplay gating: a due timer fires on the first grid crossing within half a
+  division of zero, i.e. it rounds to the nearest grid line instead of always
+  waiting, so rates hold: 120 s headless runs give formations x0.97, enemy
+  shots x0.98, boss-fight shots x1.02 against untimed, with zero off-grid
+  events. Beats for formations and boss reinforcements; 16ths for boss volleys
+  and enemy shots (telegraph end).
+- Formations on phrase boundaries (the plan) was dropped: four bars is about
+  7 s, longer than every spawn interval.
+- Visuals: boss nodes and tethers flash on the downbeat; HUD meter segments
+  pulse each bar. The audio golden hashes are unchanged.
+
+---
+
 ## [Demoscene notes] Music clock, curve timeline, SDF bosses
 
 - Date: 2026-11-03. Status: PLANNED (roadmap), nothing implemented yet.

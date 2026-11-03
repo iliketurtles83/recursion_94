@@ -49,6 +49,16 @@ static float Approach(float current, float target, float response, float dt) {
     return current + (target - current) * blend;
 }
 
+// A timer that is due acts on the nearest grid line of the music clock:
+// it fires on the first crossing once it is within half a division of zero,
+// so the average rate stays as tuned. With no clock it is a plain timer.
+static bool TimerOnGrid(const GameplaySystem *game, float timer, int division) {
+    const MusicClock *clock = &game->music;
+    if (!clock->valid) return timer <= 0.0f;
+    float half = 0.5f * (float)division / clock->stepsPerSecond;
+    return timer <= half && music_clock_crossed(clock, division);
+}
+
 static uint32_t MixBits(uint32_t value) {
     value ^= value >> 16;
     value *= 0x7feb352du;
@@ -392,7 +402,7 @@ static void UpdateBoss(GameplaySystem *game, float dt, double virtualPlayerZ,
     if (boss->phase == BOSS_APPROACH) return;
 
     boss->reinforcementTimer -= dt;
-    if (boss->reinforcementTimer <= 0.0f) {
+    if (TimerOnGrid(game, boss->reinforcementTimer, MUSIC_BEAT)) {
         int reinforcements = boss->phase == BOSS_SINGULARITY ? 3
                            : (boss->phase == BOSS_ENRAGED || boss->leviathan ? 2 : 1);
         for (int add = 0; add < reinforcements; add++) {
@@ -412,7 +422,7 @@ static void UpdateBoss(GameplaySystem *game, float dt, double virtualPlayerZ,
     }
 
     boss->fireTimer -= dt;
-    if (boss->fireTimer > 0.0f) return;
+    if (!TimerOnGrid(game, boss->fireTimer, MUSIC_STEP)) return;
 
     Vector3 origin = boss->position;
     int shotCount = boss->phase == BOSS_SINGULARITY ? 10
@@ -791,7 +801,7 @@ static void UpdateEnemy(GameplaySystem *game, Enemy *enemy, float dt, bool overd
                 ? 0.62f - game->difficulty * 0.12f
                 : 0.90f - game->difficulty * 0.24f;
             if (overdrive) delay -= 0.10f;
-            if (enemy->phaseTime >= delay) {
+            if (TimerOnGrid(game, delay - enemy->phaseTime, MUSIC_STEP)) {
                 if (enemy->type == ENEMY_CHASER) {
                     float attackSpeed = 32.0f + game->difficulty * 10.0f +
                                         (overdrive ? 6.0f : 0.0f);
@@ -1305,7 +1315,7 @@ GameplayEvents UpdateGameplay(GameplaySystem *game, float dt, double virtualPlay
     if (game->bossesEnabled) UpdateBoss(game, dt, virtualPlayerZ, &events);
     if (!game->boss.active) {
         game->spawnTimer -= dt * (boosting ? 1.8f : 1.0f);
-        if (game->spawnTimer <= 0.0f) {
+        if (TimerOnGrid(game, game->spawnTimer, MUSIC_BEAT)) {
             SpawnFormation(game);
             game->spawnTimer = (1.18f - game->difficulty * 0.68f) *
                                (1.0f - LoopPressure(game) * 0.45f) *
@@ -1325,4 +1335,8 @@ GameplayEvents UpdateGameplay(GameplaySystem *game, float dt, double virtualPlay
 
 void SetGameplayArena(GameplaySystem *game, GameplayArena arena) {
     game->arena = arena;
+}
+
+void SetGameplayMusicClock(GameplaySystem *game, const MusicClock *clock) {
+    game->music = *clock;
 }

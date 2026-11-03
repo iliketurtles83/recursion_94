@@ -233,8 +233,16 @@ static void draw_enemy(const CtTunnel *ct, const ArenaMap *m, const double *o, c
 
 static float smooth01(float t) { t = t < 0 ? 0 : (t > 1 ? 1 : t); return t * t * (3 - 2 * t); }
 
+// 1 on a music grid line, decaying after it (0 with no clock).
+static float music_flash(const GameplaySystem *g, int division, float decay)
+{
+    float since = music_clock_since(&g->music, division);
+    return since < 10.0f ? expf(-since * decay) : 0.0f;
+}
+
 static void draw_boss_node(const Frame *f, const GameplaySystem *g, const Enemy *e, float time, float fade, bool emissive)
 {
+    fade *= 1.0f + 1.8f * music_flash(g, MUSIC_BAR, 7.0f);   // firewall nodes flash on the downbeat
     float r = e->size.x * 0.7f, id = (float)e->identity;   // drawn ~ the hit radius (0.55 + 0.28 size)
     Color c = enemy_color(g, e);
     Xform t = { r, time * 1.4f + id, time * 0.9f + id * 0.5f };
@@ -276,7 +284,7 @@ static void draw_boss(const CtTunnel *ct, const ArenaMap *m, const double *o, co
         const Enemy *e = &g->enemies[slot];
         Frame nf = frame_at(ct, m, o, e->position);
         draw_boss_node(&nf, g, e, time, fade, emissive);
-        if (emissive) ribbon(f.c, nf.c, 0.04f, enemy_color(g, e), 1.1f * fade);
+        if (emissive) ribbon(f.c, nf.c, 0.04f, enemy_color(g, e), (1.1f + 2.5f * music_flash(g, MUSIC_BAR, 7.0f)) * fade);
     }
     if (!core || !core->active) return;
 
@@ -449,6 +457,9 @@ void combat_draw_hud(const CombatDraw *d, const GameplaySystem *g, int w, int h)
 {
     (void)d;
     Color dim = { 150, 190, 210, 200 }, off = { 40, 60, 75, 160 };
+    // The meters' unlit segments pulse on each bar of the music.
+    float bar = music_flash(g, MUSIC_BAR, 5.0f);
+    off = (Color){ (unsigned char)(40 + 50 * bar), (unsigned char)(60 + 60 * bar), (unsigned char)(75 + 70 * bar), 160 };
     Color energyColor = g->player.energy < 30.0f ? g->threatColor : g->primaryColor;
 
     int x = 24, y = h - 108, bw = 300;
