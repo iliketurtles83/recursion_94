@@ -83,7 +83,7 @@ endif()
 
 add_executable(recursion94 src/main.c src/core/resources.c
   src/game/game.c src/game/audio_synth.c src/game/demoscene.c src/game/gameplay.c
-  src/game/combat_draw.c src/game/songs.c)
+  src/game/combat_draw.c src/game/songs.c src/game/story.c)
 target_include_directories(recursion94 PRIVATE src/game)
 if(WIN32)
   set_target_properties(recursion94 PROPERTIES WIN32_EXECUTABLE TRUE)
@@ -154,7 +154,7 @@ target_link_libraries(song_render PRIVATE raylib)
 if(NOT WIN32)
   target_link_libraries(song_render PRIVATE m)
 endif()
-add_executable(gameplay_tests tests/test_gameplay.c src/game/gameplay.c)
+add_executable(gameplay_tests tests/test_gameplay.c src/game/gameplay.c src/game/story.c)
 target_include_directories(gameplay_tests PRIVATE src/game)
 target_compile_options(gameplay_tests PRIVATE ${CT_WARN})
 target_link_libraries(gameplay_tests PRIVATE raylib)

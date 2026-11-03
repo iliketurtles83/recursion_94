@@ -3,10 +3,15 @@
 // missile guidance and evade window, fire-rate pressure, swept hits, rounds,
 // Leviathan and recursion advance. Plus the music clock: with a clock, formation
 // spawns land on beats and enemy shots on 16ths, at about the untimed rate.
+// Plus the curve timeline (key values, interpolation, clamping) and the story
+// text corruption (depth 1 untouched, deeper deterministic and still mostly readable).
 #include "gameplay.h"
 #include "music_clock.h"
+#include "story.h"
+#include "timeline.h"
 #include "raylib.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -66,6 +71,49 @@ static bool check_clock_follow(void)
     return monotonic && tracks && restarts;
 }
 
+static bool near(float a, float b) { return fabsf(a - b) < 1e-4f; }
+
+static bool check_timeline(void)
+{
+    static const TlKey keys[] = { { 0, 0, TL_LINEAR }, { 4, 2, TL_SMOOTH }, { 8, 4, TL_STEP },
+                                  { 12, 1, TL_RAMP }, { 16, 3, TL_HERMITE }, { 20, 5, TL_HERMITE }, { 24, 4, TL_STEP } };
+    TlTrack t = TL_TRACK(keys);
+    bool ok = near(tl_eval(t, -5), 0) && near(tl_eval(t, 99), 4);              // clamped ends
+    for (int i = 0; i < t.count; i++) ok = ok && near(tl_eval(t, keys[i].t), keys[i].v);   // hits every key
+    ok = ok && near(tl_eval(t, 2), 1) && near(tl_eval(t, 6), 3)                 // linear, smooth midpoint
+            && near(tl_eval(t, 11.9), 4) && near(tl_eval(t, 14), 1.5f);        // step holds, ramp u^2
+    // Hermite: continuous through the key at 20 (no jump between sides).
+    ok = ok && fabsf(tl_eval(t, 19.999) - tl_eval(t, 20.001)) < 0.01f;
+    printf("TIMELINE: %s\n", ok ? "yes" : "no");
+    return ok;
+}
+
+static bool check_story(void)
+{
+    char a[STORY_TEXT_MAX], b[STORY_TEXT_MAX];
+    bool ok = true;
+    for (int i = 0; i <= STORY_COLLAPSE; i++) {
+        story_corrupt(story_text(i), 94u, 1, a, sizeof(a));
+        ok = ok && strcmp(a, story_text(i)) == 0 && strlen(story_text(i)) < STORY_TEXT_MAX / 2;
+    }
+    int same = 0, total = 0;
+    for (int depth = 2; depth <= 8; depth++) {
+        story_corrupt(story_text(0), 94u, depth, a, sizeof(a));
+        story_corrupt(story_text(0), 94u, depth, b, sizeof(b));
+        ok = ok && strcmp(a, b) == 0;                                            // deterministic
+        ok = ok && (strcmp(a, story_text(0)) != 0);                              // something changed
+        story_corrupt(story_text(0), 95u, depth, b, sizeof(b));
+        if (strcmp(a, b) == 0) same++;
+        total++;
+    }
+    // Deep text stays mostly readable: count unchanged characters at depth 8 when no
+    // stutter shifted the line (compare letters present).
+    story_corrupt(story_text(0), 94u, 8, a, sizeof(a));
+    ok = ok && strlen(a) > strlen(story_text(0)) * 3 / 4;
+    printf("STORY: %s (seeds differ at %d/%d depths)\n", ok && same == 0 ? "yes" : "no", total - same, total);
+    return ok && same == 0;
+}
+
 int main(void)
 {
     SetTraceLogLevel(LOG_INFO);
@@ -88,5 +136,7 @@ int main(void)
     printf("MUSIC CLOCK: on-grid=%s (formations %d/%d off, shots %d/%d off) rate=%s (spawns x%.2f, shots x%.2f) follow=%s\n",
            onGrid ? "yes" : "no", timed.offGridFormations, timed.formations, timed.offGridShots, timed.shots,
            rateKept ? "yes" : "no", spawnRatio, shotRatio, follow ? "yes" : "no");
-    return specials && onGrid && rateKept && follow && bossOk ? 0 : 1;
+    bool timeline = check_timeline();
+    bool story = check_story();
+    return specials && onGrid && rateKept && follow && bossOk && timeline && story ? 0 : 1;
 }

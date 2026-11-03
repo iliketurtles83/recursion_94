@@ -66,16 +66,20 @@ RECURSION_94.
       `git show 1a7c6ca:legacy/src/gameplay.c`, lines 1546-1787.
 - [ ] Font and logo design (not the DATA // RUN Rajdhani font).
 - [ ] Demoscene presentation layer.
-  - [ ] Curve timeline (GNU Rocket style): animated values as Hermite
-        keyframe tracks evaluated at the music clock time, for the intro,
-        title, boss arrivals and level transitions. Needs the music clock.
-  - [ ] Story scroller (`recursion_94.md` §9.3–9.4): sine scrolltext
+  - [x] Curve timeline (GNU Rocket style): `src/game/timeline.h`, const
+        key tracks (step/linear/smooth/ramp/hermite) evaluated at the music
+        clock step. Used by the boss title card so far.
+    - [ ] Use it for the intro, title and level transitions.
+  - [x] Story scroller (`recursion_94.md` §9.3–9.4): sine scrolltext
         over each level transition, in the song's quiet section, with the
         §9.4 texts and the collapse line after the Leviathan. At recursion
         depth 2+ the text is corrupted procedurally (hash of seed and
         depth: glitched characters, stutters, dropped words), with no
         stored variants. Also archetype title cards for boss arrivals
-        (`THRESHOLD GUARDIAN // RECURSIVE CORE`).
+        (`THRESHOLD GUARDIAN // RECURSIVE CORE`). Built (`src/game/story.c`).
+    - [ ] Hand-play: scroll speed, placement, timing against the song's
+          quiet section, corruption rates.
+    - [ ] Depth 3+: lines that seem to answer the ship (write them first).
 - [ ] Raymarched SDF bosses and effects. Triangles and ribbons stay, but not
       every boss in that style: give some of the remaining bosses (and maybe
       the selector art) raymarched SDF forms (metaballs, fractal folds, a core
@@ -84,6 +88,7 @@ RECURSION_94.
       SDF soft shadows (min k·d/t), few-tap normal-offset AO, over-relaxed
       stepping in open space, coarse bounding pass so screen tiles exit
       together, iteration caps on secondary rays.
-- [ ] Pause menu with quit confirmation; fullscreen toggle.
+- [x] Pause menu with quit confirmation; fullscreen toggle (F11 /
+      Alt+Enter, borderless). Check fullscreen by hand.
 - [ ] Period-look decision.
 - [ ] Delete `legacy/` files once their content is ported.

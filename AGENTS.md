@@ -11,7 +11,8 @@ is five levels, each with its own environment, song and boss.
   `src/game/` is the RECURSION_94 game layer: seed selector and run loop
   (`game.c`), combat logic (`gameplay.c`, ported), its neon presentation and HUD
   (`combat_draw.c`), the procedural synth (`audio_synth.c`, ported), the level
-  songs (`songs.c`) and the selector art and seed palettes (`demoscene.c`, `palette.h`). `./build/recursion94` starts
+  songs (`songs.c`), the story scroller and boss title cards (`story.c`), the
+  curve timeline (`timeline.h`) and the selector art and seed palettes (`demoscene.c`, `palette.h`). `./build/recursion94` starts
   the game in the server corridor (preset `r94_corridor`); `--sandbox` gives the
   environment harness.
 - `legacy/` holds the rest of the original game (environment, old main loop):
@@ -94,7 +95,7 @@ ctest --test-dir build --output-on-failure         # engine_core/_ship/_vectorin
   `XAUTHORITY=/run/user/1000/xauth_*`. A visible window on `:1` never presents
   and hangs. Without a display, GLFW fails.
 - Runtime keys: F1 param panel, F2 free cam, F3 overlay, T switch environment,
-  1–9 layer toggles, R reseed, F12 screenshot. In the game: F4 steering box overlay.
+  1–9 layer toggles, R reseed, F12 screenshot. In the game: F4 steering box overlay, Esc/P pause menu, F11 or Alt+Enter fullscreen.
 - **Movement box.** In open environments the ship's centre is held in a
   rectangle (`steerBoxHalfWidth`, `steerBoxUp`, `steerBoxDown` in world units,
   0 = the old `steerLimit` x radius; floor and ceiling still clip it). The

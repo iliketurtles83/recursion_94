@@ -9,6 +9,7 @@
 #include "demoscene.h"
 #include "gameplay.h"
 #include "music_clock.h"
+#include "story.h"
 #include "raylib.h"
 #include "rlgl.h"
 #include <math.h>
@@ -31,6 +32,10 @@
 
 typedef enum { STATE_SELECT, STATE_RUN } GameState;
 
+// Pause menu entries. Everything but RESUME and FULLSCREEN asks to confirm.
+typedef enum { MENU_RESUME, MENU_FULLSCREEN, MENU_RESTART, MENU_SELECT, MENU_QUIT, MENU_COUNT } MenuItem;
+static const char *const MENU_LABELS[MENU_COUNT] = { "RESUME", "FULLSCREEN", "RECOMPILE RUN", "SEED SELECT", "QUIT" };
+
 typedef struct Game {
     CtTunnel      *ct;
     SynthSystem    synth;
@@ -39,6 +44,8 @@ typedef struct Game {
     uint32_t       selectedSeed, runSeed;
     float          selectorTime, musicIntensity, beatPulse, glitch;
     bool           paused;
+    int            menuItem;     // pause menu selection (MenuItem)
+    bool           confirming;   // pause menu or selector: waiting for yes/no
     GameplaySystem play;
     CombatDraw     draw;
     ArenaMap       map;
@@ -52,6 +59,7 @@ typedef struct Game {
     bool           bossTest;     // --boss: start each run just short of the first boss
     bool           showBox;      // F4: steering box and ship centre overlay (prototyping)
     MusicClock     music;
+    Story          story;
 } Game;
 
 static void stop_audio(Game *g)
@@ -103,6 +111,7 @@ static void start_run(Game *g, uint32_t seed, bool withAudio)
     g->havePlayer = false;
     InitGameplay(&g->play, seed);
     music_clock_reset(&g->music, GetSynthSeedBpm(seed));
+    story_reset(&g->story, seed, g->music.stepsPerSecond, LEGEND_SECONDS - 1.5f);
     if (g->bossTest) g->virtualZ = g->play.boss.nextSpawnDistance - 40.0;
     ct_param_set(g->ct, "baseSpeed", g->baseSpeed);
     ct_param_set(g->ct, "fovBase", g->baseFov);
@@ -265,6 +274,7 @@ static void update_run(Game *g, float dt, const Controls *c)
                          ct_ship_roll_progress(g->ct) >= 0.0f };
     GameplayEvents events = UpdateGameplay(&g->play, dt, g->virtualZ, boosting, &in);
     play_events(g, &events);
+    story_update(&g->story, &g->play, &events, &g->music);
     ct_set_ship_damage(g->ct, 1.0f - g->play.player.energy / 100.0f);
     update_music(g, boosting, dt);
     update_push(g, dt);
@@ -298,7 +308,37 @@ static void draw_steer_box(const Game *g, int w, int h)
              24, 46, 14, line);
 }
 
-static void draw_overlay(const Game *g, int w, int h)
+static void draw_centered(const char *t, int y, int size, Color c, int w)
+{
+    DrawText(t, w / 2 - MeasureText(t, size) / 2, y, size, c);
+}
+
+static void draw_pause_menu(const Game *g, const DemosceneSystem *demo, int w, int h)
+{
+    DrawRectangle(0, 0, w, h, (Color){ 0, 0, 0, 140 });
+    Color dim = { 150, 190, 210, 210 };
+    int y = h / 2 - 130;
+    draw_centered("PAUSED", y, 40, demo->hot, w);
+    y += 70;
+    for (int i = 0; i < MENU_COUNT; i++) {
+        bool sel = i == g->menuItem;
+        const char *label = i == MENU_FULLSCREEN
+            ? TextFormat("FULLSCREEN  %s", IsWindowState(FLAG_BORDERLESS_WINDOWED_MODE) ? "ON" : "OFF")
+            : MENU_LABELS[i];
+        draw_centered(sel ? TextFormat(">  %s  <", label) : label, y, 22, sel ? demo->primary : dim, w);
+        y += 34;
+    }
+    y += 16;
+    if (g->confirming) {
+        const char *q = g->menuItem == MENU_QUIT ? "QUIT RECURSION_94?" : "ABANDON THIS RUN?";
+        draw_centered(q, y, 20, demo->threat, w);
+        draw_centered("ENTER YES   //   ESC NO", y + 28, 16, dim, w);
+    } else {
+        draw_centered("UP / DOWN SELECT   ENTER CONFIRM   ESC RESUME   F11 FULLSCREEN", y, 14, dim, w);
+    }
+}
+
+static void draw_overlay(Game *g, int w, int h)
 {
     if (g->showBox) draw_steer_box(g, w, h);
     DemosceneSystem demo;
@@ -309,16 +349,62 @@ static void draw_overlay(const Game *g, int w, int h)
                                 GetSynthSeedKeyName(g->runSeed), GetSynthSeedBpm(g->runSeed));
     DrawText(id, w - MeasureText(id, 14) - 24, h - 30, 14, dim);
     combat_draw_hud(&g->draw, &g->play, w, h);
+    story_draw(&g->story, &g->play, &g->music, w, h);
     if (g->play.runTime < LEGEND_SECONDS && !g->play.gameOver) {
         float a = fminf(1.0f, (LEGEND_SECONDS - g->play.runTime) / 1.5f);
-        const char *legend = "WASD STEER   J / MOUSE FIRE (HOLD TO LOCK)   K BEAM   L BOMB   SPACE BOOST   Q / E ROLL   P PAUSE";
+        const char *legend = "WASD STEER   J / MOUSE FIRE (HOLD TO LOCK)   K BEAM   L BOMB   SPACE BOOST   Q / E ROLL   ESC PAUSE";
         DrawText(legend, w / 2 - MeasureText(legend, 16) / 2, h - 150, 16,
                  (Color){ 200, 230, 240, (unsigned char)(a * 200.0f) });
     }
-    if (g->paused) {
-        const char *t = "PAUSED";
-        DrawText(t, w / 2 - MeasureText(t, 40) / 2, h / 2 - 20, 40, demo.hot);
+    if (g->paused) draw_pause_menu(g, &demo, w, h);
+}
+
+static void set_paused(Game *g, bool paused)
+{
+    g->paused = paused;
+    g->confirming = false;
+    g->menuItem = MENU_RESUME;
+    ct_set_paused(g->ct, paused);
+    if (g->audioOn) { if (paused) PauseAudioStream(g->synth.stream); else ResumeAudioStream(g->synth.stream); }
+}
+
+// Borderless fullscreen: no video mode change, so alt-tab and the compositor behave.
+static void toggle_fullscreen(void)
+{
+    ToggleBorderlessWindowed();
+}
+
+static bool alt_down(void) { return IsKeyDown(KEY_LEFT_ALT) || IsKeyDown(KEY_RIGHT_ALT); }
+
+// Enter, but not the Enter of Alt+Enter (fullscreen).
+static bool enter_pressed(void)
+{
+    return !alt_down() && (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER));
+}
+
+typedef enum { MENU_STAY, MENU_TO_SELECT, MENU_TO_QUIT } MenuResult;
+
+static MenuResult update_pause_menu(Game *g)
+{
+    if (g->confirming) {
+        if (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_N)) g->confirming = false;
+        else if (enter_pressed() || IsKeyPressed(KEY_Y)) {
+            int item = g->menuItem;
+            set_paused(g, false);
+            if (item == MENU_RESTART) start_run(g, g->runSeed, true);
+            return item == MENU_SELECT ? MENU_TO_SELECT : item == MENU_QUIT ? MENU_TO_QUIT : MENU_STAY;
+        }
+        return MENU_STAY;
     }
+    if (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_P)) { set_paused(g, false); return MENU_STAY; }
+    if (IsKeyPressed(KEY_UP) || IsKeyPressed(KEY_W)) g->menuItem = (g->menuItem + MENU_COUNT - 1) % MENU_COUNT;
+    if (IsKeyPressed(KEY_DOWN) || IsKeyPressed(KEY_S)) g->menuItem = (g->menuItem + 1) % MENU_COUNT;
+    if (enter_pressed()) {
+        if (g->menuItem == MENU_RESUME) set_paused(g, false);
+        else if (g->menuItem == MENU_FULLSCREEN) toggle_fullscreen();
+        else g->confirming = true;
+    }
+    return MENU_STAY;
 }
 
 static void save_shot(const char *path)
@@ -348,36 +434,57 @@ int game_run(CtTunnel *ct, const GameOptions *o)
         float dt = shotMode ? 1.0f / 60.0f : GetFrameTime();
         int w = GetRenderWidth(), h = GetRenderHeight();
 
+        if (!shotMode && (IsKeyPressed(KEY_F11) || (alt_down() && IsKeyPressed(KEY_ENTER)))) toggle_fullscreen();
+
         if (g.state == STATE_SELECT) {
             g.selectorTime += dt;
-            if (IsKeyPressed(KEY_ESCAPE)) break;
-            if (IsKeyPressed(KEY_LEFT)) g.selectedSeed -= 1u;
-            if (IsKeyPressed(KEY_RIGHT)) g.selectedSeed += 1u;
-            if (IsKeyPressed(KEY_UP)) g.selectedSeed += 100u;
-            if (IsKeyPressed(KEY_DOWN)) g.selectedSeed -= 100u;
-            if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER)) start_run(&g, g.selectedSeed, true);
+            bool quit = false;
+            if (g.confirming) {
+                if (enter_pressed() || IsKeyPressed(KEY_Y)) quit = true;
+                else if (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_N)) g.confirming = false;
+            } else {
+                if (IsKeyPressed(KEY_ESCAPE)) g.confirming = true;
+                if (IsKeyPressed(KEY_LEFT)) g.selectedSeed -= 1u;
+                if (IsKeyPressed(KEY_RIGHT)) g.selectedSeed += 1u;
+                if (IsKeyPressed(KEY_UP)) g.selectedSeed += 100u;
+                if (IsKeyPressed(KEY_DOWN)) g.selectedSeed -= 100u;
+                if (enter_pressed()) start_run(&g, g.selectedSeed, true);
+            }
+            if (quit) break;
+            if (g.state != STATE_SELECT) continue;
             BeginDrawing();
             ClearBackground(BLACK);
             DrawSeedSelector(g.selectedSeed, g.selectorTime, GetSynthSeedBpm(g.selectedSeed),
                              GetSynthSeedKeyName(g.selectedSeed), w, h);
+            if (g.confirming) {
+                DrawRectangle(0, h / 2 - 50, w, 100, (Color){ 0, 0, 0, 200 });
+                draw_centered("QUIT RECURSION_94?", h / 2 - 30, 28, (Color){ 255, 80, 140, 255 }, w);
+                draw_centered("ENTER YES   //   ESC NO", h / 2 + 10, 16, (Color){ 150, 190, 210, 220 }, w);
+            }
             EndDrawing();
             continue;
         }
 
         if (!shotMode) {
-            if (IsKeyPressed(KEY_ESCAPE)) {
+            MenuResult menu = MENU_STAY;
+            if (g.paused) {
+                menu = update_pause_menu(&g);
+            } else if (g.play.gameOver) {
+                // Nothing left to lose: Esc goes straight back to the selector.
+                if (IsKeyPressed(KEY_ESCAPE)) menu = MENU_TO_SELECT;
+                if (IsKeyPressed(KEY_R)) start_run(&g, g.runSeed, true);
+            } else if (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_P)) {
+                set_paused(&g, true);
+            }
+            if (menu == MENU_TO_QUIT) break;
+            if (menu == MENU_TO_SELECT) {
                 stop_audio(&g);
                 g.selectedSeed = g.runSeed;
+                g.confirming = false;
                 g.state = STATE_SELECT;
                 continue;
             }
             if (IsKeyPressed(KEY_F4)) g.showBox = !g.showBox;
-            if (g.play.gameOver && IsKeyPressed(KEY_R)) start_run(&g, g.runSeed, true);
-            if (IsKeyPressed(KEY_P) && !g.play.gameOver) {
-                g.paused = !g.paused;
-                ct_set_paused(ct, g.paused);
-                if (g.audioOn) { if (g.paused) PauseAudioStream(g.synth.stream); else ResumeAudioStream(g.synth.stream); }
-            }
         }
 
         if (!g.paused) {

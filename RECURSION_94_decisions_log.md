@@ -2,6 +2,45 @@
 
 This log is the source of truth for architectural choices, visual uplift milestones, feature statuses (Confirmed, Provisional, Rejected), and binary size tracking. The 1.44MB (1,474,560 bytes) contest limit applied to entries before 2026-11-03.
 
+## [Story and menu] Scroller, title cards, curve timeline, pause menu
+
+- Date: 2026-11-03. Status: PROVISIONAL: checked in shots and tests;
+  hand-play (timing, readability, menu feel).
+- Curve timeline (`src/game/timeline.h`, header only): GNU Rocket-style
+  tracks of const keys `{t, v, interp}` evaluated at the music clock step.
+  Interpolations: step, linear, smooth, ramp (u^2), hermite (Catmull-Rom
+  tangents from the neighbouring keys). Clamped before the first and after
+  the last key. `game_combat` checks key hits, midpoints and continuity.
+- Story (`src/game/story.c`, §9.3-9.4): the §9.4 texts as a sine scroller
+  along the bottom (above the meters). A scroll starts on a bar line and
+  moves 0.75 font heights per 16th (~25 s for the first text at 129 BPM);
+  its wave rolls once a bar and lifts on the beat, and the colour runs
+  primary -> secondary lifted toward white midway (a straight RGB blend went
+  grey). Level-1 text plays once the controls legend has faded; after each
+  boss the next round's text follows two bars later; a Leviathan clear plays
+  the collapse line first. No scroll starts during a boss or after game over.
+  Until levels 2-5 exist those texts play over the corridor.
+- Depth corruption (`story_corrupt`): hash of (seed, depth) only; depth 1 is
+  the stored text. Each depth adds glitch glyphs (2.5%/depth, cap 18%),
+  stutters ("w-w-will", 5%/depth, cap 28%) and word-length holes (4%/depth,
+  cap 25%). Depth 8 is barely readable, as intended. Not done: §9.3's
+  "later lines that seem to answer the ship" (needs writing first).
+- Boss title card replaces the old `// NAME //` + `ROUND n` flash:
+  archetype (`THRESHOLD GUARDIAN`) typed out over 6 steps with a flickering
+  glyph cursor, letter spacing closing in on hermite keys, a rule drawing
+  out under it, then `// RECURSIVE CORE //` and `STACK FRAME n // DEPTH n`,
+  on a dark band; two bars long, all from timeline tracks. The archetype is
+  corrupted at depth too.
+- Pause menu: Esc or P pauses (Esc used to drop the run to the selector
+  without asking). Resume, fullscreen, recompile run, seed select, quit;
+  the last three ask "ABANDON THIS RUN?" / "QUIT RECURSION_94?" (Enter/Y
+  yes, Esc/N no). Esc in the selector asks before quitting. After game over
+  Esc still goes straight to the selector. F11 or Alt+Enter toggles
+  borderless fullscreen anywhere (no video mode change); not testable in
+  hidden shots, check by hand.
+
+---
+
 ## [Ship and trail] Dart with a data trail
 
 - Date: 2026-11-03. Status: PROVISIONAL: checked in shots; hand-play.

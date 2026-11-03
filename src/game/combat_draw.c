@@ -2,6 +2,7 @@
 // vertex colour alpha encodes HDR gain (alpha 255 = 8x), so bright edges feed the
 // engine's bloom while dark bodies (gain ~1) give the wireframes solid silhouettes.
 #include "combat_draw.h"
+#include "story.h"
 #include "rlgl.h"
 #include "raymath.h"
 #include <math.h>
@@ -494,13 +495,11 @@ void combat_draw_hud(const CombatDraw *d, const GameplaySystem *g, int w, int h)
         const char *lock = TextFormat("LOCK %d", g->lockedCount);
         DrawText(lock, w / 2 - MeasureText(lock, 16) / 2, h / 2 + 90, 16, g->hotColor);
     }
-    // Boss: name, core integrity and phase at the top; title card on arrival.
-    static const char *bossNames[BOSSES_PER_RECURSION] = { "RECURSIVE CORE", "IRON BASTION", "PRISM WRAITH",
-                                                           "SIEGE MANTIS", "FRACTAL LEVIATHAN" };
+    // Boss: name, core integrity and phase at the top (the arrival title card is story.c).
     const BossState *b = &g->boss;
     if (b->active && b->coreSlot >= 0) {
         const Enemy *core = &g->enemies[b->coreSlot];
-        const char *name = bossNames[b->encounterIndex % BOSSES_PER_RECURSION];
+        const char *name = story_boss_name(b->encounterIndex);
         float hp = core->active && b->maxHealth > 0.0f ? core->health / b->maxHealth : 0.0f;
         int bw2 = 440, bx = w / 2 - bw2 / 2;
         Color bc = b->phase >= BOSS_ENRAGED ? g->hotColor : g->threatColor;
@@ -512,13 +511,6 @@ void combat_draw_hud(const CombatDraw *d, const GameplaySystem *g, int w, int h)
         DrawText(phase, bx + bw2 - MeasureText(phase, 13), 48, 13, dim);
         float shown = b->phase == BOSS_APPROACH ? fminf(b->phaseTime / 2.6f, 1.0f) : hp;
         meter(bx, 66, bw2, 7, shown, 40, b->shieldNodes > 0 ? scale_color(bc, 0.55f) : bc, off);
-        if (b->introFlash > 0.0f) {
-            unsigned char a = (unsigned char)(fminf(b->introFlash * 1.6f, 1.0f) * 230.0f);
-            const char *t = TextFormat("// %s //", name);
-            DrawText(t, w / 2 - MeasureText(t, 44) / 2, h / 7, 44, (Color){ bc.r, bc.g, bc.b, a });
-            const char *sub = TextFormat("ROUND %d", b->encounterIndex % BOSSES_PER_RECURSION + 1);
-            DrawText(sub, w / 2 - MeasureText(sub, 16) / 2, h / 7 + 54, 16, (Color){ dim.r, dim.g, dim.b, a });
-        }
     } else if (b->defeatFlash > 0.0f) {
         unsigned char a = (unsigned char)(fminf(b->defeatFlash * 1.5f, 1.0f) * 230.0f);
         const char *t = "CORE COLLAPSED";
