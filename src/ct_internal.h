@@ -24,6 +24,8 @@ typedef struct CoreParams {
     int   buildBudget, uploadBudget;
     bool  showShip, showPathDebug;
     float engineIntensity, trailIntensity, trailWidth;
+    bool  trailData;             // data trail: joins the dart's engine glow, packets, block dissolve
+    float trailPackets, trailDissolve, trailStretch;
     float coreR, coreG, coreB;   // core tint (sRGB 0..1)
     float rebaseDist;            // floating origin snaps to the ship beyond this distance
 } CoreParams;
@@ -56,7 +58,7 @@ struct CtTunnel {
 
     ShaderLib      sl;
     Pipeline       pipe;
-    int            shShip, shShipDart, shLine, shAfterburner;
+    int            shShip, shShipDart, shLine, shAfterburner, shTrail;
     Material       mat;
     Texture2D      shipSkin;
     float          shipDamage;

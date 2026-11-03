@@ -2,6 +2,28 @@
 
 This log is the source of truth for architectural choices, visual uplift milestones, feature statuses (Confirmed, Provisional, Rejected), and binary size tracking. The 1.44MB (1,474,560 bytes) contest limit applied to entries before 2026-11-03.
 
+## [Ship and trail] Dart with a data trail
+
+- Date: 2026-11-03. Status: PROVISIONAL: checked in shots; hand-play.
+- The dart is the game ship (`shipDart=1`); the courier (fighter jet) does
+  not suit cyberspace. The original game's probe ship and exhaust were not
+  ported (dropped with the old graphics at the engine merge); the code is in
+  `git show 1a7c6ca:legacy/src/gameplay.c` (`DrawPlayerShip`, lines 1546-1787).
+- Engine trail: cyberspace look only, no fire. `trailData` draws each wake
+  with `trail.fs`. It starts inside the dart's engine glow at its width and
+  brightness and settles within about 0.03 s into a ribbon (intensity 1.8,
+  width 0.035), white -> cyan -> deep blue. Packets run back along it at
+  twice the world rate, and the tail dissolves in blocks keyed to emission
+  time, so they stay put instead of flickering.
+- At cruise the 0.6 s wake is ~19 units long and the camera sits 4.2 behind
+  the ship, so only the first metre was ever on screen. `trailStretch=0.2`
+  squeezes it along the path toward the ship (sideways history kept), so the
+  whole weave shows as a light-snake ending just before the camera, where a
+  near fade (1.2-3.2 units) removes it. Sandbox defaults are unchanged
+  (sandbox shot byte-identical).
+
+---
+
 ## [Movement box] Steering rectangle and barrel-roll dodge
 
 - Date: 2026-11-03. Status: PROVISIONAL: built and checked in shots and

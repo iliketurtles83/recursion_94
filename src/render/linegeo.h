@@ -68,6 +68,8 @@ void lg_planar_arc(LineGeo *g, float r, float a0, float a1, float z0, float half
 void lg_planar_radial(LineGeo *g, float r0, float r1, float ang, float z0, float halfWidth, LineAttr a);
 // Camera-facing segment with per-end width/intensity.
 void lg_facing_segment(LineGeo *g, Vector3 a, Vector3 b, float wa, float wb, float ia, float ib, LineAttr at);
+// As lg_facing_segment, with a separate hash at each end (shaders read it interpolated, e.g. trail age).
+void lg_facing_segment_h(LineGeo *g, Vector3 a, Vector3 b, float wa, float wb, float ia, float ib, float ha, float hb, LineAttr at);
 // Fill quad (p0..p3 in order) with face uv 0..1.
 void lg_fill_quad(LineGeo *g, Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, Vector3 n, LineAttr a);
 void lg_fill_tri(LineGeo *g, Vector3 p0, Vector3 p1, Vector3 p2, Vector3 n, LineAttr a);

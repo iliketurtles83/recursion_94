@@ -35,7 +35,8 @@ RECURSION_94.
         (`steerBoxHalfWidth/Up/Down`, F4 overlay), camera follow 0.55, roll
         = full turn + dash + i-frames + cooldown. Hand-play and adjust.
   - [x] Backlog: steering-box bottom limit (`steerBoxDown`).
-  - [ ] Backlog: engine trail join.
+  - [x] Engine trail join: data trail (`trailData`) out of the dart's
+        engine glow; the dart is the game ship (`shipDart=1`).
   - [ ] Test resetting the noise seed on every snare (and clap/hat) hit so
         each hit is identical; compare by ear against the free-running stream.
         Re-bless the audio hashes only if kept.
@@ -59,7 +60,10 @@ RECURSION_94.
 - [ ] The other four levels (environment, song, boss each). Boss chassis
       reference: `git show 1a7c6ca:legacy/src/gameplay.c`, `Draw*Boss`.
 - [ ] Apply Leviathan gravity (`player.pull`) to flight (level 5 boss).
-- [ ] Ship selection: dart and fighter jet.
+- [ ] Ship selection. The dart is the primary ship; the courier (fighter
+      jet) does not suit cyberspace. The original RECURSION_94 probe
+      (`DrawPlayerShip`/`DrawPlayerExhaust`) was not ported: see
+      `git show 1a7c6ca:legacy/src/gameplay.c`, lines 1546-1787.
 - [ ] Font and logo design (not the DATA // RUN Rajdhani font).
 - [ ] Demoscene presentation layer.
   - [ ] Curve timeline (GNU Rocket style): animated values as Hermite

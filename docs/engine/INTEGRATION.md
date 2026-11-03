@@ -266,6 +266,10 @@ unknown keys are skipped, and loading first resets everything to defaults).
 | Sim | `engineIntensity` | float | 10 | 0 | 40 |
 | Sim | `trailIntensity` | float | 2.2 | 0 | 20 |
 | Sim | `trailWidth` | float | 0.035 | 0.005 | 0.5 |
+| Sim | `trailData` | bool | 0 | 0 | 1 |
+| Sim | `trailPackets` | float | 1 | 0 | 4 |
+| Sim | `trailDissolve` | float | 1 | 0 | 1 |
+| Sim | `trailStretch` | float | 1 | 0.05 | 1 |
 | Flight | `baseSpeed` | float | 25 | 0 | 300 |
 | Flight | `boostSpeed` | float | 40 | 0 | 400 |
 | Flight | `speedResponse` | float | 2.5 | 0.1 | 20 |

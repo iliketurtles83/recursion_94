@@ -141,6 +141,17 @@ void lg_facing_segment(LineGeo *g, Vector3 a, Vector3 b, float wa, float wb, flo
     lg_quad(g, base, 0, 1, 2, 3);
 }
 
+void lg_facing_segment_h(LineGeo *g, Vector3 a, Vector3 b, float wa, float wb, float ia, float ib, float ha, float hb, LineAttr at)
+{
+    int base = lg_reserve(g, 4, 6);
+    Vector2 uv2 = { at.group, at.anim };
+    lg_vertex(g, a, (Vector2){ 0.0f, -1.0f }, uv2, b, (Vector4){ wa, ia, ha, 0.0f }, at.color);
+    lg_vertex(g, a, (Vector2){ 0.0f,  1.0f }, uv2, b, (Vector4){ wa, ia, ha, 0.0f }, at.color);
+    lg_vertex(g, b, (Vector2){ 1.0f,  1.0f }, uv2, a, (Vector4){ wb, ib, hb, 1.0f }, at.color);
+    lg_vertex(g, b, (Vector2){ 1.0f, -1.0f }, uv2, a, (Vector4){ wb, ib, hb, 1.0f }, at.color);
+    lg_quad(g, base, 0, 1, 2, 3);
+}
+
 void lg_fill_quad(LineGeo *g, Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, Vector3 n, LineAttr a)
 {
     int base = lg_reserve(g, 4, 6);

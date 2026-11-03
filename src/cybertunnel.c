@@ -75,6 +75,10 @@ static void register_core_params(CtTunnel *ct)
     params_float(reg, g, "engineIntensity", &c->engineIntensity, 10.0f, 0.0f, 40.0f);
     params_float(reg, g, "trailIntensity", &c->trailIntensity, 2.2f, 0.0f, 20.0f);
     params_float(reg, g, "trailWidth", &c->trailWidth, 0.035f, 0.005f, 0.5f);
+    params_bool(reg, g, "trailData", &c->trailData, false);
+    params_float(reg, g, "trailPackets", &c->trailPackets, 1.0f, 0.0f, 4.0f);
+    params_float(reg, g, "trailDissolve", &c->trailDissolve, 1.0f, 0.0f, 1.0f);
+    params_float(reg, g, "trailStretch", &c->trailStretch, 1.0f, 0.05f, 1.0f);
 
     flight_register_params(&ct->fp, reg);
     ct->fp.courierScale = COURIER_SCALE;   // flight_register_params set the neutral 1
@@ -225,6 +229,48 @@ static void update_trail_mesh(CtTunnel *ct)
     if (ct->fp.dartShip) flight_engine_offsets(true, eng);
     else for(int e=0;e<2;e++)eng[e]=Vector3Scale(flight_exhaust_offset(e,v->gimbal[e],.48f+2.6f*boost),ct->fp.courierScale);
     float w0 = ct->core.trailWidth*(1+.8f*boost), i0 = ct->core.trailIntensity*(.5f+.5f*boost);
+    if (ct->core.trailData) {
+        // Data trail: starts inside the engine glow at its width and brightness (dart glow:
+        // half width 0.09, engineIntensity) and settles within ~0.03 s (about a metre at
+        // cruise) into a thin ribbon.
+        // The vertex hash carries the point's age in seconds; trail.fs shapes the rest.
+        bool dart = ct->fp.dartShip;
+        float k = dart ? 1.0f : ct->fp.courierScale;
+        float gw = 0.09f * k, gi = ct->core.engineIntensity;
+        if (!dart) { gw = w0; gi = i0; }   // the courier's trail starts at its flame tip
+        float span = (float)FLIGHT_TRAIL_LEN / (float)FLIGHT_HZ;
+        // trailStretch < 1 pulls the wake toward the ship along the path but keeps its
+        // sideways history, so the whole trail fits in front of the chase camera.
+        DVec3 fwd = path_sample(&ct->path, v->s).T;
+        double squeeze = 1.0 - (double)ct->core.trailStretch;
+        for (int e = 0; e < 2; e++) {
+            LineAttr ea = { (Color){ (unsigned char)(e ? 255 : 0), 0, 0, 255 }, 1.0f, 0.0f, 0.0f, -1.0f, 0.0f };
+            DVec3 head = dv_add(v->shipPos, dv_add(dv_add(dv_scale(v->shipRight, eng[e].x), dv_scale(v->shipUp, eng[e].y)), dv_scale(v->shipFwd, eng[e].z)));
+            Vector3 prev = dv_to_v3(dv_sub(head, ct->renderOrigin));
+            float agePrev = 0.0f;
+            for (int j = 0; j < FLIGHT_TRAIL_LEN; j++) {
+                if (j < st->trailCount - 1) {
+                    int idx = (st->trailHead - 2 - j + 2 * FLIGHT_TRAIL_LEN) % FLIGHT_TRAIL_LEN;
+                    DVec3 w = st->trail[e][idx];
+                    w = dv_add(w, dv_scale(fwd, dv_dot(dv_sub(head, w), fwd) * squeeze));
+                    Vector3 p = dv_to_v3(dv_sub(w, ct->renderOrigin));
+                    float age = (float)(j + 1) / (float)FLIGHT_HZ;
+                    float wa, wb, ia, ib;
+                    float ages[2] = { agePrev, age }, *ws[2] = { &wa, &wb }, *is[2] = { &ia, &ib };
+                    for (int q = 0; q < 2; q++) {
+                        float tq = ages[q] / span, fq = 1.0f - tq, join = expf(-ages[q] * 90.0f);
+                        *ws[q] = w0 * (0.35f + 0.65f * fq) + (gw - w0) * join;
+                        *is[q] = i0 * fq * fq + (gi - i0) * join;
+                    }
+                    lg_facing_segment_h(t, prev, p, wa, wb, ia, ib, agePrev, age, ea);
+                    prev = p;
+                    agePrev = age;
+                } else {
+                    lg_facing_segment_h(t, prev, prev, 0, 0, 0, 0, span, span, ea);
+                }
+            }
+        }
+    } else
     for (int e = 0; e < 2; e++) {
         DVec3 head = dv_add(v->shipPos, dv_add(dv_add(dv_scale(v->shipRight, eng[e].x), dv_scale(v->shipUp, eng[e].y)), dv_scale(v->shipFwd, eng[e].z)));
         Vector3 prev = dv_to_v3(dv_sub(head, ct->renderOrigin));
@@ -330,6 +376,18 @@ static void draw_ship_emissive(CtTunnel *ct, const FrameContext *ctx)
         sl_f2(sl,ct->shAfterburner,"uGimbalRight",v->gimbal[1].x,v->gimbal[1].y);
         draw_mesh(ct,ct->shAfterburner,ct->shipFlames,xf);
     }
+    if (ct->core.trailData) {
+        int tr = ct->shTrail;
+        env_set_common_uniforms(sl, tr, ctx);
+        // The wake streams back past the chase camera: fade it out before it gets there.
+        sl_f4(sl, tr, "uFade", 1e6f, 2e6f, 1.2f, 3.2f);
+        sl_f1(sl, tr, "uChunkFade", 1.0f);
+        sl_f1(sl, tr, "uTrailAge", (float)FLIGHT_TRAIL_LEN / (float)FLIGHT_HZ);
+        sl_f1(sl, tr, "uPackets", ct->core.trailPackets);
+        sl_f1(sl, tr, "uDissolve", ct->core.trailDissolve);
+        draw_mesh(ct, tr, ct->trailMesh, MatrixIdentity());
+        return;
+    }
     Vector3 mag = ct_srgb_to_linear((Color){ 0x65, 0xCE, 0xF5, 255 });
     sl_v3(sl, sh, "uEdgeColor", mag);
     sl_f1(sl, sh, "uEdgeMix", 1.0f);
@@ -416,6 +474,7 @@ CtTunnel *ct_create(const CtConfig *cfg)
     ct->shShip = sl_load(&ct->sl, "ship.vs", "ship.fs");
     ct->shShipDart = sl_load(&ct->sl, "ship.vs", "ship_dart.fs");
     ct->shAfterburner = sl_load(&ct->sl,"afterburner.vs","afterburner.fs");
+    ct->shTrail = sl_load(&ct->sl, "object.vs", "trail.fs");
     ct->shLine = sl_load(&ct->sl, "object.vs", "line_facing.fs");
     ct->mat = LoadMaterialDefault();
     build_ship(ct);

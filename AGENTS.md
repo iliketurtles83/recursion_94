@@ -101,6 +101,13 @@ ctest --test-dir build --output-on-failure         # engine_core/_ship/_vectorin
   game's arena comes from `ct_steer_box`. Barrel rolls (Q/E) turn a full
   circle, kick sideways (`barrelRollDash`), give i-frames for the whole roll
   (`GameplayInput.dodging`) and wait `barrelRollCooldown` before the next.
+- **Ship and trail.** The game flies the dart (`shipDart=1` in `r94_corridor`);
+  the textured courier stays as the sandbox default. `trailData` swaps the
+  engine trail for a light/data wake (`trail.fs`): it grows out of the dart's
+  engine glows, runs white -> cyan -> blue with packets racing back and a
+  world-fixed block dissolve at the tail. `trailStretch` (0.2 in the game)
+  pulls the wake toward the ship along the path, keeping its sideways history,
+  so it fits in front of the chase camera. No fire or flame looks in the game.
 
 ## Architecture
 
