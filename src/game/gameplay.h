@@ -179,7 +179,7 @@ typedef struct {
     float runTime;
     int weaponTier;
     GameplayArena arena;
-    bool bossesEnabled;    // false until the boss presentation is ported (vertical slice step 3)
+    bool bossesEnabled;    // validation and the game enable them; tests may switch them off
     bool suppressLinkRewards;
     bool overdriveActive;
     bool gameOver;
@@ -190,6 +190,8 @@ void AdvanceGameplayLoop(GameplaySystem *game, uint32_t runSeed, double virtualP
 int GetGameplayRound(const GameplaySystem *game);
 int GetGameplayRecursionDepth(const GameplaySystem *game);
 bool CanGameplayBoost(const GameplaySystem *game);
+// Unboosted, no-boss travel speed; GetGameplayTravelSpeed / this = engine speed factor.
+float GetGameplayCruiseSpeed(const GameplaySystem *game, double virtualPlayerZ);
 float GetGameplayTravelSpeed(const GameplaySystem *game, double virtualPlayerZ,
                              bool boosting);
 void SetGameplayArena(GameplaySystem *game, GameplayArena arena);

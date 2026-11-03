@@ -12,6 +12,7 @@ typedef struct GameOptions {
     bool        skipSelector;  // --seed N: start the run immediately
     double      shotSeconds;   // >= 0: deterministic run screenshot after this many seconds, then exit
     const char *shotOut;       // screenshot path for shotSeconds
+    bool        bossTest;      // --boss: start each run just short of the first boss
 } GameOptions;
 
 // Runs until the player quits. Returns a process exit code.

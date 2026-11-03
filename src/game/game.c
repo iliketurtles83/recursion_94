@@ -35,6 +35,8 @@ typedef struct Game {
     double         virtualZ;     // original-game distance: drives difficulty, spawns and song structure
     float          lastPlayerX, lastPlayerY;
     bool           havePlayer;
+    float          baseSpeed;    // preset engine cruise speed; scaled down during boss fights
+    bool           bossTest;     // --boss: start each run just short of the first boss
 } Game;
 
 static void stop_audio(Game *g)
@@ -92,7 +94,8 @@ static void start_run(Game *g, uint32_t seed, bool withAudio)
     g->virtualZ = 0.0;
     g->havePlayer = false;
     InitGameplay(&g->play, seed);
-    g->play.bossesEnabled = false;   // bosses arrive with their presentation (slice step 3)
+    if (g->bossTest) g->virtualZ = g->play.boss.nextSpawnDistance - 40.0;
+    ct_param_set(g->ct, "baseSpeed", g->baseSpeed);
     ct_set_paused(g->ct, false);
     ct_set_ship_damage(g->ct, 0.0f);
     ct_reset_route(g->ct, (uint64_t)seed);
@@ -145,17 +148,39 @@ static void play_events(Game *g, const GameplayEvents *e)
     if (e->bossDefeated) TriggerSynthSFX(&g->synth, SFX_CORE_COLLAPSE);
 }
 
+#define BOSS_HUSH_WINDOW 350.0
+#define BOSS_ARRIVAL_SECONDS 2.6f
+
 // Music follows the original game's mix: difficulty, chain and boost reveal layers.
+// Before a boss the arrangement hushes over the last 350 units; it snaps back
+// under the riser the moment the boss arrives, and boss phases drive the boss layer.
 static void update_music(Game *g, bool boosting, float dt)
 {
     const GameplaySystem *p = &g->play;
+    const BossState *b = &p->boss;
     float intensity = 0.24f + p->difficulty * 0.20f + fminf((float)p->combo * 0.018f, 0.12f);
     if (boosting) intensity += 0.48f;
+    if (b->active) intensity += b->phase == BOSS_SINGULARITY ? 0.30f : b->phase == BOSS_ENRAGED ? 0.24f : 0.14f;
+    float hush = 0.0f;
+    if (!b->active && p->bossesEnabled) {
+        double toBoss = b->nextSpawnDistance - g->virtualZ;
+        if (toBoss > 0.0 && toBoss < BOSS_HUSH_WINDOW) hush = (float)(1.0 - toBoss / BOSS_HUSH_WINDOW);
+    }
+    intensity *= 1.0f - hush * 0.5f;
     if (p->gameOver) intensity = 0.10f;
     g->musicIntensity = fmaxf(0.0f, fminf(intensity, 1.0f));
+    float bossLayer = 0.0f;
+    if (b->active) {
+        switch (b->phase) {
+            case BOSS_APPROACH: bossLayer = 0.42f + fminf(b->phaseTime / BOSS_ARRIVAL_SECONDS, 1.0f) * 0.25f; break;
+            case BOSS_SHIELDED: bossLayer = 0.70f; break;
+            case BOSS_EXPOSED: bossLayer = 0.84f; break;
+            default: bossLayer = 1.0f; break;
+        }
+    }
     g->glitch = fmaxf(0.0f, g->glitch - dt * 2.5f);
     if (!g->audioOn) { g->beatPulse = 0.0f; return; }
-    UpdateAudioSynth(&g->synth, g->musicIntensity, g->glitch, 0.0f, (float)g->virtualZ, 0.0f);
+    UpdateAudioSynth(&g->synth, g->musicIntensity, g->glitch, bossLayer, (float)g->virtualZ, hush);
     g->beatPulse = GetSynthTelemetry(&g->synth).beatPulse;
 }
 
@@ -175,6 +200,10 @@ static void update_run(Game *g, float dt, const Controls *c)
     ct_set_input(g->ct, &flight);
 
     if (!g->play.gameOver) g->virtualZ += GetGameplayTravelSpeed(&g->play, g->virtualZ, boosting) * dt;
+    // The engine slows with the original travel speed during boss fights (about a
+    // quarter of cruise), so the corridor drifts while the arena holds.
+    float factor = GetGameplayTravelSpeed(&g->play, g->virtualZ, false) / GetGameplayCruiseSpeed(&g->play, g->virtualZ);
+    ct_param_set(g->ct, "baseSpeed", g->baseSpeed * factor);
     GameplayInput in = { px, py, vx, vy, c->fire && !g->play.gameOver, c->beam, c->bomb };
     GameplayEvents events = UpdateGameplay(&g->play, dt, g->virtualZ, boosting, &in);
     play_events(g, &events);
@@ -217,7 +246,8 @@ static void save_shot(const char *path)
 int game_run(CtTunnel *ct, const GameOptions *o)
 {
     static Game g;   // large (combat pools); keep it off the stack
-    g = (Game){ .ct = ct, .state = STATE_SELECT, .selectedSeed = o->seed, .runSeed = o->seed };
+    g = (Game){ .ct = ct, .state = STATE_SELECT, .selectedSeed = o->seed, .runSeed = o->seed,
+                .baseSpeed = ct_param_get(ct, "baseSpeed"), .bossTest = o->bossTest };
     combat_draw_init(&g.draw);
     ct_set_scene_draw(ct, scene_draw, &g);
     bool shotMode = o->shotSeconds >= 0.0;
@@ -276,6 +306,7 @@ int game_run(CtTunnel *ct, const GameOptions *o)
     }
 
     stop_audio(&g);
+    ct_param_set(ct, "baseSpeed", g.baseSpeed);
     ct_set_scene_draw(ct, NULL, NULL);
     combat_draw_unload(&g.draw);
     return 0;

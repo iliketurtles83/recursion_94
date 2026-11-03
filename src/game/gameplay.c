@@ -23,6 +23,10 @@
 #define ENEMY_FORMATION_SPACING (3.2f * GAMEPLAY_LATERAL_SCALE)
 // Height fraction t of the arena (0 = floor, 1 = ceiling).
 #define ARENA_Y(t) (game->arena.minY + (t) * (game->arena.maxY - game->arena.minY))
+// Boss geometry scales with the arena width; the centre line sits 0.2 (scaled)
+// above mid-height. With the original box this gives the original 4.1 and radii.
+#define BOSS_SCALE (game->arena.maxX / LEGACY_MAX_X)
+#define BOSS_CENTER_Y (0.5f * (game->arena.minY + game->arena.maxY) + 0.2f * BOSS_SCALE)
 #define PLAYER_BOLT_SPEED 85.0f
 #define PLAYER_BALL_SPEED 52.0f
 #define PLAYER_HOMING_TURN_RATE 7.5f
@@ -301,7 +305,7 @@ static void SpawnBoss(GameplaySystem *game, double virtualPlayerZ, GameplayEvent
     boss->reinforcementTimer = 3.4f;
     boss->rotation = Hash01(encounterSeed) * 6.2831853f;
     boss->attackPattern = 0;
-    boss->position = (Vector3){ 0.0f, 4.1f, boss->leviathan ? -148.0f : -125.0f };
+    boss->position = (Vector3){ 0.0f, BOSS_CENTER_Y, boss->leviathan ? -148.0f : -125.0f };
     boss->shieldNodes = 4;
     boss->introFlash = 1.0f;
     boss->defeatFlash = 0.0f;
@@ -339,11 +343,12 @@ static void UpdateBoss(GameplaySystem *game, float dt, double virtualPlayerZ,
     boss->rotation += dt * rotationSpeed;
     boss->position.z = Approach(boss->position.z, boss->leviathan ? -39.5f : -46.0f,
                                 boss->leviathan ? 0.92f : 1.15f, dt);
-    float motionScale = boss->leviathan ? 3.7f : 2.2f;
+    float scale = BOSS_SCALE;
+    float motionScale = (boss->leviathan ? 3.7f : 2.2f) * scale;
     boss->position.x = sinf(game->runTime * (boss->leviathan ? 0.25f : 0.31f) +
                             (float)boss->encounterIndex) * motionScale;
-    boss->position.y = 4.1f + sinf(game->runTime * (boss->leviathan ? 0.43f : 0.57f)) *
-                                  (boss->leviathan ? 1.0f : 0.65f);
+    boss->position.y = BOSS_CENTER_Y + sinf(game->runTime * (boss->leviathan ? 0.43f : 0.57f)) *
+                                  (boss->leviathan ? 1.0f : 0.65f) * scale;
 
     if (boss->phase == BOSS_APPROACH && boss->phaseTime >= 2.6f) {
         boss->phase = BOSS_SHIELDED;
@@ -374,8 +379,8 @@ static void UpdateBoss(GameplaySystem *game, float dt, double virtualPlayerZ,
         int slot = boss->nodeSlots[node];
         if (slot < 0 || !game->enemies[slot].active) continue;
         float angle = boss->rotation + (float)node * 1.5707963f;
-        float radiusX = boss->leviathan ? 12.4f : 8.35f;
-        float radiusY = boss->leviathan ? 7.15f : 4.65f;
+        float radiusX = (boss->leviathan ? 12.4f : 8.35f) * scale;
+        float radiusY = (boss->leviathan ? 7.15f : 4.65f) * scale;
         game->enemies[slot].position = (Vector3){
             boss->position.x + cosf(angle) * radiusX,
             boss->position.y + sinf(angle) * radiusY,
@@ -396,8 +401,8 @@ static void UpdateBoss(GameplaySystem *game, float dt, double virtualPlayerZ,
             EnemyType type = (addSeed & 1u) ? ENEMY_DRIFTER : ENEMY_CHASER;
             float side = ((addSeed >> 3) & 1u) ? 1.0f : -1.0f;
             SpawnEnemyAt(game, type,
-                         (Vector3){ boss->position.x + side * (5.0f + (float)add * 3.0f),
-                                    boss->position.y - 1.2f + (float)add,
+                         (Vector3){ boss->position.x + side * (5.0f + (float)add * 3.0f) * scale,
+                                    boss->position.y + (-1.2f + (float)add) * scale,
                                     boss->position.z - 24.0f - (float)add * 5.0f },
                          0, addSeed);
         }
@@ -434,12 +439,12 @@ static void UpdateBoss(GameplaySystem *game, float dt, double virtualPlayerZ,
         float spread = centered * (boss->leviathan ? 1.22f : 1.45f);
         if (boss->leviathan && boss->attackPattern % 3 == 1) {
             float angle = boss->rotation + (float)shot * 2.399963f;
-            shotOrigin.x += cosf(angle) * 10.5f;
-            shotOrigin.y += sinf(angle) * 6.2f;
+            shotOrigin.x += cosf(angle) * 10.5f * scale;
+            shotOrigin.y += sinf(angle) * 6.2f * scale;
             spread = sinf(angle * 2.0f) * 2.4f;
         } else if (boss->leviathan && boss->attackPattern % 3 == 2) {
-            shotOrigin.x += centered * 2.25f;
-            shotOrigin.y += 5.2f + sinf((float)shot * 1.7f) * 1.1f;
+            shotOrigin.x += centered * 2.25f * scale;
+            shotOrigin.y += (5.2f + sinf((float)shot * 1.7f) * 1.1f) * scale;
             spread = -centered * 0.62f;
         }
         SpawnProjectile(game, shotOrigin, projectileSpeed + (float)(shot % 3) * 1.8f, spread);
@@ -1255,11 +1260,14 @@ bool CanGameplayBoost(const GameplaySystem *game) {
            !game->boss.active && game->player.energy > 1.0f;
 }
 
+float GetGameplayCruiseSpeed(const GameplaySystem *game, double virtualPlayerZ) {
+    float progress = ClampFloat((float)(fmax(virtualPlayerZ, 0.0) / 1800.0), 0.0f, 1.0f);
+    return 18.0f + progress * 12.0f + fminf((float)game->boss.encounterIndex * 2.0f, 6.0f);
+}
+
 float GetGameplayTravelSpeed(const GameplaySystem *game, double virtualPlayerZ,
                              bool boosting) {
-    float progress = ClampFloat((float)(fmax(virtualPlayerZ, 0.0) / 1800.0), 0.0f, 1.0f);
-    float cruise = 18.0f + progress * 12.0f +
-                   fminf((float)game->boss.encounterIndex * 2.0f, 6.0f);
+    float cruise = GetGameplayCruiseSpeed(game, virtualPlayerZ);
     if (game->boss.active) {
         if (game->boss.phase == BOSS_APPROACH) {
             float slowdown = ClampFloat(game->boss.phaseTime / 0.75f, 0.0f, 1.0f);

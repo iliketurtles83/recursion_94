@@ -15,9 +15,10 @@ is five levels, each with its own environment, song and boss.
   the game in the server corridor (preset `r94_corridor`); `--sandbox` gives the
   environment harness.
 - `legacy/` holds the rest of the original game (environment, old main loop):
-  unbuilt reference only. Combat and bosses are ported; boss presentation is
-  next. The original boss chassis drawing code is in git history
-  (`git show 1a7c6ca:legacy/src/gameplay.c`, `Draw*Boss`).
+  unbuilt reference only. Combat and bosses are ported. The Recursive Core has
+  its neon chassis (`draw_boss` in `combat_draw.c`) and is drawn for every
+  round until the other four bosses get theirs; the original chassis code is in
+  git history (`git show 1a7c6ca:legacy/src/gameplay.c`, `Draw*Boss`).
 - **Arena mapping.** Combat runs in arena units: x lateral, y up, z = -distance
   ahead of the ship. 1 arena unit = `ARENA_SCALE` (0.4) world units on all axes,
   riding the path (`ArenaMap`, `arena_to_world` in `combat_draw.c`). The arena
@@ -25,9 +26,12 @@ is five levels, each with its own environment, song and boss.
   formation placement is bounds-relative, and with the original box it gives
   the original numbers (so `game_combat` checks stay valid). The ship position
   is read from the engine (`ct_ship_world` vs the path frame); the engine owns
-  flight. Leviathan gravity is reported in `player.pull` but not applied yet.
-  Bosses are disabled (`bossesEnabled = false`) until their presentation lands. Its environment and its ship, enemy and shot graphics are
-  being dropped. Delete legacy files once their content is ported.
+  flight. Boss geometry (centre line, node orbits, motion) scales with the
+  arena width (`BOSS_SCALE`, `BOSS_CENTER_Y`). During a boss fight the game
+  scales the engine's `baseSpeed` by the original travel speed over cruise
+  (about a quarter), so the corridor drifts while the arena holds. Leviathan
+  gravity is reported in `player.pull` but not applied yet. The original
+  game's environment and its ship, enemy and shot graphics are being dropped. Delete legacy files once their content is ported.
   `archive/AGENTS_legacy.md` has the rules that applied to that code.
 - First milestone: a vertical slice (server corridor, engine flight, ported
   weapons/enemies, one boss, one song).
@@ -66,6 +70,7 @@ ctest --test-dir build --output-on-failure         # engine_core/_ship/_vectorin
 ./build/recursion94                         # game: seed selector, then the run
 ./build/recursion94 --seed 94               # skip the selector
 ./build/recursion94 --seed 94 --game-shot 5 --out FILE --hidden   # deterministic game frame
+./build/recursion94 --seed 94 --boss        # start 40 units short of the first boss (works with --game-shot)
 ./build/recursion94 --sandbox --env N [--seed N] [--preset NAME] [--set name=value ...]
     [--shot DISTANCE --out FILE] [--bench SECONDS] [--list-params] [--write-preset NAME]
     [--boost] [--noship] [--hdr8] [--hidden]

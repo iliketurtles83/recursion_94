@@ -2,6 +2,39 @@
 
 This log is the source of truth for architectural choices, visual uplift milestones, feature statuses (Confirmed, Provisional, Rejected), and binary size tracking. The 1.44MB (1,474,560 bytes) contest limit applied to entries before 2026-11-03.
 
+## [Boss port] Recursive Core in the corridor
+
+- Date: 2026-11-03. Status: Step 3 CONFIRMED on Linux by tests and scripted
+  screenshots of every phase; not yet hand-played or heard.
+- Bosses enabled in the game. Boss logic unchanged; its geometry now scales
+  with the arena width (centre line 0.2 above mid-height, node orbit radii,
+  sway, reinforcement and Leviathan pattern offsets). The original box gives
+  the original numbers, so the 18 `game_combat` checks still pass.
+- Engine slowdown: `baseSpeed` is scaled by the original travel speed over
+  cruise (`GetGameplayCruiseSpeed`), so the engine eases to about a quarter
+  speed over the 0.75 s approach and holds there for the fight.
+- Presentation: turbine of eight pitched kite petals around three nested,
+  counter-spinning octahedra (the outer one matches the core's hit radius;
+  the innermost is the eye, dim while shielded), a segmented halo, a hex
+  shield while nodes live, tethers to the four firewall nodes (octahedron,
+  inner cube, bracket square, drawn at their hit radius). Exposed: petals
+  spread. Enraged: rotation, colour heat and flicker. Arrival: portal rings
+  and spokes compile around the core over the 2.6 s approach. Defeat:
+  expanding rings and spokes.
+- HUD: boss name, core integrity meter (arrival progress while compiling),
+  phase label (COMPILING / FIREWALL xN / CORE EXPOSED / OVERLOAD) on a dark
+  panel; arrival title card and CORE COLLAPSED card.
+- Music: boss layer by phase, pre-boss hush over the last 350 units, boss
+  intensity bonus, riser and collapse SFX, all as in the original main loop.
+- `--boss` starts runs 40 units short of the first boss.
+- Not ported: the original camera pull-back and FOV widening on arrival, and
+  the post-process hex rift (the portal rings stand in). The other four boss
+  chassis. Leviathan gravity.
+- Game shots before the boss are byte-identical to Step 2; sandbox shots
+  are byte-identical to Step 0.
+
+---
+
 ## [Combat port] Original combat on the engine, in neon vector style
 
 - Date: 2026-11-03. Status: Step 2 CONFIRMED on Linux by tests and scripted

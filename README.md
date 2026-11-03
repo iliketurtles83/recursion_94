@@ -13,8 +13,9 @@ built) is being merged with the procedural flight engine and environments from t
 rec_tunnel sandbox, which now live at the repo root. The plan is five levels, each
 with its own environment, song and boss. The first milestone is a one-level
 vertical slice. Today the executable runs a playable combat slice: pick a seed, then fight
-through the server corridor to a procedurally synthesized soundtrack. Bosses
-come next.
+through the server corridor to a procedurally synthesized soundtrack, until the
+Recursive Core boss arrives (about a minute in). Its chassis is drawn for every
+round for now.
 
 ## Build
 
@@ -35,6 +36,7 @@ To build offline, pass local checkouts:
 ```sh
 ./build/recursion94              # seed selector: Left/Right +-1, Up/Down +-100, Enter to start
 ./build/recursion94 --seed 94    # start a run directly
+./build/recursion94 --seed 94 --boss   # start just short of the first boss
 ```
 
 - WASD / arrows: steer. Q / E: barrel roll.

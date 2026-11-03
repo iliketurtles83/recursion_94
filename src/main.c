@@ -21,6 +21,7 @@ typedef struct Cli {
     double gameShot;
     const char *preset;
     const char *shotOut;
+    bool bossTest;
     const char *writePreset;
     bool   listParams;
     const char *sets[32];        // --set name=value, applied after --preset
@@ -29,7 +30,7 @@ typedef struct Cli {
 
 static void usage(void)
 {
-    printf("recursion94 [--seed N] [--w W --h H] [--vsync 0|1] [--fps N] [--env 0..5] [--game-shot SECONDS [--out FILE]]\n"
+    printf("recursion94 [--seed N] [--w W --h H] [--vsync 0|1] [--fps N] [--env 0..5] [--game-shot SECONDS [--out FILE]] [--boss]\n"
            "            [--bench SECONDS [--speed U]] [--shot S [--out FILE]] [--preset NAME] [--write-preset NAME] [--list-params] [--hdr8] [--noship] [--ui] [--whiteout] [--boost]\n"
            "            [--set NAME=VALUE ...] [--hidden] [--sandbox]\n");
 }
@@ -62,6 +63,7 @@ static Cli parse(int argc, char **argv)
         else if (!strcmp(a, "--hidden")) c.hidden = true;
         else if (!strcmp(a, "--sandbox")) c.sandbox = true;
         else if (!strcmp(a, "--game-shot") && v) { c.gameShot = atof(v); i++; }
+        else if (!strcmp(a, "--boss")) c.bossTest = true;
         else if (!strcmp(a, "--help") || !strcmp(a, "-h")) { usage(); exit(0); }
         else { fprintf(stderr, "unknown argument: %s\n", a); usage(); exit(1); }
     }
@@ -154,7 +156,8 @@ int main(int argc, char **argv)
     }
     if (game) {
         GameOptions options = { .seed = cli.hasSeed ? (uint32_t)cli.seed : 94u, .skipSelector = cli.hasSeed,
-                                .shotSeconds = cli.gameShot, .shotOut = cli.shotOut };
+                                .shotSeconds = cli.gameShot, .shotOut = cli.shotOut,
+                                .bossTest = cli.bossTest };
         int result = game_run(ct, &options);
         ct_destroy(ct);
         CloseWindow();
