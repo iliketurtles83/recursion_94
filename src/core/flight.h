@@ -22,6 +22,8 @@ typedef struct FlightParams {
     float baseSpeed, boostSpeed, speedResponse;
     float steerLimit;        // fraction of R
     float steerSoftEdge;     // cushion band inside the limit, fraction of it (0 = hard stop)
+    // Rectangle for open environments, world units from the path centre (0 = steerLimit x R).
+    float steerBoxHalfWidth, steerBoxUp, steerBoxDown;
     float steerAccel, steerDamping;
     float vectoringStrength, vectoringAngleDeg;
     float maxBankDeg, maxPitchDeg;
@@ -32,6 +34,8 @@ typedef struct FlightParams {
     float shakeAmount;
     float cameraRollFollow;  // 0 = tunnel roll only, 1 = follow ship bank
     float barrelRollTime;
+    float barrelRollDash;    // lateral speed kick in the roll direction (world units/s, 0 = none)
+    float barrelRollCooldown; // seconds after a roll before the next can start
     bool  autopilot;
     bool  dartShip;          // original placeholder dart (engine positions differ from the courier)
     float courierScale;      // uniform size of the courier model and its exhaust anchors
@@ -48,6 +52,7 @@ typedef struct FlightState {
     float  barrel;           // extra roll from barrel roll (radians)
     float  barrelT;          // 0..1 progress, <0 idle
     int    barrelDir;
+    float  barrelCooldown;   // seconds left before another roll can start
     double time;
     // derived each step
     DVec3  shipPos;
@@ -73,7 +78,12 @@ typedef struct FlightView {
     Vector2 gimbal[2];
 } FlightView;
 
+typedef struct FlightBox { float xMin, xMax, yMin, yMax; } FlightBox;
+
 void flight_register_params(FlightParams *p, ParamRegistry *reg);
+// Limits of the ship's centre offset at a path radius: the rectangle in open environments
+// (clipped by floor and ceiling), the bounding box of the steering circle in tunnels.
+FlightBox flight_steer_box(const FlightParams *p, const PathStyle *style, float radius);
 void flight_reset(FlightState *st, const FlightParams *p, const PathSystem *path, double s);
 void flight_step(FlightState *st, const FlightParams *p, const PathSystem *path, const FlightInput *in, double dt);
 // Fixed-timestep accumulator: advances cur (saving prev) by whole FLIGHT_HZ steps for a

@@ -91,6 +91,48 @@ static void test_fixed_steps(const FlightParams *p,const PathSystem *path)
         CHECK(result[n].gimbal[0].x==result[0].gimbal[0].x&&result[n].gimbal[1].y==result[0].gimbal[1].y&&result[n].vectorPower==result[0].vectorPower);
     }
 }
+// Open environment: the ship's centre stays inside the steering rectangle (and above the
+// floor); a barrel roll turns a full circle, dashes toward its side and has a cooldown.
+static void test_box_and_dash(FlightParams p)
+{
+    p.vectoringStrength=0;
+    p.steerBoxHalfWidth=5.2f;p.steerBoxUp=5.8f;p.steerBoxDown=0;
+    PathSystem flat;path_init(&flat,7,(PathStyle){.baseRadius=6.5f,.radiusNoiseScale=100,.floorDepth=2.2f,.ceilingHeight=14});
+    path_ensure(&flat,0,4000);
+    FlightBox box=flight_steer_box(&p,&flat.style,6.5f);
+    CHECK(box.xMin==-5.2f&&box.xMax==5.2f&&box.yMax==5.8f&&fabsf(box.yMin-(-2.2f+FLIGHT_CLEARANCE))<1e-5f);
+    const Vector2 corners[]={{1,1},{-1,1},{1,-1},{-1,-1}};
+    for(int c=0;c<4;c++){
+        FlightState s;flight_reset(&s,&p,&flat,0);
+        FlightInput in={.steerX=corners[c].x,.steerY=corners[c].y,.boost=true};
+        float maxX=0,maxY=0,minY=0;
+        for(int i=0;i<600;i++){flight_step(&s,&p,&flat,&in,dt);maxX=fmaxf(maxX,fabsf(s.x));maxY=fmaxf(maxY,s.y);minY=fminf(minY,s.y);}
+        CHECK(maxX<=box.xMax+1e-5f&&maxY<=box.yMax+1e-5f&&minY>=box.yMin-1e-5f);
+        CHECK(fabsf(s.x)>box.xMax*.9f);   // the corner is reachable
+        // A dash into the wall still ends inside the box.
+        in.rollLeft=corners[c].x<0;in.rollRight=corners[c].x>0;
+        for(int i=0;i<200;i++){flight_step(&s,&p,&flat,&in,dt);in.rollLeft=in.rollRight=false;CHECK(fabsf(s.x)<=box.xMax+1e-5f);}
+    }
+    printf("steering box %.1f..%.1f x %.2f..%.1f: corners reached, never left\n",box.xMin,box.xMax,box.yMin,box.yMax);
+    p.barrelRollDash=18;p.barrelRollCooldown=.35f;
+    for(int side=-1;side<=1;side+=2){
+        FlightState s;flight_reset(&s,&p,&flat,0);
+        FlightInput in={.rollLeft=side<0,.rollRight=side>0};
+        flight_step(&s,&p,&flat,&in,dt);
+        float maxBarrel=0;int steps=1;
+        while(s.barrelT>=0){flight_step(&s,&p,&flat,&(FlightInput){0},dt);maxBarrel=fmaxf(maxBarrel,fabsf(s.barrel));steps++;}
+        CHECK(maxBarrel>2*3.14159f*.99f);                 // a full turn
+        CHECK(fabs(steps*dt-p.barrelRollTime)<2*dt);
+        CHECK(s.x*side>1.5f);                              // dashed toward the roll
+        CHECK(s.barrel==0&&s.barrelCooldown>0);
+        FlightInput again={.rollLeft=side<0,.rollRight=side>0};
+        flight_step(&s,&p,&flat,&again,dt);CHECK(s.barrelT<0);   // cooling down
+        advance(&s,&p,&flat,(FlightInput){0},(int)(p.barrelRollCooldown*FLIGHT_HZ));
+        flight_step(&s,&p,&flat,&again,dt);CHECK(s.barrelT>=0);  // ready again
+        printf("barrel roll %+d: full turn in %.3f s, dash %.2f m\n",side,steps*dt,s.x);
+    }
+    path_free(&flat);
+}
 int main(void)
 {
     ParamRegistry reg={0};FlightParams p;flight_register_params(&p,&reg);
@@ -98,5 +140,6 @@ int main(void)
     p.vectoringStrength=.90f;   // the mission preset value; the registered default is 0 (off)
     PathSystem path;path_init(&path,83,(PathStyle){.baseRadius=100,.radiusNoiseScale=60,.hasWalls=true});path_ensure(&path,0,2000);
     test_forces(&p,&path);test_roll(&p,&path);test_attachments(&p,&path);test_fixed_steps(&p,&path);path_free(&path);
+    test_box_and_dash(p);
     printf("thrust vectoring: %d checks, %d failures\n",checks,failures);return failures?1:0;
 }

@@ -31,8 +31,11 @@ RECURSION_94.
         combat feel, enemy readability, camera framing.
   - [ ] Listen to the corridor song (`song_render` WAVs): progression, bass,
         lead motif, section lengths, mix trims, Dorian seeds.
-  - [ ] Movement box and barrel rolls.
-  - [ ] Backlog: steering-box bottom limit, engine trail join.
+  - [ ] Movement box and barrel rolls. Built: steering rectangle
+        (`steerBoxHalfWidth/Up/Down`, F4 overlay), camera follow 0.55, roll
+        = full turn + dash + i-frames + cooldown. Hand-play and adjust.
+  - [x] Backlog: steering-box bottom limit (`steerBoxDown`).
+  - [ ] Backlog: engine trail join.
   - [ ] Test resetting the noise seed on every snare (and clap/hat) hit so
         each hit is identical; compare by ear against the free-running stream.
         Re-bless the audio hashes only if kept.

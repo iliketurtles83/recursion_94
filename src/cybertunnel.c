@@ -801,6 +801,13 @@ Vector2 ct_vanishing_point(const CtTunnel *ct) { return ct->vanishUV; }
 double ct_ship_s(const CtTunnel *ct) { return ct->view.s; }
 void ct_ship_world(const CtTunnel *ct, double out[3]) { out[0] = ct->view.shipPos.x; out[1] = ct->view.shipPos.y; out[2] = ct->view.shipPos.z; }
 void ct_render_origin(const CtTunnel *ct, double out[3]) { out[0] = ct->renderOrigin.x; out[1] = ct->renderOrigin.y; out[2] = ct->renderOrigin.z; }
+CtSteerBox ct_steer_box(const CtTunnel *ct, double s)
+{
+    FlightBox b = flight_steer_box(&ct->fp, &ct->path.style, (float)path_sample(&ct->path, s).radius);
+    return (CtSteerBox){ b.xMin, b.xMax, b.yMin, b.yMax };
+}
+float ct_ship_roll_progress(const CtTunnel *ct) { return ct->cur.barrelT; }
+Camera3D ct_camera(const CtTunnel *ct) { return ct->ctx.camera; }
 
 void ct_get_stats(const CtTunnel *ct, CtStats *o)
 {

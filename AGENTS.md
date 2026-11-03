@@ -71,6 +71,8 @@ ctest --test-dir build --output-on-failure         # engine_core/_ship/_vectorin
 ./build/recursion94 --seed 94               # skip the selector
 ./build/recursion94 --seed 94 --game-shot 5 --out FILE --hidden   # deterministic game frame
 ./build/recursion94 --seed 94 --boss        # start 40 units short of the first boss (works with --game-shot)
+./build/recursion94 --seed 94 --game-shot 3 --steer 1,-1 --roll 2.5 --steer-box --out FILE --hidden
+    # shot pilot holds the stick / rolls right at 2.5 s; draw the steering box (F4 in play)
 ./build/recursion94 --sandbox --env N [--seed N] [--preset NAME] [--set name=value ...]
     [--shot DISTANCE --out FILE] [--bench SECONDS] [--list-params] [--write-preset NAME]
     [--boost] [--noship] [--hdr8] [--hidden]
@@ -92,7 +94,13 @@ ctest --test-dir build --output-on-failure         # engine_core/_ship/_vectorin
   `XAUTHORITY=/run/user/1000/xauth_*`. A visible window on `:1` never presents
   and hangs. Without a display, GLFW fails.
 - Runtime keys: F1 param panel, F2 free cam, F3 overlay, T switch environment,
-  1–9 layer toggles, R reseed, F12 screenshot.
+  1–9 layer toggles, R reseed, F12 screenshot. In the game: F4 steering box overlay.
+- **Movement box.** In open environments the ship's centre is held in a
+  rectangle (`steerBoxHalfWidth`, `steerBoxUp`, `steerBoxDown` in world units,
+  0 = the old `steerLimit` x radius; floor and ceiling still clip it). The
+  game's arena comes from `ct_steer_box`. Barrel rolls (Q/E) turn a full
+  circle, kick sideways (`barrelRollDash`), give i-frames for the whole roll
+  (`GameplayInput.dodging`) and wait `barrelRollCooldown` before the next.
 
 ## Architecture
 

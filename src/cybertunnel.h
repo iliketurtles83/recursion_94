@@ -113,6 +113,14 @@ Vector2      ct_vanishing_point(const CtTunnel *ct);   // uv 0..1, y up
 double       ct_ship_s(const CtTunnel *ct);
 void         ct_ship_world(const CtTunnel *ct, double out[3]);
 void         ct_render_origin(const CtTunnel *ct, double out[3]);
+// Steering limits of the ship's centre at path distance s: offsets along the path
+// binormal (x, right) and normal (y, up), floor and ceiling included.
+typedef struct CtSteerBox { float xMin, xMax, yMin, yMax; } CtSteerBox;
+CtSteerBox   ct_steer_box(const CtTunnel *ct, double s);
+// Barrel roll progress 0..1, or -1 when not rolling.
+float        ct_ship_roll_progress(const CtTunnel *ct);
+// The camera of the last ct_render(), in render space (world - ct_render_origin).
+Camera3D     ct_camera(const CtTunnel *ct);
 void         ct_get_stats(const CtTunnel *ct, CtStats *out);
 
 // Control

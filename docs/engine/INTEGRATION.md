@@ -134,6 +134,9 @@ and the wake attachment uses the matching CPU gimbal rotation.
 | `ct_tunnel_radius_at(ct, s)` | radius only |
 | `ct_debris_in_range(ct, s0, s1, out, max)` | debris bounding spheres (world) for collision |
 | `ct_ship_s`, `ct_ship_world` | ship arc length / world position |
+| `ct_steer_box(ct, s)` | limits of the ship's centre offset at `s` (x along B, y along N): the rectangle in open environments, floor and ceiling included |
+| `ct_ship_roll_progress(ct)` | barrel roll progress 0..1, `-1` when not rolling (the game's i-frames) |
+| `ct_camera(ct)` | camera of the current frame in render space, for projecting overlays |
 | `ct_jump_to(ct, s)` | teleport (regenerates path from 0 if jumping backwards past the cached window) |
 | `ct_reseed(ct, seed)` | new world |
 | `ct_reset_route(ct, seed)` | regenerate a new route at arc length zero, reset flight and prime the render context; used between endless missions |
@@ -268,6 +271,9 @@ unknown keys are skipped, and loading first resets everything to defaults).
 | Flight | `speedResponse` | float | 2.5 | 0.1 | 20 |
 | Flight | `steerLimit` | float | 0.8 | 0 | 0.95 |
 | Flight | `steerSoftEdge` | float | 0.25 | 0 | 0.6 |
+| Flight | `steerBoxHalfWidth` | float | 0 | 0 | 40 |
+| Flight | `steerBoxUp` | float | 0 | 0 | 40 |
+| Flight | `steerBoxDown` | float | 0 | 0 | 40 |
 | Flight | `steerAccel` | float | 60 | 1 | 300 |
 | Flight | `steerDamping` | float | 5 | 0.1 | 30 |
 | Flight | `maxBankDeg` | float | 35 | 0 | 80 |
@@ -285,6 +291,8 @@ unknown keys are skipped, and loading first resets everything to defaults).
 | Camera | `shakeAmount` | float | 0.06 | 0 | 0.5 |
 | Camera | `cameraRollFollow` | float | 0.35 | 0 | 1 |
 | Camera | `barrelRollTime` | float | 0.7 | 0.2 | 3 |
+| Camera | `barrelRollDash` | float | 0 | 0 | 80 |
+| Camera | `barrelRollCooldown` | float | 0 | 0 | 3 |
 | Fog | `fogStart` | float | 60 | 0 | 600 |
 | Fog | `fogEnd` | float | 300 | 1 | 800 |
 | Fog | `fogToCore` | float | 0.6 | 0 | 1 |

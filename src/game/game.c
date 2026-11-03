@@ -15,8 +15,8 @@
 #include <stdio.h>
 
 #define LEGEND_SECONDS 8.0f
-// World units per arena unit. The corridor's steering box (about 10.4 x 6.8)
-// becomes an arena of about 26 x 17: as wide as the original game's play field,
+// World units per arena unit. The corridor's steering box (about 10.4 x 7.4)
+// becomes an arena of about 26 x 18.5: as wide as the original game's play field,
 // and taller. Combat timing stays exactly as tuned, because it runs in arena units.
 #define ARENA_SCALE 0.4f
 #define ARENA_FLOOR_Y 0.8f
@@ -50,6 +50,7 @@ typedef struct Game {
     float          push;         // current push-in, 0..1
     double         pushStartStep; // music step of the first push bar (-1: no boss)
     bool           bossTest;     // --boss: start each run just short of the first boss
+    bool           showBox;      // F4: steering box and ship centre overlay (prototyping)
     MusicClock     music;
 } Game;
 
@@ -63,19 +64,12 @@ static void stop_audio(Game *g)
 static void update_arena(Game *g)
 {
     double s = ct_ship_s(g->ct);
-    float half = ct_param_get(g->ct, "steerLimit") * ct_tunnel_radius_at(g->ct, s);
-    float vMin = -half, vMax = half;
-    if (ct_get_environment(g->ct) == CT_ENV_CORRIDOR) {
-        float floorDepth = ct_param_get(g->ct, "corFloorDepth");
-        float ceiling = ct_param_get(g->ct, "corCeilingHeight");
-        if (floorDepth > 0.0f) vMin = fmaxf(vMin, -floorDepth + 0.6f);
-        if (ceiling > 0.0f) vMax = fminf(vMax, ceiling - 0.6f);
-    }
+    CtSteerBox b = ct_steer_box(g->ct, s);
     g->map.shipS = s;
     g->map.scale = ARENA_SCALE;
-    g->map.yZero = ARENA_FLOOR_Y - vMin / ARENA_SCALE;
-    SetGameplayArena(&g->play, (GameplayArena){ -half / ARENA_SCALE, half / ARENA_SCALE,
-                                                ARENA_FLOOR_Y, vMax / ARENA_SCALE + g->map.yZero });
+    g->map.yZero = ARENA_FLOOR_Y - b.yMin / ARENA_SCALE;
+    SetGameplayArena(&g->play, (GameplayArena){ b.xMin / ARENA_SCALE, b.xMax / ARENA_SCALE,
+                                                ARENA_FLOOR_Y, b.yMax / ARENA_SCALE + g->map.yZero });
 }
 
 // Ship offset from the path, in arena units.
@@ -142,11 +136,13 @@ static Controls read_controls(void)
 }
 
 // Deterministic pilot for --game-shot: weaves, taps and charges on a fixed script.
-static Controls scripted_controls(float t)
+// --steer holds the stick instead of weaving; --roll starts one right barrel roll.
+static Controls scripted_controls(const GameOptions *o, float t, float dt)
 {
     Controls c = { 0 };
-    c.flight.steerX = sinf(t * 0.9f) * 0.8f;
-    c.flight.steerY = sinf(t * 0.55f + 1.0f) * 0.6f;
+    c.flight.steerX = o->steerHold ? o->steerX : sinf(t * 0.9f) * 0.8f;
+    c.flight.steerY = o->steerHold ? o->steerY : sinf(t * 0.55f + 1.0f) * 0.6f;
+    c.flight.rollRight = o->rollAt >= 0.0 && t >= o->rollAt && t - dt < o->rollAt;
     float cycle = fmodf(t, 2.0f);
     c.fire = cycle < 0.06f || (cycle > 0.4f && cycle < 0.46f) || (cycle > 1.0f && cycle < 1.8f);
     return c;
@@ -265,7 +261,8 @@ static void update_run(Game *g, float dt, const Controls *c)
     // quarter of cruise), so the corridor drifts while the arena holds.
     float factor = GetGameplayTravelSpeed(&g->play, g->virtualZ, false) / GetGameplayCruiseSpeed(&g->play, g->virtualZ);
     ct_param_set(g->ct, "baseSpeed", g->baseSpeed * factor);
-    GameplayInput in = { px, py, vx, vy, c->fire && !g->play.gameOver, c->beam, c->bomb };
+    GameplayInput in = { px, py, vx, vy, c->fire && !g->play.gameOver, c->beam, c->bomb,
+                         ct_ship_roll_progress(g->ct) >= 0.0f };
     GameplayEvents events = UpdateGameplay(&g->play, dt, g->virtualZ, boosting, &in);
     play_events(g, &events);
     ct_set_ship_damage(g->ct, 1.0f - g->play.player.energy / 100.0f);
@@ -274,8 +271,36 @@ static void update_run(Game *g, float dt, const Controls *c)
     ct_set_beat(g->ct, g->beatPulse);
 }
 
+// Prototyping overlay: the steering box at the ship's path distance and the ship's
+// centre, which the flight model keeps inside it.
+static void draw_steer_box(const Game *g, int w, int h)
+{
+    Camera3D cam = ct_camera(g->ct);
+    double o[3], ship[3];
+    ct_render_origin(g->ct, o);
+    ct_ship_world(g->ct, ship);
+    double s = ct_ship_s(g->ct);
+    CtPathSample p = ct_path_sample(g->ct, s);
+    CtSteerBox b = ct_steer_box(g->ct, s);
+    float xs[4] = { b.xMin, b.xMax, b.xMax, b.xMin }, ys[4] = { b.yMin, b.yMin, b.yMax, b.yMax };
+    Vector2 q[4];
+    for (int i = 0; i < 4; i++) {
+        Vector3 v = { (float)(p.pos[0] - o[0]) + p.binormal.x * xs[i] + p.normal.x * ys[i],
+                      (float)(p.pos[1] - o[1]) + p.binormal.y * xs[i] + p.normal.y * ys[i],
+                      (float)(p.pos[2] - o[2]) + p.binormal.z * xs[i] + p.normal.z * ys[i] };
+        q[i] = GetWorldToScreenEx(v, cam, w, h);
+    }
+    Color line = { 120, 255, 200, 200 };
+    for (int i = 0; i < 4; i++) DrawLineEx(q[i], q[(i + 1) % 4], 2.0f, line);
+    Vector2 c = GetWorldToScreenEx((Vector3){ (float)(ship[0] - o[0]), (float)(ship[1] - o[1]), (float)(ship[2] - o[2]) }, cam, w, h);
+    DrawCircleV(c, 4.0f, (Color){ 255, 60, 140, 255 });
+    DrawText(TextFormat("BOX  x %.2f..%.2f  y %.2f..%.2f   [F4]", b.xMin, b.xMax, b.yMin, b.yMax),
+             24, 46, 14, line);
+}
+
 static void draw_overlay(const Game *g, int w, int h)
 {
+    if (g->showBox) draw_steer_box(g, w, h);
     DemosceneSystem demo;
     InitDemoscene(&demo, g->runSeed);
     Color dim = { demo.primary.r, demo.primary.g, demo.primary.b, 170 };
@@ -310,7 +335,8 @@ int game_run(CtTunnel *ct, const GameOptions *o)
     static Game g;   // large (combat pools); keep it off the stack
     g = (Game){ .ct = ct, .state = STATE_SELECT, .selectedSeed = o->seed, .runSeed = o->seed,
                 .baseSpeed = ct_param_get(ct, "baseSpeed"),
-                .baseFov = ct_param_get(ct, "fovBase"), .bossTest = o->bossTest };
+                .baseFov = ct_param_get(ct, "fovBase"), .bossTest = o->bossTest,
+                .showBox = o->steerBox || o->shotSeconds < 0.0 };
     combat_draw_init(&g.draw);
     ct_set_scene_draw(ct, scene_draw, &g);
     bool shotMode = o->shotSeconds >= 0.0;
@@ -345,6 +371,7 @@ int game_run(CtTunnel *ct, const GameOptions *o)
                 g.state = STATE_SELECT;
                 continue;
             }
+            if (IsKeyPressed(KEY_F4)) g.showBox = !g.showBox;
             if (g.play.gameOver && IsKeyPressed(KEY_R)) start_run(&g, g.runSeed, true);
             if (IsKeyPressed(KEY_P) && !g.play.gameOver) {
                 g.paused = !g.paused;
@@ -354,7 +381,7 @@ int game_run(CtTunnel *ct, const GameOptions *o)
         }
 
         if (!g.paused) {
-            Controls c = shotMode ? scripted_controls(g.play.runTime) : read_controls();
+            Controls c = shotMode ? scripted_controls(o, g.play.runTime, dt) : read_controls();
             update_run(&g, dt, &c);
         }
         ct_update(ct, g.paused ? 0.0f : dt);

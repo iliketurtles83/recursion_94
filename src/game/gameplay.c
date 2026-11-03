@@ -691,7 +691,7 @@ static void UpdateLocks(GameplaySystem *game) {
 }
 
 static void HitPlayer(GameplaySystem *game, Vector3 hitPosition, GameplayEvents *events) {
-    if (game->player.invulnerability > 0.0f || game->gameOver) return;
+    if (game->player.invulnerability > 0.0f || game->player.dodging || game->gameOver) return;
     float hitDamage = PLAYER_HIT_DAMAGE *
                       (game->overdriveActive ? BOOST_HIT_MULTIPLIER : 1.0f);
     game->player.energy = fmaxf(0.0f, game->player.energy - hitDamage);
@@ -714,6 +714,7 @@ static void UpdatePlayer(GameplaySystem *game, float dt, bool boosting,
     game->player.position.y = ClampFloat(input->playerY, PLAYER_MIN_Y, PLAYER_MAX_Y);
     game->player.velocity.x = input->velocityX;
     game->player.velocity.y = input->velocityY;
+    game->player.dodging = input->dodging;
 
     // Fractal Leviathan gravity: reported for the flight model to apply.
     game->player.pull = (Vector2){ 0.0f, 0.0f };
@@ -1059,8 +1060,18 @@ bool ValidateGameplaySpecials(void) {
 
     game.combo = 8;
     game.weaponTier = 2;
+    // A barrel roll passes through hits: nothing changes while dodging.
+    game.player.invulnerability = 0.0f;
+    game.player.dodging = true;
+    float energyBefore = game.player.energy;
+    events = (GameplayEvents){ 0 };
     HitPlayer(&game, game.player.position, &events);
-    bool hitPersistence = game.chainLinks == 73 && game.combo == 0 && game.weaponTier == 0;
+    bool dodgeValid = !events.playerHit && game.player.energy == energyBefore && game.combo == 8;
+    game.player.dodging = false;
+
+    HitPlayer(&game, game.player.position, &events);
+    bool hitPersistence = game.chainLinks == 73 && game.combo == 0 && game.weaponTier == 0 &&
+                          events.playerHit;
 
     for (int i = 0; i < 2; i++) {
         Enemy *enemy = &game.enemies[i];
@@ -1250,9 +1261,9 @@ bool ValidateGameplaySpecials(void) {
                  bombValid && bossCapValid && capValid && speedValid && roundAdvanceValid &&
                  leviathanSpawnValid && singularityValid && recursionAdvanceValid &&
                  ordinaryDamageValid && boostDamageValid && homingValid &&
-                 evadeWindowValid && fireRateValid && sweepValid;
+                 evadeWindowValid && fireRateValid && sweepValid && dodgeValid;
     TraceLog(valid ? LOG_INFO : LOG_ERROR,
-             "GAMEPLAY: funds=%s beam=%s loop=%s hit=%s bomb=%s boss-cap=%s link-cap=%s speed=%s round=%s leviathan=%s singularity=%s recurse=%s normal-hit=%s boost-hit=%s homing=%s evade=%s fire-rate=%s sweep=%s",
+             "GAMEPLAY: funds=%s beam=%s loop=%s hit=%s bomb=%s boss-cap=%s link-cap=%s speed=%s round=%s leviathan=%s singularity=%s recurse=%s normal-hit=%s boost-hit=%s homing=%s evade=%s fire-rate=%s sweep=%s dodge=%s",
              insufficientFunds ? "yes" : "no", beamValid ? "yes" : "no",
              loopPersistence ? "yes" : "no", hitPersistence ? "yes" : "no",
              bombValid ? "yes" : "no", bossCapValid ? "yes" : "no",
@@ -1261,7 +1272,7 @@ bool ValidateGameplaySpecials(void) {
              singularityValid ? "yes" : "no", recursionAdvanceValid ? "yes" : "no",
              ordinaryDamageValid ? "yes" : "no",boostDamageValid ? "yes" : "no",
              homingValid ? "yes" : "no",evadeWindowValid ? "yes" : "no",
-             fireRateValid ? "yes" : "no",sweepValid ? "yes" : "no");
+             fireRateValid ? "yes" : "no",sweepValid ? "yes" : "no",dodgeValid ? "yes" : "no");
     return valid;
 }
 

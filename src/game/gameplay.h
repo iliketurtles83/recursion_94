@@ -86,6 +86,7 @@ typedef struct {
     Vector3 velocity;
     float energy;
     float invulnerability;
+    bool dodging;          // from GameplayInput: no damage while set
     float chargeTime;
     float bank;
     Vector2 pull;          // Leviathan gravity request (arena units/s), applied by the flight model
@@ -100,6 +101,7 @@ typedef struct {
     bool fireHeld;
     bool beamPressed;
     bool bombPressed;
+    bool dodging;          // barrel roll in progress: hits pass through
 } GameplayInput;
 
 typedef struct {

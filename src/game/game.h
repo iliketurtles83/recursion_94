@@ -13,6 +13,10 @@ typedef struct GameOptions {
     double      shotSeconds;   // >= 0: deterministic run screenshot after this many seconds, then exit
     const char *shotOut;       // screenshot path for shotSeconds
     bool        bossTest;      // --boss: start each run just short of the first boss
+    bool        steerHold;     // --steer X,Y: the shot pilot holds this stick (no weave)
+    float       steerX, steerY;
+    double      rollAt;        // --roll T: the shot pilot starts a right barrel roll at T s (< 0 = never)
+    bool        steerBox;      // --steer-box: show the steering box in shots (always toggleable with F4)
 } GameOptions;
 
 // Runs until the player quits. Returns a process exit code.

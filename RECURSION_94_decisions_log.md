@@ -2,6 +2,30 @@
 
 This log is the source of truth for architectural choices, visual uplift milestones, feature statuses (Confirmed, Provisional, Rejected), and binary size tracking. The 1.44MB (1,474,560 bytes) contest limit applied to entries before 2026-11-03.
 
+## [Movement box] Steering rectangle and barrel-roll dodge
+
+- Date: 2026-11-03. Status: PROVISIONAL: built and checked in shots and
+  tests; hand-play and adjust.
+- Box: open environments hold the ship's centre in a rectangle in the path
+  plane, world units from the centre line: `r94_corridor` uses x +-5.2 (the
+  lane is 6.5 wide each side, so the walls cap it), up 5.8, down to the floor
+  clearance (-1.6). F4 (or `--steer-box` in shots) draws it with the ship's
+  centre dot. The arena now comes from `ct_steer_box` (taller: 26 x 18.5
+  arena units instead of 26 x 17).
+- Camera: `camFollowLateral` 0.85 -> 0.55. At 0.85 the camera chased the ship
+  so the box slid off screen and the ship barely moved in the frame; at 0.55
+  the box roughly fills the screen and the ship stays visible in all four
+  corners (tightest at the bottom, ~40 px; up 6.0 hit the top edge and the
+  score, so 5.8).
+- Roll: Q/E turns a full 360 in 0.7 s, kicks 18 u/s sideways (about 2.4 m of
+  dash, still held by the box), ignores hits for the whole roll and then
+  cools down 0.35 s, so rolls can't chain into permanent invulnerability. The
+  camera now leans into the roll and back (half a sine, `cameraRollFollow` x
+  180 deg peak) instead of following 12% of the full turn and springing back
+  from 43 deg when the roll ended.
+
+---
+
 ## [Boss push-in] Camera tightens on the bars
 
 - Date: 2026-11-03. Status: CONFIRMED by hand-play: the push-in feels right

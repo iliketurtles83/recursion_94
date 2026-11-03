@@ -13,6 +13,9 @@ void flight_register_params(FlightParams *p, ParamRegistry *reg)
     params_float(reg, g, "speedResponse", &p->speedResponse, 2.5f, 0.1f, 20.0f);
     params_float(reg, g, "steerLimit", &p->steerLimit, 0.8f, 0.0f, 0.95f);
     params_float(reg, g, "steerSoftEdge", &p->steerSoftEdge, 0.25f, 0.0f, 0.6f);
+    params_float(reg, g, "steerBoxHalfWidth", &p->steerBoxHalfWidth, 0.0f, 0.0f, 40.0f);
+    params_float(reg, g, "steerBoxUp", &p->steerBoxUp, 0.0f, 0.0f, 40.0f);
+    params_float(reg, g, "steerBoxDown", &p->steerBoxDown, 0.0f, 0.0f, 40.0f);
     params_float(reg, g, "steerAccel", &p->steerAccel, 60.0f, 1.0f, 300.0f);
     params_float(reg, g, "steerDamping", &p->steerDamping, 5.0f, 0.1f, 30.0f);
     p->dartShip = false;   // registered by the module as the Sim parameter shipDart
@@ -36,6 +39,22 @@ void flight_register_params(FlightParams *p, ParamRegistry *reg)
     params_float(reg, g, "shakeAmount", &p->shakeAmount, 0.06f, 0.0f, 0.5f);
     params_float(reg, g, "cameraRollFollow", &p->cameraRollFollow, 0.35f, 0.0f, 1.0f);
     params_float(reg, g, "barrelRollTime", &p->barrelRollTime, 0.7f, 0.2f, 3.0f);
+    params_float(reg, g, "barrelRollDash", &p->barrelRollDash, 0.0f, 0.0f, 80.0f);
+    params_float(reg, g, "barrelRollCooldown", &p->barrelRollCooldown, 0.0f, 0.0f, 3.0f);
+}
+
+FlightBox flight_steer_box(const FlightParams *p, const PathStyle *style, float radius)
+{
+    float limit = p->steerLimit * radius;
+    FlightBox b = { -limit, limit, -limit, limit };
+    if (!style->hasWalls) {
+        if (p->steerBoxHalfWidth > 0.0f) { b.xMin = -p->steerBoxHalfWidth; b.xMax = p->steerBoxHalfWidth; }
+        if (p->steerBoxDown > 0.0f) b.yMin = -p->steerBoxDown;
+        if (p->steerBoxUp > 0.0f) b.yMax = p->steerBoxUp;
+    }
+    if (style->floorDepth > 0.0f) b.yMin = fmaxf(b.yMin, fminf(-style->floorDepth + FLIGHT_CLEARANCE, 0.0f));
+    if (style->ceilingHeight > 0.0f) b.yMax = fminf(b.yMax, fmaxf(style->ceilingHeight - FLIGHT_CLEARANCE, 0.0f));
+    return b;
 }
 
 float flight_speed_norm(const FlightParams *p, float speed)
@@ -118,8 +137,11 @@ static void derive(FlightState *st, const FlightParams *p, const PathSystem *pat
     }
     st->camPos = dv_add(ps.pos, dv_add(dv_add(dv_scale(ps.B, st->camLocal[0]), dv_scale(ps.N, st->camLocal[1])), dv_scale(ps.T, st->camLocal[2])));
 
-    // Camera up: tunnel roll plus a fraction of ship bank/barrel roll.
-    DVec3 upTarget = dv_rotate(ps.N, ps.T, roll * p->cameraRollFollow);
+    // Camera up: tunnel roll plus a fraction of the ship bank. A barrel roll only leans the
+    // camera into the turn and back (half a sine over the roll), so it ends level instead of
+    // springing back from a fraction of a full turn.
+    double lean = st->barrelT >= 0.0f ? st->barrelDir * PI_F * sin(PI_F * st->barrelT) : 0.0;
+    DVec3 upTarget = dv_rotate(ps.N, ps.T, (st->bank + lean) * p->cameraRollFollow);
     if (snapCamera) st->camUp = upTarget;
     else {
         double k = 1.0 - exp(-p->camUpStiffness * dt);
@@ -193,12 +215,14 @@ void flight_step(FlightState *st, const FlightParams *p, const PathSystem *path,
     DVec3 force=dv_add(dv_scale(st->shipRight,reaction.x),dv_scale(st->shipUp,reaction.y));
     float thrust=p->steerAccel*p->vectoringStrength*st->vectorPower;
     const PathStyle *style = &path->style;
-    // Soft edge: a box per axis without walls, radial inside a tunnel (matches the clamp below).
+    // Soft edge: a rectangle without walls, radial inside a tunnel (matches the clamp below).
+    FlightBox box = flight_steer_box(p, style, (float)ps.radius);
     float edgeX = 0.0f, edgeY = 0.0f;
     if (!style->hasWalls) {
-        float flipX = st->x < 0.0f ? -1.0f : 1.0f, flipY = st->y < 0.0f ? -1.0f : 1.0f;
-        edgeX = flipX * edge_cushion(fabsf(st->x), st->vx * flipX, limit, p->steerSoftEdge, p->steerAccel, p->steerDamping);
-        edgeY = flipY * edge_cushion(fabsf(st->y), st->vy * flipY, limit, p->steerSoftEdge, p->steerAccel, p->steerDamping);
+        if (st->x >= 0.0f) edgeX = edge_cushion(st->x, st->vx, box.xMax, p->steerSoftEdge, p->steerAccel, p->steerDamping);
+        else edgeX = -edge_cushion(-st->x, -st->vx, -box.xMin, p->steerSoftEdge, p->steerAccel, p->steerDamping);
+        if (st->y >= 0.0f) edgeY = edge_cushion(st->y, st->vy, box.yMax, p->steerSoftEdge, p->steerAccel, p->steerDamping);
+        else edgeY = -edge_cushion(-st->y, -st->vy, -box.yMin, p->steerSoftEdge, p->steerAccel, p->steerDamping);
     } else {
         float r0 = sqrtf(st->x * st->x + st->y * st->y);
         if (r0 > 1e-4f) {
@@ -214,11 +238,9 @@ void flight_step(FlightState *st, const FlightParams *p, const PathSystem *path,
     // Hard limit behind the cushion (boost vectoring can push past the spring).
     float r = sqrtf(st->x * st->x + st->y * st->y);
     if (!style->hasWalls) {
-        // Open environments: a box, |x| and |y| each up to the limit.
-        if (st->x > limit) { st->x = limit; if (st->vx > 0.0f) st->vx = 0.0f; }
-        if (st->x < -limit) { st->x = -limit; if (st->vx < 0.0f) st->vx = 0.0f; }
-        if (st->y > limit) { st->y = limit; if (st->vy > 0.0f) st->vy = 0.0f; }
-        if (st->y < -limit) { st->y = -limit; if (st->vy < 0.0f) st->vy = 0.0f; }
+        // Open environments: the rectangle.
+        if (st->x > box.xMax) { st->x = box.xMax; if (st->vx > 0.0f) st->vx = 0.0f; }
+        if (st->x < box.xMin) { st->x = box.xMin; if (st->vx < 0.0f) st->vx = 0.0f; }
     } else if (r > limit && r > 1e-4f) {
         // Tunnels: a circle that follows the walls.
         float k = limit / r;
@@ -228,13 +250,11 @@ void flight_step(FlightState *st, const FlightParams *p, const PathSystem *path,
         float vo = st->vx * nx + st->vy * ny;
         if (vo > 0.0f) { st->vx -= vo * nx; st->vy -= vo * ny; }
     }
-    // Floor / ceiling (open environments): a flat clamp on the vertical offset.
-    if (style->floorDepth > 0.0f) {
-        float yMin = fminf(-style->floorDepth + FLIGHT_CLEARANCE, 0.0f);
+    // Vertical: the rectangle in open environments, floor / ceiling everywhere (box covers both).
+    if (!style->hasWalls || style->floorDepth > 0.0f || style->ceilingHeight > 0.0f) {
+        float yMin = style->hasWalls && style->floorDepth <= 0.0f ? -INFINITY : box.yMin;
+        float yMax = style->hasWalls && style->ceilingHeight <= 0.0f ? INFINITY : box.yMax;
         if (st->y < yMin) { st->y = yMin; if (st->vy < 0.0f) st->vy = 0.0f; }
-    }
-    if (style->ceilingHeight > 0.0f) {
-        float yMax = fmaxf(style->ceilingHeight - FLIGHT_CLEARANCE, 0.0f);
         if (st->y > yMax) { st->y = yMax; if (st->vy > 0.0f) st->vy = 0.0f; }
     }
     float vmax = p->steerAccel / p->steerDamping;
@@ -249,13 +269,15 @@ void flight_step(FlightState *st, const FlightParams *p, const PathSystem *path,
     st->bank += (bankTarget - st->bank) * k;
     st->tilt += (tiltTarget - st->tilt) * k;
 
-    if (st->barrelT < 0.0f && (in->rollLeft || in->rollRight)) {
+    st->barrelCooldown = fmaxf(0.0f, st->barrelCooldown - fdt);
+    if (st->barrelT < 0.0f && st->barrelCooldown <= 0.0f && (in->rollLeft || in->rollRight)) {
         st->barrelT = 0.0f;
         st->barrelDir = in->rollLeft ? -1 : 1;
+        st->vx += (float)st->barrelDir * p->barrelRollDash;   // dash: the edge cushion still holds the box
     }
     if (st->barrelT >= 0.0f) {
         st->barrelT += fdt / p->barrelRollTime;
-        if (st->barrelT >= 1.0f) { st->barrelT = -1.0f; st->barrel = 0.0f; }
+        if (st->barrelT >= 1.0f) { st->barrelT = -1.0f; st->barrel = 0.0f; st->barrelCooldown = p->barrelRollCooldown; }
         else {
             float t = st->barrelT;
             float e = t * t * (3.0f - 2.0f * t);
