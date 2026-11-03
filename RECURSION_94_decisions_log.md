@@ -34,9 +34,11 @@ This log is the source of truth for architectural choices, visual uplift milesto
   clearance (-1.6). F4 (or `--steer-box` in shots) draws it with the ship's
   centre dot. The arena now comes from `ct_steer_box` (taller: 26 x 18.5
   arena units instead of 26 x 17).
-- Hand-play: top and bottom edges are right; the sides were too wide. Half
-  width 5.2 -> 4.2 (arena 21 x 18.5): the ship's corners now sit at about
-  20% / 80% of the screen width, clear of the side HUD. The F4 overlay is
+- Hand-play: top and bottom edges are right; the side margins were too wide
+  (a 4.2 attempt went the wrong way). Half width 5.2 -> 6.4 (arena 32 x
+  18.5): at the side limits the dart sits at about 5% / 93% of the screen
+  width. Wall pillars start at 7.5 (lane 6.5 + clearance 1); the dart's
+  wingtip reaches 7.0, so it never clips them. The F4 overlay is
   drawn in the game plane, so its edges slide with the camera and are not all
   on screen at once; it shows the flight limit, not a screen frame.
 - Camera: `camFollowLateral` 0.85 -> 0.55. At 0.85 the camera chased the ship
