@@ -24,7 +24,7 @@ RECURSION_94.
         pull-back): from the first bar line after the boss spawns, `fovBase`
         tightens one notch per bar over 4 bars to 0.8x, eased over each bar's
         first beat; it eases back after the fight (`update_push`, `game.c`).
-        Tune `BOSS_PUSH_BARS` / `BOSS_PUSH_AMOUNT` in the playtest.
+        Hand-played: feels right, release is smooth; values kept.
 - [x] **Step 4: one song** tuned for the corridor (`SYNTH_SONG_CORRIDOR`).
 - [ ] **Step 5: playtest and tune.**
   - [ ] Hand-play: audio by ear, beat bloom (`beatBloom` 0.35), flight and

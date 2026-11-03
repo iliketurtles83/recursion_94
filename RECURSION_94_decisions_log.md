@@ -4,7 +4,8 @@ This log is the source of truth for architectural choices, visual uplift milesto
 
 ## [Boss push-in] Camera tightens on the bars
 
-- Date: 2026-11-03. Status: CONFIRMED in shots; not yet hand-played.
+- Date: 2026-11-03. Status: CONFIRMED by hand-play: the push-in feels right
+  and the release after the kill is smooth. Keep the current values.
 - Replaces the original pull-back idea. When the boss spawns, the push waits
   for the next bar line, then narrows the engine's `fovBase` one notch per bar
   for four bars (65 -> 52 with `r94_corridor`), each notch eased over the
