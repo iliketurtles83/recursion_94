@@ -10,6 +10,7 @@
 #include "gameplay.h"
 #include "music_clock.h"
 #include "story.h"
+#include "titles.h"
 #include "raylib.h"
 #include "rlgl.h"
 #include <math.h>
@@ -68,6 +69,7 @@ typedef struct Game {
     bool           showBox;      // F4: steering box and ship centre overlay (prototyping)
     MusicClock     music;
     Story          story;
+    Titles         titles;
 } Game;
 
 static void stop_audio(Game *g)
@@ -125,6 +127,7 @@ static void start_run(Game *g, uint32_t seed, bool withAudio)
     if (g->bossTest) g->virtualZ = g->play.boss.nextSpawnDistance - 40.0;
     story_reset(&g->story, seed, GetGameplayRecursionDepth(&g->play), g->music.stepsPerSecond,
                 LEGEND_SECONDS - 1.5f);
+    titles_reset(&g->titles, seed, GetGameplayRecursionDepth(&g->play), &g->music);
     ct_param_set(g->ct, "baseSpeed", g->baseSpeed);
     ct_param_set(g->ct, "fovBase", g->baseFov);
     g->push = 0.0f;
@@ -291,6 +294,7 @@ static void update_run(Game *g, float dt, const Controls *c)
     GameplayEvents events = UpdateGameplay(&g->play, dt, g->virtualZ, boosting, &in);
     play_events(g, &events);
     story_update(&g->story, &g->play, &events, &g->music);
+    titles_update(&g->titles, &g->play, &events, &g->music);
     ct_set_ship_damage(g->ct, 1.0f - g->play.player.energy / 100.0f);
     update_music(g, boosting, dt);
     update_push(g, dt);
@@ -360,12 +364,14 @@ static void draw_overlay(Game *g, int w, int h)
     DemosceneSystem demo;
     InitDemoscene(&demo, g->runSeed);
     Color dim = { demo.primary.r, demo.primary.g, demo.primary.b, 170 };
-    DrawText("RECURSION_94", 24, 20, 20, dim);
+    // The corner logo is where the intro title lands.
+    if (titles_logo_settled(&g->titles, &g->music)) DrawText("RECURSION_94", 24, 20, 20, dim);
     const char *id = TextFormat("SEED %08X  //  %s  //  %.0f BPM", (unsigned int)g->runSeed,
                                 GetSynthSeedKeyName(g->runSeed), GetSynthSeedBpm(g->runSeed));
     DrawText(id, w - MeasureText(id, 14) - 24, h - 30, 14, dim);
     combat_draw_hud(&g->draw, &g->play, w, h);
     story_draw(&g->story, &g->play, &g->music, w, h);
+    titles_draw(&g->titles, &g->play, &g->music, w, h, GetSynthSeedKeyName(g->runSeed), GetSynthSeedBpm(g->runSeed));
     if (g->play.runTime < LEGEND_SECONDS && !g->play.gameOver) {
         float a = fminf(1.0f, (LEGEND_SECONDS - g->play.runTime) / 1.5f);
         const char *legend = "WASD STEER   J / MOUSE FIRE (HOLD TO LOCK)   K BEAM   L BOMB   SPACE BOOST   Q / E ROLL   ESC PAUSE";
@@ -497,6 +503,7 @@ int game_run(CtTunnel *ct, const GameOptions *o)
                 stop_audio(&g);
                 g.selectedSeed = g.runSeed;
                 g.confirming = false;
+                g.selectorTime = 0.0f;   // the selector title builds in again
                 g.state = STATE_SELECT;
                 continue;
             }

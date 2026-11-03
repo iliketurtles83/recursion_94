@@ -1,5 +1,7 @@
 #include "demoscene.h"
 #include "palette.h"
+#include "titles.h"
+#include "timeline.h"
 
 #include <math.h>
 
@@ -81,8 +83,14 @@ void DrawSeedSelector(uint32_t seed, float time, float bpm, const char *keyName,
 
     const char *title = "RECURSION_94";
     const char *subtitle = "DETERMINISTIC AUDIOVISUAL RUN COMPILER";
-    DrawText(title, centerX - MeasureText(title, 54) / 2, 112, 54, demo.primary);
-    DrawText(subtitle, centerX - MeasureText(subtitle, 17) / 2, 174, 17,
+    // The title drops in on a fixed 120 BPM grid (8 steps a second): no music plays here.
+    double steps = (double)time * 8.0;
+    titles_draw_logo(title, (float)centerX - titles_logo_width(title, 54.0f) * 0.5f, 112.0f, 54.0f,
+                     steps - 1.0, 0.75f, demo.primary, demo.hot, 1.0f);
+    static const TlKey SUBTITLE[] = { { 0, 0, TL_STEP }, { 12, 0, TL_LINEAR }, { 20, 1, TL_STEP } };
+    int subLen = TextLength(subtitle);
+    int shown = (int)(tl_eval(TL_TRACK(SUBTITLE), steps) * (float)subLen + 0.999f);
+    DrawText(TextSubtext(subtitle, 0, shown), centerX - MeasureText(subtitle, 17) / 2, 174, 17,
              (Color){ 150, 190, 215, 255 });
 
     DrawRectangle(centerX - 275, centerY - 95, 550, 192,

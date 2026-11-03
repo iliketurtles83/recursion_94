@@ -41,6 +41,7 @@ typedef struct Story {
 const char *story_text(int index);           // 0..4 level entries, STORY_COLLAPSE
 const char *story_archetype(int round);      // "THRESHOLD GUARDIAN", ...
 const char *story_boss_name(int round);      // "RECURSIVE CORE", ...
+const char *story_level_name(int round);     // "SERVER CORRIDOR", ... (§9.2, provisional for 2-5)
 
 // Depth rewrite: depth <= 1 copies src. Pure and deterministic. Returns the length.
 int story_corrupt(const char *src, uint32_t seed, int depth, char *out, int cap);

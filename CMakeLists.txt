@@ -83,7 +83,7 @@ endif()
 
 add_executable(recursion94 src/main.c src/core/resources.c
   src/game/game.c src/game/audio_synth.c src/game/demoscene.c src/game/gameplay.c
-  src/game/combat_draw.c src/game/songs.c src/game/story.c)
+  src/game/combat_draw.c src/game/songs.c src/game/story.c src/game/titles.c)
 target_include_directories(recursion94 PRIVATE src/game)
 if(WIN32)
   set_target_properties(recursion94 PROPERTIES WIN32_EXECUTABLE TRUE)

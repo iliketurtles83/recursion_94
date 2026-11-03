@@ -11,8 +11,8 @@ is five levels, each with its own environment, song and boss.
   `src/game/` is the RECURSION_94 game layer: seed selector and run loop
   (`game.c`), combat logic (`gameplay.c`, ported), its neon presentation and HUD
   (`combat_draw.c`), the procedural synth (`audio_synth.c`, ported), the level
-  songs (`songs.c`), the story scroller and boss title cards (`story.c`), the
-  curve timeline (`timeline.h`) and the selector art and seed palettes (`demoscene.c`, `palette.h`). `./build/recursion94` starts
+  songs (`songs.c`), the story scroller and boss title cards (`story.c`), the run intro
+  and level transitions (`titles.c`), the curve timeline (`timeline.h`) and the selector art and seed palettes (`demoscene.c`, `palette.h`). `./build/recursion94` starts
   the game in the server corridor (preset `r94_corridor`); `--sandbox` gives the
   environment harness.
 - `legacy/` holds the rest of the original game (environment, old main loop):

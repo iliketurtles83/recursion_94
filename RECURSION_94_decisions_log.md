@@ -2,6 +2,32 @@
 
 This log is the source of truth for architectural choices, visual uplift milestones, feature statuses (Confirmed, Provisional, Rejected), and binary size tracking. The 1.44MB (1,474,560 bytes) contest limit applied to entries before 2026-11-03.
 
+## [Titles] Intro, level transitions and selector title on the timeline
+
+- Date: 2026-11-03. Status: PROVISIONAL: checked in shots; hand-play.
+- `src/game/titles.c`, all timeline tracks in 16ths on the music clock.
+- Run intro (3 bars): RECURSION_94 drops in letter by letter (0.75 steps
+  apart; each ramps in from above, overshoots a tenth of a letter, lands hot
+  and cools), over three copper bars rolling once a bar. A rule draws out,
+  `STACK FRAME 1 // SERVER CORRIDOR` types from its left edge, a loader
+  line (seed, key, BPM, depth) fades in on a soft dark band. Over the third
+  bar the title shrinks and flies to the corner logo (24, 20, size 20), which
+  is only drawn once it has landed, so the corner logo is the intro's end
+  state. Frame line and transition text are corrupted at depth like the
+  rest of the story.
+- Level transition (2 bars, from the next bar line after a boss falls): a
+  raster wipe sweeps down the screen, `> CALL FRAME n` types with a block
+  cursor blinking on 8ths, and the next level's name closes in on hermite
+  letter-spacing keys. After the Leviathan: `> CALL RECURSION_94` and
+  `DEPTH n`. Level names (`story_level_name`) follow §9.2, provisional for
+  2-5 like the scroll texts. The next story scroll starts two bars after
+  the defeat, so the two overlap by at most a bar, in different screen areas.
+- Selector: the title uses the same drop-in on a fixed 120 BPM grid (no
+  music plays there) and the subtitle types out; it rebuilds each time the
+  selector is entered.
+
+---
+
 ## [Story] Answers from depth 3
 
 - Date: 2026-11-03. Status: PROVISIONAL: checked in tests and shots

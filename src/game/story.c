@@ -52,6 +52,9 @@ static const char *const ARCHETYPES[BOSSES_PER_RECURSION] = {
 static const char *const BOSS_NAMES[BOSSES_PER_RECURSION] = {
     "RECURSIVE CORE", "IRON BASTION", "PRISM WRAITH", "SIEGE MANTIS", "FRACTAL LEVIATHAN"
 };
+static const char *const LEVEL_NAMES[BOSSES_PER_RECURSION] = {
+    "SERVER CORRIDOR", "GRID CITY", "CRYSTAL FIELD", "VORTEX", "BLACK HOLE"
+};
 static const char GLYPHS[] = "#%&*/\\|<>=01";
 
 const char *story_text(int index)
@@ -80,6 +83,11 @@ const char *story_answer_pool(int i)
 }
 
 int story_answer_pool_count(void) { return POOL_COUNT; }
+
+const char *story_level_name(int round)
+{
+    return LEVEL_NAMES[((round % BOSSES_PER_RECURSION) + BOSSES_PER_RECURSION) % BOSSES_PER_RECURSION];
+}
 
 static uint32_t mix(uint32_t x)
 {

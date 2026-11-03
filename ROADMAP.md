@@ -71,7 +71,11 @@ RECURSION_94.
   - [x] Curve timeline (GNU Rocket style): `src/game/timeline.h`, const
         key tracks (step/linear/smooth/ramp/hermite) evaluated at the music
         clock step. Used by the boss title card so far.
-    - [ ] Use it for the intro, title and level transitions.
+    - [x] Use it for the intro, title and level transitions
+          (`src/game/titles.c`): run intro (letter drop-in over copper
+          bars, frame and loader lines, flies into the corner logo), the
+          `> CALL FRAME n` transition after each boss, the selector title.
+          Hand-play: length, legibility over the corridor.
   - [x] Story scroller (`recursion_94.md` §9.3–9.4): sine scrolltext
         over each level transition, in the song's quiet section, with the
         §9.4 texts and the collapse line after the Leviathan. At recursion
