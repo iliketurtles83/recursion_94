@@ -2,6 +2,27 @@
 
 This log is the source of truth for architectural choices, visual uplift milestones, feature statuses (Confirmed, Provisional, Rejected), and binary size tracking. The 1.44MB (1,474,560 bytes) contest limit applied to entries before 2026-11-03.
 
+## [Ship] Ship selection: dart, probe, jet
+
+- Date: 2026-11-03. Status: PROVISIONAL: checked in shots; hand-play.
+- The engine's `shipDart` bool became `shipModel` (Sim, int): 0 courier
+  (sandbox default), 1 dart, 2 probe. Presets updated (`r94_corridor` and
+  `greybox` 1, `crystal` 0). The dart renders byte-identical to before.
+- The seed selector has a ship row under the seed panel (Tab / Shift+Tab or
+  1-3): DART (default), PROBE, JET. `start_run` sets `shipModel`; `--ship N`
+  picks it for `--seed` runs and shots.
+- The probe is the old game's `DrawPlayerShip` ported to static meshes
+  (`src/render/shipprobe.c`) at the old arena scale (0.4 world units per
+  unit), so it flies at about the dart's size. Hull through the dart's flat
+  shader; nose-to-wingtip edges, tip and sensor lights, nozzle rims and the
+  engine glows through the line shader, with the data trail starting at the
+  glows. Dropped: bank-driven wing lift (the engine banks the whole ship),
+  weapon-tier pods, the invulnerability flash and the small hardware
+  (cables, louvers, fasteners, intake fins). Trim colours are fixed (dart
+  cyan, violet second tone) since the engine has no seed palette.
+- The jet is the courier at `courierScale` 0.55, with its afterburner flames
+  (the one exception to "no flame looks", since it was asked for as is).
+
 ## [Titles] Intro, level transitions and selector title on the timeline
 
 - Date: 2026-11-03. Status: PROVISIONAL: checked in shots; hand-play.

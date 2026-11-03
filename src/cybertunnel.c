@@ -4,6 +4,7 @@
 #include "env/env_common.h"
 #include "render/rmath.h"
 #include "render/shipmodel.h"
+#include "render/shipprobe.h"
 #include "rlgl.h"
 #include "raymath.h"
 #include <math.h>
@@ -68,7 +69,8 @@ static void register_core_params(CtTunnel *ct)
     params_int(reg, g, "buildBudget", &c->buildBudget, 1, 1, 8);
     params_int(reg, g, "uploadBudget", &c->uploadBudget, 1, 1, 8);
     params_bool(reg, g, "showShip", &c->showShip, true);
-    params_bool(reg, g, "shipDart", &ct->fp.dartShip, false);   // original placeholder dart instead of the courier
+    // 0 courier (textured, articulated), 1 the original placeholder dart, 2 the RECURSION_94 probe.
+    params_int(reg, g, "shipModel", &ct->fp.shipModel, FLIGHT_SHIP_COURIER, 0, FLIGHT_SHIP_COUNT - 1);
     params_float(reg, g, "courierScale", &ct->fp.courierScale, COURIER_SCALE, 0.1f, 2.0f);
     params_bool(reg, g, "showPathDebug", &c->showPathDebug, false);
     params_float(reg, g, "rebaseDist", &c->rebaseDist, (float)CT_REBASE_DIST, 1.0f, 100000.0f);
@@ -114,9 +116,9 @@ static void upload_static(Mesh *m, LineGeo *g, bool dynamic)
     *m = lg_upload_mesh(g, 0, dynamic);
 }
 
-static void build_dart_edges(CtTunnel *ct);
+static void build_glows(CtTunnel *ct);
 
-// The original placeholder dart (shipDart): flat dark hull, cyan edges, two engine glows.
+// The original placeholder dart (shipModel 1): flat dark hull, cyan edges, two engine glows.
 static void build_dart(CtTunnel *ct)
 {
     // Ship local: x right, y up, z forward.
@@ -136,13 +138,15 @@ static void build_dart(CtTunnel *ct)
         lg_fill_tri(&g, tris[i][0], tris[i][1], tris[i][2], n, fa);
     }
     upload_static(&ct->dartHull, &g, false);
+    shipprobe_hull(&g);
+    upload_static(&ct->probeHull, &g, false);
     lg_free(&g);
-    build_dart_edges(ct);
+    build_glows(ct);
 }
 
-// Dart edges and engine glows. The glow intensity is baked into the mesh, so it is rebuilt
-// when engineIntensity changes (presets, --set and the debug panel apply after ct_create).
-static void build_dart_edges(CtTunnel *ct)
+// Dart and probe edges and engine glows. The glow intensity is baked into the meshes, so they are
+// rebuilt when engineIntensity changes (presets, --set and the debug panel apply after ct_create).
+static void build_glows(CtTunnel *ct)
 {
     Vector3 nose = { 0.0f, 0.0f, 0.95f };
     Vector3 tl = { -0.62f, -0.02f, -0.5f }, tr = { 0.62f, -0.02f, -0.5f };
@@ -153,7 +157,7 @@ static void build_dart_edges(CtTunnel *ct)
     Vector3 edges[][2] = { { nose, tl }, { nose, tr }, { nose, ridge }, { tl, back }, { tr, back }, { ridge, back } };
     for (int i = 0; i < 6; i++) lg_facing_segment(&g, edges[i][0], edges[i][1], 0.012f, 0.012f, ea.intensity, ea.intensity, ea);
     Vector3 eng[2];
-    flight_engine_offsets(true, eng);
+    flight_engine_offsets(FLIGHT_SHIP_DART, eng);
     float gi = ct->core.engineIntensity;
     LineAttr ga = { (Color){ 0xE8, 0xFB, 0xFF, 255 }, gi, 0.0f, 0.0f, -1.0f, 0.0f };
     for (int i = 0; i < 2; i++) {
@@ -162,8 +166,12 @@ static void build_dart_edges(CtTunnel *ct)
     }
     if (ct->dartEdges.vaoId) lg_unload_mesh(ct->dartEdges);
     upload_static(&ct->dartEdges, &g, false);
+    flight_engine_offsets(FLIGHT_SHIP_PROBE, eng);
+    shipprobe_lights(&g, eng, gi);
+    if (ct->probeLights.vaoId) lg_unload_mesh(ct->probeLights);
+    upload_static(&ct->probeLights, &g, false);
     lg_free(&g);
-    ct->dartGlow = gi;
+    ct->glowIntensity = gi;
 }
 
 static void build_ship(CtTunnel *ct)
@@ -226,18 +234,17 @@ static void update_trail_mesh(CtTunnel *ct)
     Vector3 eng[2];
     const FlightView *v = &ct->view;
     float boost=flight_speed_norm(&ct->fp,v->speed);
-    if (ct->fp.dartShip) flight_engine_offsets(true, eng);
+    bool courier = ct->fp.shipModel == FLIGHT_SHIP_COURIER;
+    if (!courier) flight_engine_offsets(ct->fp.shipModel, eng);
     else for(int e=0;e<2;e++)eng[e]=Vector3Scale(flight_exhaust_offset(e,v->gimbal[e],.48f+2.6f*boost),ct->fp.courierScale);
     float w0 = ct->core.trailWidth*(1+.8f*boost), i0 = ct->core.trailIntensity*(.5f+.5f*boost);
     if (ct->core.trailData) {
         // Data trail: starts inside the engine glow at its width and brightness (dart glow:
-        // half width 0.09, engineIntensity) and settles within ~0.03 s (about a metre at
-        // cruise) into a thin ribbon.
+        // half width 0.09, probe SHIPPROBE_GLOW_HALF; engineIntensity) and settles within
+        // ~0.03 s (about a metre at cruise) into a thin ribbon.
         // The vertex hash carries the point's age in seconds; trail.fs shapes the rest.
-        bool dart = ct->fp.dartShip;
-        float k = dart ? 1.0f : ct->fp.courierScale;
-        float gw = 0.09f * k, gi = ct->core.engineIntensity;
-        if (!dart) { gw = w0; gi = i0; }   // the courier's trail starts at its flame tip
+        float gw = ct->fp.shipModel == FLIGHT_SHIP_PROBE ? SHIPPROBE_GLOW_HALF : 0.09f, gi = ct->core.engineIntensity;
+        if (courier) { gw = w0; gi = i0; }   // the courier's trail starts at its flame tip
         float span = (float)FLIGHT_TRAIL_LEN / (float)FLIGHT_HZ;
         // trailStretch < 1 pulls the wake toward the ship along the path but keeps its
         // sideways history, so the whole trail fits in front of the chase camera.
@@ -308,11 +315,11 @@ static void draw_mesh(CtTunnel *ct, int sh, Mesh m, Matrix xf)
     ct->rstats.vertices += m.vertexCount;
 }
 
-// Ship model matrix. The courier is scaled by courierScale; the dart is drawn at its own size.
+// Ship model matrix. The courier is scaled by courierScale; the dart and probe are drawn at their own size.
 static Matrix ship_matrix(const CtTunnel *ct)
 {
     const FlightView *v = &ct->view;
-    float k = ct->fp.dartShip ? 1.0f : ct->fp.courierScale;
+    float k = ct->fp.shipModel == FLIGHT_SHIP_COURIER ? ct->fp.courierScale : 1.0f;
     return basis_matrix(Vector3Scale(dv_to_v3(v->shipRight), k), Vector3Scale(dv_to_v3(v->shipUp), k),
                         Vector3Scale(dv_to_v3(v->shipFwd), k), dv_to_v3(dv_sub(v->shipPos, ct->renderOrigin)));
 }
@@ -321,11 +328,11 @@ static void draw_ship_opaque(CtTunnel *ct, const FrameContext *ctx)
 {
     const FlightView *v = &ct->view;
     Matrix xf = ship_matrix(ct);
-    if (ct->fp.dartShip) {
+    if (ct->fp.shipModel != FLIGHT_SHIP_COURIER) {
         sl_v3(&ct->sl, ct->shShipDart, "uCamPos", ctx->camera.position);
         sl_f3(&ct->sl, ct->shShipDart, "uRimColor", 0.25f, 0.85f, 1.0f);
         sl_v3(&ct->sl, ct->shShipDart, "uFillDir", Vector3Negate(dv_to_v3(v->shipFwd)));
-        draw_mesh(ct, ct->shShipDart, ct->dartHull, xf);
+        draw_mesh(ct, ct->shShipDart, ct->fp.shipModel == FLIGHT_SHIP_PROBE ? ct->probeHull : ct->dartHull, xf);
         return;
     }
     sl_v3(&ct->sl, ct->shShip, "uCamPos", ctx->camera.position);
@@ -359,9 +366,9 @@ static void draw_ship_emissive(CtTunnel *ct, const FrameContext *ctx)
     // The ship is always close: disable distance fades.
     sl_f4(sl, sh, "uFade", 1e6f, 2e6f, 0.0f, 0.001f);
     sl_f1(sl, sh, "uChunkFade", 1.0f);
-    if (ct->fp.dartShip) {
-        if (ct->dartGlow != ct->core.engineIntensity) build_dart_edges(ct);
-        draw_mesh(ct, sh, ct->dartEdges, xf);
+    if (ct->fp.shipModel != FLIGHT_SHIP_COURIER) {
+        if (ct->glowIntensity != ct->core.engineIntensity) build_glows(ct);
+        draw_mesh(ct, sh, ct->fp.shipModel == FLIGHT_SHIP_PROBE ? ct->probeLights : ct->dartEdges, xf);
     }
     else {
         sl_i1(sl,sh,"uShipPose",1);
@@ -497,6 +504,8 @@ void ct_destroy(CtTunnel *ct)
     lg_unload_mesh(ct->shipFlames);
     lg_unload_mesh(ct->dartHull);
     lg_unload_mesh(ct->dartEdges);
+    lg_unload_mesh(ct->probeHull);
+    lg_unload_mesh(ct->probeLights);
     lg_unload_mesh(ct->trailMesh);
     lg_free(&ct->shipHullGeo);
     lg_free(&ct->shipEdgesGeo);
@@ -792,7 +801,7 @@ void ct_render(CtTunnel *ct, const RenderTexture2D *target, int width, int heigh
     const ChunkGpu *const *vis = chunks_visible(&ct->chunks, &nvis);
 
     bool ship = ct->cfg.drawShip && ct->core.showShip;
-    if (ship) {update_trail_mesh(ct);if(!ct->fp.dartShip)update_nozzles(ct);}
+    if (ship) {update_trail_mesh(ct);if(ct->fp.shipModel==FLIGHT_SHIP_COURIER)update_nozzles(ct);}
     render_reflection(ct, vis, nvis, ship);
 
     pipe_begin_scene(&ct->pipe, c->view, c->proj, (Color){ 3, 6, 12, 255 });

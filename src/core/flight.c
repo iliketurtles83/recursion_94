@@ -18,7 +18,7 @@ void flight_register_params(FlightParams *p, ParamRegistry *reg)
     params_float(reg, g, "steerBoxDown", &p->steerBoxDown, 0.0f, 0.0f, 40.0f);
     params_float(reg, g, "steerAccel", &p->steerAccel, 60.0f, 1.0f, 300.0f);
     params_float(reg, g, "steerDamping", &p->steerDamping, 5.0f, 0.1f, 30.0f);
-    p->dartShip = false;   // registered by the module as the Sim parameter shipDart
+    p->shipModel = FLIGHT_SHIP_COURIER;   // registered by the module as the Sim parameter shipModel
     p->courierScale = 1.0f; // registered by the module as the Sim parameter courierScale
     // Off by default (original flight model); presets/mission*.ini enable it for DATA // RUN.
     params_float(reg,g,"vectoringStrength",&p->vectoringStrength,0.0f,0,2);
@@ -65,9 +65,12 @@ float flight_speed_norm(const FlightParams *p, float speed)
     return t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
 }
 
-void flight_engine_offsets(bool dart, Vector3 out[2])
+void flight_engine_offsets(int shipModel, Vector3 out[2])
 {
-    if (dart) {
+    if (shipModel == FLIGHT_SHIP_PROBE) {
+        out[0] = (Vector3){ -0.208f, -0.014f, -0.368f };
+        out[1] = (Vector3){ 0.208f, -0.014f, -0.368f };
+    } else if (shipModel == FLIGHT_SHIP_DART) {
         out[0] = (Vector3){ -0.16f, 0.02f, -0.62f };
         out[1] = (Vector3){ 0.16f, 0.02f, -0.62f };
     } else {
@@ -290,7 +293,7 @@ void flight_step(FlightState *st, const FlightParams *p, const PathSystem *path,
 
     // Engine trail history.
     Vector3 eng[2];
-    if (p->dartShip) flight_engine_offsets(true, eng);
+    if (p->shipModel != FLIGHT_SHIP_COURIER) flight_engine_offsets(p->shipModel, eng);
     else {
         float plumeLength=.48f+2.6f*flight_speed_norm(p,st->speed);
         for(int e=0;e<2;e++){

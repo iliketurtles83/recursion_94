@@ -24,6 +24,7 @@ typedef struct Cli {
     bool bossTest;
     int  bossRound;
     int  depth;
+    int  ship;                   // --ship N: game ship (1 dart, 2 probe, 3 jet)
     bool steerHold, steerBox;
     float steerX, steerY;
     double rollAt;
@@ -35,7 +36,7 @@ typedef struct Cli {
 
 static void usage(void)
 {
-    printf("recursion94 [--seed N] [--w W --h H] [--vsync 0|1] [--fps N] [--env 0..5] [--game-shot SECONDS [--out FILE]] [--boss [1..5]] [--depth N]\n"
+    printf("recursion94 [--seed N] [--w W --h H] [--vsync 0|1] [--fps N] [--env 0..5] [--game-shot SECONDS [--out FILE]] [--boss [1..5]] [--depth N] [--ship 1..3]\n"
            "            [--steer X,Y] [--roll SECONDS] [--steer-box]\n"
            "            [--bench SECONDS [--speed U]] [--shot S [--out FILE]] [--preset NAME] [--write-preset NAME] [--list-params] [--hdr8] [--noship] [--ui] [--whiteout] [--boost]\n"
            "            [--set NAME=VALUE ...] [--hidden] [--sandbox]\n");
@@ -78,6 +79,7 @@ static Cli parse(int argc, char **argv)
         else if (!strcmp(a, "--roll") && v) { c.rollAt = atof(v); i++; }
         else if (!strcmp(a, "--steer-box")) c.steerBox = true;
         else if (!strcmp(a, "--depth") && v) { c.depth = atoi(v); i++; }
+        else if (!strcmp(a, "--ship") && v) { c.ship = atoi(v); i++; }
         else if (!strcmp(a, "--help") || !strcmp(a, "-h")) { usage(); exit(0); }
         else { fprintf(stderr, "unknown argument: %s\n", a); usage(); exit(1); }
     }
@@ -173,7 +175,7 @@ int main(int argc, char **argv)
                                 .shotSeconds = cli.gameShot, .shotOut = cli.shotOut,
                                 .bossTest = cli.bossTest, .bossRound = cli.bossRound, .depth = cli.depth, .steerHold = cli.steerHold,
                                 .steerX = cli.steerX, .steerY = cli.steerY, .rollAt = cli.rollAt,
-                                .steerBox = cli.steerBox };
+                                .steerBox = cli.steerBox, .ship = cli.ship };
         int result = game_run(ct, &options);
         ct_destroy(ct);
         CloseWindow();

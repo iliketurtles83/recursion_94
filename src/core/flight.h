@@ -21,6 +21,10 @@ typedef struct FlightInput {
     float driftX, driftY;
 } FlightInput;
 
+// Ship models (Sim parameter shipModel). The courier has articulated nozzles and
+// courierScale; the dart and the probe have fixed engines and their own size.
+enum { FLIGHT_SHIP_COURIER = 0, FLIGHT_SHIP_DART = 1, FLIGHT_SHIP_PROBE = 2, FLIGHT_SHIP_COUNT };
+
 typedef struct FlightParams {
     float baseSpeed, boostSpeed, speedResponse;
     float steerLimit;        // fraction of R
@@ -40,7 +44,7 @@ typedef struct FlightParams {
     float barrelRollDash;    // lateral speed kick in the roll direction (world units/s, 0 = none)
     float barrelRollCooldown; // seconds after a roll before the next can start
     bool  autopilot;
-    bool  dartShip;          // original placeholder dart (engine positions differ from the courier)
+    int   shipModel;         // FLIGHT_SHIP_*: which model flies (engine positions differ)
     float courierScale;      // uniform size of the courier model and its exhaust anchors
 } FlightParams;
 
@@ -97,7 +101,7 @@ int flight_advance(FlightState *prev, FlightState *cur, const FlightParams *p, c
 FlightView flight_interpolate(const FlightState *a, const FlightState *b, float alpha);
 float flight_speed_norm(const FlightParams *p, float speed);
 // Engine attach points in ship-local space (right, up, fwd).
-void flight_engine_offsets(bool dart, Vector3 out[2]);
+void flight_engine_offsets(int shipModel, Vector3 out[2]);   // dart and probe (fixed nozzles)
 // Shared nozzle rotation/attachment math for reaction forces and exhaust wake.
 Vector3 flight_gimbal_rotate(Vector3 p, Vector2 angles);
 Vector3 flight_exhaust_offset(int engine, Vector2 angles, float plumeLength);

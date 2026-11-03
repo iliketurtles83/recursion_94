@@ -771,7 +771,7 @@ hiding speed and drift. Not a game; later steps only if this raises questions.
   50 m and 100 m; `gbRails` (8) lengthwise rails offset from the axes; an amber circle every
   50 m at `steerLimit` × radius, the flight model's reach (read from the registry at build time,
   so after changing `steerLimit` press R to rebuild).
-- `shipDart` (Sim): the original placeholder dart and its shader (`ship_dart.fs`) and engine
+- `shipModel=1` (Sim, formerly the bool `shipDart`): the original placeholder dart and its shader (`ship_dart.fs`) and engine
   positions instead of the courier. Off by default; `presets/greybox.ini` turns it on, sets
   intensity 0.3 and removes zoom blur, chromatic aberration, grain and vignette, bloom 0.35.
   Flight keys stay at defaults (the original tuning). The courier's flight tuning is in

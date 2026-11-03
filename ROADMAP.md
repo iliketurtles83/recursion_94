@@ -36,7 +36,7 @@ RECURSION_94.
         = full turn + dash + i-frames + cooldown. Hand-play and adjust.
   - [x] Backlog: steering-box bottom limit (`steerBoxDown`).
   - [x] Engine trail join: data trail (`trailData`) out of the dart's
-        engine glow; the dart is the game ship (`shipDart=1`).
+        engine glow; the dart is the game ship (`shipModel=1`).
   - [ ] Test resetting the noise seed on every snare (and clap/hat) hit so
         each hit is identical; compare by ear against the free-running stream.
         Re-bless the audio hashes only if kept.
@@ -62,10 +62,11 @@ RECURSION_94.
 - [x] Apply Leviathan gravity (`player.pull`) to flight (level 5 boss):
       engine drift input (`CtInput.driftX/Y`), soft core near the boss,
       `--boss 5` to reach it. Hand-play the strength.
-- [ ] Ship selection. The dart is the primary ship; the courier (fighter
-      jet) does not suit cyberspace. The original RECURSION_94 probe
-      (`DrawPlayerShip`/`DrawPlayerExhaust`) was not ported: see
-      `git show 1a7c6ca:legacy/src/gameplay.c`, lines 1546-1787.
+- [x] Ship selection in the seed selector (Tab / 1-3, `--ship N`): dart
+      (default), the original RECURSION_94 probe (ported from
+      `DrawPlayerShip` as `src/render/shipprobe.c`), the courier jet.
+  - [ ] Hand-play the probe and jet in combat (size against the arena,
+        glow strength); the jet keeps its afterburner flames.
 - [ ] Font and logo design (not the DATA // RUN Rajdhani font).
 - [ ] Demoscene presentation layer.
   - [x] Curve timeline (GNU Rocket style): `src/game/timeline.h`, const

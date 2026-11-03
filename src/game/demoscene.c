@@ -49,6 +49,7 @@ static void DrawScanlines(int screenWidth, int screenHeight, unsigned char alpha
 }
 
 void DrawSeedSelector(uint32_t seed, float time, float bpm, const char *keyName,
+                      int ship, int shipCount, const char *shipName,
                       int screenWidth, int screenHeight) {
     DemosceneSystem demo;
     InitDemoscene(&demo, seed);
@@ -106,7 +107,17 @@ void DrawSeedSelector(uint32_t seed, float time, float bpm, const char *keyName,
     const char *music = TextFormat("TONALITY  %s     TEMPO  %.0f BPM", keyName, bpm);
     DrawText(music, centerX - MeasureText(music, 16) / 2, centerY + 35, 16, demo.primary);
 
-    const char *adjust = "LEFT / RIGHT  +/- 1        UP / DOWN  +/- 100";
+    // Ship row under the panel: one slot per ship, the chosen one lit.
+    int shipY = centerY + 122;
+    const char *shipLabel = TextFormat("SHIP  %d/%d  //  %s", ship + 1, shipCount, shipName);
+    DrawText(shipLabel, centerX - MeasureText(shipLabel, 22) / 2, shipY, 22, demo.hot);
+    for (int i = 0; i < shipCount; i++) {
+        int x = centerX - shipCount * 22 + i * 44 + 6;
+        if (i == ship) DrawRectangle(x, shipY + 32, 32, 4, demo.primary);
+        else DrawRectangleLines(x, shipY + 32, 32, 4, MixColor(demo.secondary, BLACK, 0.4f, 255));
+    }
+
+    const char *adjust = "LEFT / RIGHT  +/- 1        UP / DOWN  +/- 100        TAB / 1-3  SHIP";
     const char *start = "PRESS ENTER TO COMPILE RUN";
     DrawText(adjust, centerX - MeasureText(adjust, 18) / 2, screenHeight - 120, 18,
              (Color){ 150, 185, 210, 255 });

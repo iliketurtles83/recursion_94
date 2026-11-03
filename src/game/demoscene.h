@@ -18,6 +18,7 @@ typedef struct {
 
 void InitDemoscene(DemosceneSystem *demo, uint32_t seed);
 void DrawSeedSelector(uint32_t seed, float time, float bpm, const char *keyName,
+                      int ship, int shipCount, const char *shipName,
                       int screenWidth, int screenHeight);
 
 #endif // DEMOSCENE_H

@@ -1,6 +1,6 @@
 #version 330
 // The original placeholder dart shading (flat hull colour, core fill light, cyan rim), used with
-// the Sim parameter shipDart. ship.fs is the DATA // RUN courier with its painted-metal skin.
+// the Sim parameter shipModel=1 (and the probe, shipModel=2). ship.fs is the DATA // RUN courier with its painted-metal skin.
 in vec3 fNormal;
 in vec3 fView;
 in vec3 fColor;

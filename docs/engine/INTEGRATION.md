@@ -264,6 +264,7 @@ unknown keys are skipped, and loading first resets everything to defaults).
 | Sim | `buildBudget` | int | 1 | 1 | 8 |
 | Sim | `uploadBudget` | int | 1 | 1 | 8 |
 | Sim | `showShip` | bool | on | | |
+| Sim | `shipModel` | int | 0 | 0 | 2 |
 | Sim | `showPathDebug` | bool | off | | |
 | Sim | `rebaseDist` | float | 1024 | 1 | 100000 |
 | Sim | `engineIntensity` | float | 10 | 0 | 40 |

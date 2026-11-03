@@ -39,6 +39,15 @@
 
 typedef enum { STATE_SELECT, STATE_RUN } GameState;
 
+// Selectable ships, in selector order, and the engine's shipModel for each.
+typedef struct ShipChoice { const char *name; int model; } ShipChoice;
+static const ShipChoice SHIPS[] = {
+    { "DART", 1 },    // light dart, the game ship
+    { "PROBE", 2 },   // the original RECURSION_94 probe
+    { "JET", 0 },     // the textured courier fighter jet (courierScale from the preset)
+};
+#define SHIP_COUNT (int)(sizeof(SHIPS) / sizeof(SHIPS[0]))
+
 // Pause menu entries. Everything but RESUME and FULLSCREEN asks to confirm.
 typedef enum { MENU_RESUME, MENU_FULLSCREEN, MENU_RESTART, MENU_SELECT, MENU_QUIT, MENU_COUNT } MenuItem;
 static const char *const MENU_LABELS[MENU_COUNT] = { "RESUME", "FULLSCREEN", "RECOMPILE RUN", "SEED SELECT", "QUIT" };
@@ -49,6 +58,7 @@ typedef struct Game {
     bool           audioOn;
     GameState      state;
     uint32_t       selectedSeed, runSeed;
+    int            ship;         // SHIPS index
     float          selectorTime, musicIntensity, beatPulse, glitch;
     bool           paused;
     int            menuItem;     // pause menu selection (MenuItem)
@@ -130,6 +140,7 @@ static void start_run(Game *g, uint32_t seed, bool withAudio)
     titles_reset(&g->titles, seed, GetGameplayRecursionDepth(&g->play), &g->music);
     ct_param_set(g->ct, "baseSpeed", g->baseSpeed);
     ct_param_set(g->ct, "fovBase", g->baseFov);
+    ct_param_set(g->ct, "shipModel", (float)SHIPS[g->ship].model);
     g->push = 0.0f;
     g->pushStartStep = -1.0;
     ct_set_paused(g->ct, false);
@@ -443,7 +454,8 @@ int game_run(CtTunnel *ct, const GameOptions *o)
     static Game g;   // large (combat pools); keep it off the stack
     g = (Game){ .ct = ct, .state = STATE_SELECT, .selectedSeed = o->seed, .runSeed = o->seed,
                 .baseSpeed = ct_param_get(ct, "baseSpeed"),
-                .baseFov = ct_param_get(ct, "fovBase"), .bossTest = o->bossTest, .bossRound = o->bossRound, .startDepth = o->depth,
+                .baseFov = ct_param_get(ct, "fovBase"),
+                .ship = o->ship >= 1 && o->ship <= SHIP_COUNT ? o->ship - 1 : 0, .bossTest = o->bossTest, .bossRound = o->bossRound, .startDepth = o->depth,
                 .showBox = o->steerBox || o->shotSeconds < 0.0 };
     combat_draw_init(&g.draw);
     ct_set_scene_draw(ct, scene_draw, &g);
@@ -470,6 +482,9 @@ int game_run(CtTunnel *ct, const GameOptions *o)
                 if (IsKeyPressed(KEY_RIGHT)) g.selectedSeed += 1u;
                 if (IsKeyPressed(KEY_UP)) g.selectedSeed += 100u;
                 if (IsKeyPressed(KEY_DOWN)) g.selectedSeed -= 100u;
+                bool shift = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
+                if (IsKeyPressed(KEY_TAB)) g.ship = (g.ship + (shift ? SHIP_COUNT - 1 : 1)) % SHIP_COUNT;
+                for (int i = 0; i < SHIP_COUNT; i++) if (IsKeyPressed(KEY_ONE + i)) g.ship = i;
                 if (enter_pressed()) start_run(&g, g.selectedSeed, true);
             }
             if (quit) break;
@@ -477,7 +492,7 @@ int game_run(CtTunnel *ct, const GameOptions *o)
             BeginDrawing();
             ClearBackground(BLACK);
             DrawSeedSelector(g.selectedSeed, g.selectorTime, GetSynthSeedBpm(g.selectedSeed),
-                             GetSynthSeedKeyName(g.selectedSeed), w, h);
+                             GetSynthSeedKeyName(g.selectedSeed), g.ship, SHIP_COUNT, SHIPS[g.ship].name, w, h);
             if (g.confirming) {
                 DrawRectangle(0, h / 2 - 50, w, 100, (Color){ 0, 0, 0, 200 });
                 draw_centered("QUIT RECURSION_94?", h / 2 - 30, 28, (Color){ 255, 80, 140, 255 }, w);

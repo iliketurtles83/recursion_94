@@ -74,6 +74,7 @@ ctest --test-dir build --output-on-failure         # engine_core/_ship/_vectorin
 ./build/recursion94 --seed 94 --game-shot 5 --out FILE --hidden   # deterministic game frame
 ./build/recursion94 --seed 94 --boss [N]    # start 40 units short of boss N (1..5, default 1; works with --game-shot)
 ./build/recursion94 --seed 94 --depth N     # start at recursion depth N (story corruption and answers, difficulty)
+./build/recursion94 --seed 94 --ship N      # ship 1 dart (default), 2 probe, 3 jet (also chosen in the selector)
 ./build/recursion94 --seed 94 --game-shot 3 --steer 1,-1 --roll 2.5 --steer-box --out FILE --hidden
     # shot pilot holds the stick / rolls right at 2.5 s; draw the steering box (F4 in play)
 ./build/recursion94 --sandbox --env N [--seed N] [--preset NAME] [--set name=value ...]
@@ -104,8 +105,11 @@ ctest --test-dir build --output-on-failure         # engine_core/_ship/_vectorin
   game's arena comes from `ct_steer_box`. Barrel rolls (Q/E) turn a full
   circle, kick sideways (`barrelRollDash`), give i-frames for the whole roll
   (`GameplayInput.dodging`) and wait `barrelRollCooldown` before the next.
-- **Ship and trail.** The game flies the dart (`shipDart=1` in `r94_corridor`);
-  the textured courier stays as the sandbox default. `trailData` swaps the
+- **Ship and trail.** `shipModel` (Sim) picks the model: 0 the textured
+  courier (sandbox default), 1 the dart (`r94_corridor`), 2 the original
+  RECURSION_94 probe (`src/render/shipprobe.c`). The seed selector picks the
+  game ship (Tab / 1-3: dart, probe, jet = courier; `--ship N`) and the run
+  sets `shipModel`. `trailData` swaps the
   engine trail for a light/data wake (`trail.fs`): it grows out of the dart's
   engine glows, runs white -> cyan -> blue with packets racing back and a
   world-fixed block dissolve at the tail. `trailStretch` (0.2 in the game)
