@@ -135,6 +135,8 @@ ctest --test-dir build --output-on-failure         # engine_core/_ship/_vectorin
 
 ## Docs
 
+- `ROADMAP.md`: working task list (vertical-slice steps, later items). Tick items
+  off as they land.
 - `docs/engine/INTEGRATION.md`: public API, GL ownership, parameter table.
 - `docs/engine/NOTES.md`: environment implementation log. Record new environment
   work there in the same style.
