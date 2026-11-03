@@ -2,6 +2,25 @@
 
 This log is the source of truth for architectural choices, visual uplift milestones, feature statuses (Confirmed, Provisional, Rejected), and binary size tracking. The 1.44MB (1,474,560 bytes) contest limit applied to entries before 2026-11-03.
 
+## [Demoscene notes] Music clock, curve timeline, SDF bosses
+
+- Date: 2026-11-03. Status: PLANNED (roadmap), nothing implemented yet.
+- Source: review of a modern-demoscene note against the codebase. The synth
+  already exceeds the note's softsynth (ladder filter, seeded noise, lock-free
+  queues); size-coding tricks no longer apply.
+- Accepted: sync gameplay and visuals to a sample-accurate music clock
+  (Step 6), then a Rocket-style curve timeline on top of it for the
+  presentation layer.
+- Accepted: raymarched SDF forms for some later bosses, so not every boss is
+  triangles and ribbons; the SDF cheap tricks are noted in the roadmap.
+- Boss arrival: a slow push-in timed to the music is preferred over a plain
+  pull-back.
+- To test by ear: resetting the noise seed on every snare hit.
+- Seed line and control hints are hard to read in shots; accepted for now,
+  the HUD gets its own pass later.
+
+---
+
 ## [Corridor song] First level song on the synth
 
 - Date: 2026-11-03. Status: Step 4 CONFIRMED by offline measurement and
