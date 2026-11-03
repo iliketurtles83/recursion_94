@@ -81,7 +81,10 @@ RECURSION_94.
         (`THRESHOLD GUARDIAN // RECURSIVE CORE`). Built (`src/game/story.c`).
     - [ ] Hand-play: scroll speed, placement, timing against the song's
           quiet section, corruption rates.
-    - [ ] Depth 3+: lines that seem to answer the ship (write them first).
+    - [x] Depth 3+: lines that seem to answer the ship (`recursion_94.md`
+          §9.5, `story_compose`). Clean, steady near-white voice; own
+          answer from depth 3, cutting in from 4, a pool line from 5.
+          `--depth N` to see them. Hand-play: wording, placement.
 - [ ] Raymarched SDF bosses and effects. Triangles and ribbons stay, but not
       every boss in that style: give some of the remaining bosses (and maybe
       the selector art) raymarched SDF forms (metaballs, fractal folds, a core

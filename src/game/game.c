@@ -64,6 +64,7 @@ typedef struct Game {
     double         pushStartStep; // music step of the first push bar (-1: no boss)
     bool           bossTest;     // --boss: start each run just short of the first boss
     int            bossRound;    // --boss N: that boss instead (1..5)
+    int            startDepth;   // --depth N: runs start at recursion depth N
     bool           showBox;      // F4: steering box and ship centre overlay (prototyping)
     MusicClock     music;
     Story          story;
@@ -118,12 +119,12 @@ static void start_run(Game *g, uint32_t seed, bool withAudio)
     g->havePlayer = false;
     InitGameplay(&g->play, seed);
     music_clock_reset(&g->music, GetSynthSeedBpm(seed));
-    story_reset(&g->story, seed, g->music.stepsPerSecond, LEGEND_SECONDS - 1.5f);
-    if (g->bossTest) {
-        // Earlier bosses count as cleared, so round N spawns next (5 = the Leviathan).
-        if (g->bossRound > 1) g->play.boss.encounterIndex = g->bossRound - 1;
-        g->virtualZ = g->play.boss.nextSpawnDistance - 40.0;
-    }
+    // Earlier recursions (--depth) and bosses (--boss N) count as cleared.
+    if (g->startDepth > 1) g->play.boss.encounterIndex = (g->startDepth - 1) * BOSSES_PER_RECURSION;
+    if (g->bossTest && g->bossRound > 1) g->play.boss.encounterIndex += g->bossRound - 1;
+    if (g->bossTest) g->virtualZ = g->play.boss.nextSpawnDistance - 40.0;
+    story_reset(&g->story, seed, GetGameplayRecursionDepth(&g->play), g->music.stepsPerSecond,
+                LEGEND_SECONDS - 1.5f);
     ct_param_set(g->ct, "baseSpeed", g->baseSpeed);
     ct_param_set(g->ct, "fovBase", g->baseFov);
     g->push = 0.0f;
@@ -436,7 +437,7 @@ int game_run(CtTunnel *ct, const GameOptions *o)
     static Game g;   // large (combat pools); keep it off the stack
     g = (Game){ .ct = ct, .state = STATE_SELECT, .selectedSeed = o->seed, .runSeed = o->seed,
                 .baseSpeed = ct_param_get(ct, "baseSpeed"),
-                .baseFov = ct_param_get(ct, "fovBase"), .bossTest = o->bossTest, .bossRound = o->bossRound,
+                .baseFov = ct_param_get(ct, "fovBase"), .bossTest = o->bossTest, .bossRound = o->bossRound, .startDepth = o->depth,
                 .showBox = o->steerBox || o->shotSeconds < 0.0 };
     combat_draw_init(&g.draw);
     ct_set_scene_draw(ct, scene_draw, &g);

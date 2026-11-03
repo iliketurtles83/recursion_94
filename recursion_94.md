@@ -160,7 +160,8 @@ The five boss bodies are assembled entirely from primitive draw calls (spheres, 
 
 ## 9. Story
 
-> **Status:** agreed direction for the rebuild (2026-11-03), not implemented yet.
+> **Status:** agreed direction for the rebuild (2026-11-03); scroller, title
+> cards and answers implemented in `src/game/story.c`.
 > Unlike §4–§8 it is new design, not a description of the legacy game.
 
 ### 9.1 Premise
@@ -240,3 +241,40 @@ Working text, to be tuned in play. The group name is a placeholder.
 
 **On the collapse** (after the Leviathan, before the reseed), one line:
 "...it called itself again. of course it did. we wrote it."
+
+### 9.5 Answers (depth 3+)
+
+From depth 3 the scroller starts to answer. Answer lines are spliced into the
+corrupted text and are never corrupted themselves: the old notes decay, the
+answers arrive clean, in a steadier, whiter voice (barely riding the wave, no
+beat lift). They stay ambiguous: they may be a coincidence, a stale note, or
+someone at the other end. They never say who, or where. `%d` is the current
+recursion depth.
+
+Placement, all from a hash of (seed, depth, text):
+
+- **Depth 3:** the text's own answer, after the last line, like a reply.
+- **Depth 4+:** the own answer cuts in at a sentence break.
+- **Depth 5+:** also one line from the shared pool, at another break.
+
+Own answers, one per text:
+
+1. Server corridor: "the loader count says %d. it was only ever meant to say 1."
+2. Grid city: "you kept moving, like we asked. we did not think anyone would
+   listen this long."
+3. Crystal field: "we checked again. none of us wrote this part. maybe you did."
+4. Vortex: "the missing sectors are moving. they follow you down now."
+5. Black hole: "you said hi last time. we think we heard it."
+6. Collapse: "...again. we are starting to think it is not the program that
+   loops."
+
+Shared pool:
+
+- "is that you? the drive light just came on."
+- "this note was not here when we wrote this note."
+- "depth %d. we only ever planned for one."
+- "we can hear the disk spinning from here. wherever here is."
+- "do not look for us at the bottom. we are not at the bottom."
+- "keep going. we would, if we still could."
+- "every time you come back, someone writes this line again."
+- "we are sorry it takes so long. we are sorry it never ends."

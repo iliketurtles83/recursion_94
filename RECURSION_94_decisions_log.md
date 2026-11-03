@@ -2,6 +2,30 @@
 
 This log is the source of truth for architectural choices, visual uplift milestones, feature statuses (Confirmed, Provisional, Rejected), and binary size tracking. The 1.44MB (1,474,560 bytes) contest limit applied to entries before 2026-11-03.
 
+## [Story] Answers from depth 3
+
+- Date: 2026-11-03. Status: PROVISIONAL: checked in tests and shots
+  (`--depth 5`); hand-play the wording and placement.
+- Text first (`recursion_94.md` §9.5): one own answer per scroll text plus
+  a shared pool of eight, `%d` = recursion depth. They stay ambiguous: a
+  stale note, a coincidence, or someone at the other end; never who or where.
+- `story_compose` (pure): corrupts the base text as before, then splices
+  answers at sentence breaks (". "), chosen by hash of (seed, depth, text).
+  Depth 3: own answer after the text. Depth 4: it cuts in at a break.
+  Depth 5+: own answer in the first half, a pool line in the second.
+  Answers are never corrupted: the notes decay, the answers arrive clean.
+- Voice: a per-character mask; answers ride the wave at about a fifth of
+  the amplitude, ignore the beat lift and are drawn primary -> 82% white.
+  In shots it reads as a second, steadier speaker inside the scroll.
+- `game_combat` checks: none below depth 3, deterministic, own answer
+  present and clean at every depth 3-9 for 10 seeds x 6 texts, exactly one
+  pool line from depth 5, the mask matches the answers, and most deep own
+  answers cut in (356/360).
+- `--depth N` starts a run at recursion depth N (encounter index
+  (N-1) x 5), so the story, the cards and difficulty can be checked deep.
+
+---
+
 ## [Leviathan gravity] Applied to flight
 
 - Date: 2026-11-03. Status: PROVISIONAL: checked in tests and a logged

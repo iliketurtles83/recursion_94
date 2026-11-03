@@ -88,6 +88,67 @@ static bool check_timeline(void)
     return ok;
 }
 
+static int count_voice(const unsigned char *v, int n)
+{
+    int k = 0;
+    for (int i = 0; i < n; i++) k += v[i] != 0;
+    return k;
+}
+
+static int count_nonspace(const char *t)
+{
+    int k = 0;
+    for (; *t; t++) k += *t != ' ';
+    return k;
+}
+
+// Answers (recursion_94.md §9.5): none below depth 3, the own answer clean at the
+// end at depth 3, cutting in from depth 4, a pool line too from depth 5. Answer
+// characters are marked in the voice mask and never corrupted.
+static bool check_answers(void)
+{
+    char a[STORY_TEXT_MAX], b[STORY_TEXT_MAX], own[160];
+    unsigned char va[STORY_TEXT_MAX], vb[STORY_TEXT_MAX];
+    bool ok = true;
+    int cuts = 0, cutChecks = 0, pools = 0;
+    for (uint32_t seed = 90u; seed < 100u; seed++) {
+        for (int text = 0; text <= STORY_COLLAPSE; text++) {
+            for (int depth = 1; depth <= 9; depth++) {
+                int n = story_compose(text, seed, depth, a, va, sizeof(a));
+                story_compose(text, seed, depth, b, vb, sizeof(b));
+                ok = ok && strcmp(a, b) == 0 && memcmp(va, vb, (size_t)n) == 0 && n < STORY_TEXT_MAX - 1;
+                story_corrupt(story_text(text), seed, depth, b, sizeof(b));
+                snprintf(own, sizeof(own), story_answer(text), depth);
+                int voiced = count_voice(va, n);
+                if (depth < 3) { ok = ok && strcmp(a, b) == 0 && voiced == 0; continue; }
+                const char *hit = strstr(a, own);
+                ok = ok && hit != NULL;
+                if (!hit) continue;
+                int at = (int)(hit - a), len = (int)strlen(own);
+                for (int i = 0; i < len; i++) ok = ok && (va[at + i] != 0) == (own[i] != ' ');
+                int expect = count_nonspace(own);
+                if (depth >= 5) {
+                    int poolHits = 0;
+                    for (int p = 0; p < story_answer_pool_count(); p++) {
+                        char line[160];
+                        snprintf(line, sizeof(line), story_answer_pool(p), depth);
+                        if (strstr(a, line)) { poolHits++; expect += count_nonspace(line); }
+                    }
+                    ok = ok && poolHits == 1;
+                    pools += poolHits;
+                }
+                ok = ok && voiced == expect;
+                if (depth == 3) ok = ok && at + len + 2 == n;          // after the text
+                if (depth >= 4) { cutChecks++; if (at + len + 2 < n) cuts++; }
+            }
+        }
+    }
+    ok = ok && cuts * 2 > cutChecks;   // most deep answers cut in rather than trail
+    story_compose(0, 94u, 5, a, va, sizeof(a));
+    printf("ANSWERS: %s (cut in %d/%d, pool lines %d)\n  depth 5: %s\n", ok ? "yes" : "no", cuts, cutChecks, pools, a);
+    return ok;
+}
+
 static bool check_story(void)
 {
     char a[STORY_TEXT_MAX], b[STORY_TEXT_MAX];
@@ -111,7 +172,7 @@ static bool check_story(void)
     story_corrupt(story_text(0), 94u, 8, a, sizeof(a));
     ok = ok && strlen(a) > strlen(story_text(0)) * 3 / 4;
     printf("STORY: %s (seeds differ at %d/%d depths)\n", ok && same == 0 ? "yes" : "no", total - same, total);
-    return ok && same == 0;
+    return ok && same == 0 && check_answers();
 }
 
 int main(void)

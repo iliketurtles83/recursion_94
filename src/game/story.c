@@ -3,6 +3,9 @@
 #include "raylib.h"
 #include "timeline.h"
 #include <math.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <string.h>
 
 // Depth-1 texts (recursion_94.md §9.4). Working text, tuned in play.
 static const char *const TEXTS[STORY_LEVEL_TEXTS + 1] = {
@@ -19,6 +22,30 @@ static const char *const TEXTS[STORY_LEVEL_TEXTS + 1] = {
     "if you get there, say hi from us. return 0;",
     "...it called itself again. of course it did. we wrote it.",
 };
+// Answers (recursion_94.md §9.5): one per text, then a shared pool. %d = depth.
+static const char *const ANSWERS[STORY_LEVEL_TEXTS + 1] = {
+    "the loader count says %d. it was only ever meant to say 1.",
+    "you kept moving, like we asked. we did not think anyone would listen this long.",
+    "we checked again. none of us wrote this part. maybe you did.",
+    "the missing sectors are moving. they follow you down now.",
+    "you said hi last time. we think we heard it.",
+    "...again. we are starting to think it is not the program that loops.",
+};
+static const char *const POOL[] = {
+    "is that you? the drive light just came on.",
+    "this note was not here when we wrote this note.",
+    "depth %d. we only ever planned for one.",
+    "we can hear the disk spinning from here. wherever here is.",
+    "do not look for us at the bottom. we are not at the bottom.",
+    "keep going. we would, if we still could.",
+    "every time you come back, someone writes this line again.",
+    "we are sorry it takes so long. we are sorry it never ends.",
+};
+#define POOL_COUNT ((int)(sizeof(POOL) / sizeof(POOL[0])))
+#define ANSWER_DEPTH 3        // own answer, after the text
+#define ANSWER_CUT_DEPTH 4    // own answer cuts in at a sentence break
+#define ANSWER_POOL_DEPTH 5   // plus a pool line
+
 static const char *const ARCHETYPES[BOSSES_PER_RECURSION] = {
     "THRESHOLD GUARDIAN", "THE RULER", "THE SHADOW", "THE DEVOURER", "THE SELF"
 };
@@ -41,6 +68,18 @@ const char *story_boss_name(int round)
 {
     return BOSS_NAMES[((round % BOSSES_PER_RECURSION) + BOSSES_PER_RECURSION) % BOSSES_PER_RECURSION];
 }
+
+const char *story_answer(int index)
+{
+    return index >= 0 && index <= STORY_COLLAPSE ? ANSWERS[index] : "";
+}
+
+const char *story_answer_pool(int i)
+{
+    return POOL[((i % POOL_COUNT) + POOL_COUNT) % POOL_COUNT];
+}
+
+int story_answer_pool_count(void) { return POOL_COUNT; }
 
 static uint32_t mix(uint32_t x)
 {
@@ -100,6 +139,66 @@ int story_corrupt(const char *src, uint32_t seed, int depth, char *out, int cap)
     return n;
 }
 
+// Sentence breaks in a line: positions just after ". " (the space kept before the
+// next sentence). Returns how many were found, up to max.
+static int sentence_breaks(const char *s, int len, int *at, int max)
+{
+    int n = 0;
+    for (int i = 1; i + 1 < len && n < max; i++)
+        if (s[i] == ' ' && s[i - 1] == '.' && s[i + 1] != ' ' && s[i + 1] != '.') at[n++] = i;
+    return n;
+}
+
+// Inserts "  answer  " (depth substituted) at position at of a line of length len.
+static int splice(char *out, unsigned char *voice, int len, int cap, int at, const char *answer, int depth)
+{
+    char line[160];
+    snprintf(line, sizeof(line), answer, depth);
+    char ins[168];
+    int k = snprintf(ins, sizeof(ins), "  %s  ", line);
+    if (k <= 0 || len + k >= cap) return len;
+    memmove(out + at + k, out + at, (size_t)(len - at + 1));
+    memmove(voice + at + k, voice + at, (size_t)(len - at + 1));
+    for (int i = 0; i < k; i++) {
+        out[at + i] = ins[i];
+        voice[at + i] = ins[i] != ' ';
+    }
+    return len + k;
+}
+
+int story_compose(int index, uint32_t seed, int depth, char *out, unsigned char *voice, int cap)
+{
+    unsigned char scratch[STORY_TEXT_MAX];
+    if (cap <= 0) return 0;
+    if (cap > STORY_TEXT_MAX) cap = STORY_TEXT_MAX;
+    if (!voice) voice = scratch;
+    int len = story_corrupt(story_text(index), seed, depth, out, cap);
+    memset(voice, 0, (size_t)cap);
+    if (depth < ANSWER_DEPTH) return len;
+    uint32_t text = (uint32_t)index + 1u;
+    int breaks[32], nb = sentence_breaks(out, len, breaks, 32);
+    bool pool = depth >= ANSWER_POOL_DEPTH;
+    // Own answer: after the text at depth 3; deeper, it cuts in at a break (in the
+    // first half when a pool line takes the second). With no break, the end.
+    int own = len, other = len;
+    if (depth >= ANSWER_CUT_DEPTH && nb > 0) {
+        int span = pool && nb > 1 ? nb / 2 : nb;
+        own = breaks[(int)(hash01(seed, (uint32_t)depth, text, 13u) * (float)span)];
+    }
+    if (pool && nb > 1) other = breaks[nb / 2 + (int)(hash01(seed, (uint32_t)depth, text, 12u) * (float)(nb - nb / 2))];
+    // The later position goes in first, so the earlier one stays valid.
+    if (pool) {
+        const char *line = POOL[(int)(hash01(seed, (uint32_t)depth, text, 11u) * (float)POOL_COUNT) % POOL_COUNT];
+        if (other >= own) {
+            len = splice(out, voice, len, cap, other, line, depth);
+            return splice(out, voice, len, cap, own, ANSWERS[index], depth);
+        }
+        len = splice(out, voice, len, cap, own, ANSWERS[index], depth);
+        return splice(out, voice, len, cap, other, line, depth);
+    }
+    return splice(out, voice, len, cap, own, ANSWERS[index], depth);
+}
+
 // ---------------------------------------------------------------------------
 // Timing
 
@@ -115,12 +214,12 @@ static void push(Story *s, int text, int depth)
     s->queued++;
 }
 
-void story_reset(Story *s, uint32_t seed, float stepsPerSecond, float legendSeconds)
+void story_reset(Story *s, uint32_t seed, int depth, float stepsPerSecond, float legendSeconds)
 {
     *s = (Story){ .seed = seed, .scrollText = -1, .cardRound = -1 };
     // The first text waits until the controls legend has faded.
     s->waitUntil = (double)(legendSeconds * stepsPerSecond);
-    push(s, 0, 1);
+    push(s, 0, depth);
 }
 
 void story_update(Story *s, const GameplaySystem *g, const GameplayEvents *e, const MusicClock *c)
@@ -140,7 +239,7 @@ void story_update(Story *s, const GameplaySystem *g, const GameplayEvents *e, co
     if (s->scrollText < 0 && s->queued > 0 && !g->boss.active && !g->gameOver &&
         c->step >= s->waitUntil && music_clock_crossed(c, MUSIC_BAR)) {
         s->scrollText = s->queue[0];
-        story_corrupt(story_text(s->scrollText), s->seed, s->queueDepth[0], s->line, STORY_TEXT_MAX);
+        story_compose(s->scrollText, s->seed, s->queueDepth[0], s->line, s->voice, STORY_TEXT_MAX);
         s->queue[0] = s->queue[1];
         s->queueDepth[0] = s->queueDepth[1];
         s->queued--;
@@ -182,11 +281,13 @@ static float beat_flash(const MusicClock *c)
 
 // Sine scroller: each character rides a wave that rolls once per bar and
 // lifts on the beat, coloured along the line from primary to secondary.
+// Answer characters (§9.5) barely ride the wave, ignore the beat and are
+// drawn near-white: a steadier voice than the decaying notes around them.
 static void draw_scroll(Story *s, const GameplaySystem *g, const MusicClock *c, int w, int h)
 {
     Font font = GetFontDefault();
     float size = fmaxf(20.0f, (float)h / 22.0f), spacing = size / 10.0f;
-    float amp = size * (0.55f + 0.25f * beat_flash(c));
+    float amp = size * (0.55f + 0.25f * beat_flash(c)), calm = size * 0.12f;
     float baseY = (float)h - 118.0f - size - amp;
     float x = (float)w - (float)(c->step - s->scrollStart) * SCROLL_SPEED * size;
     float phase = (float)(c->step / MUSIC_BAR) * 6.2831853f;
@@ -197,12 +298,14 @@ static void draw_scroll(Story *s, const GameplaySystem *g, const MusicClock *c, 
         float adv = glyph_advance(font, ch, size, spacing);
         if (x > (float)w) break;
         if (x + adv >= 0.0f && ch != ' ') {
-            float y = baseY + sinf(x * 0.009f - phase) * amp;
+            bool answer = s->voice[i] != 0;
+            float y = baseY + sinf(x * 0.009f - phase) * (answer ? calm : amp);
             float fade = fminf(fminf(x / edge, ((float)w - x) / edge), 1.0f);
             // Primary to secondary, lifted toward white midway so the blend never goes grey.
             float u = 0.5f + 0.5f * sinf(x * 0.004f + phase * 0.5f);
-            Color col = mix_color(mix_color(g->primaryColor, g->secondaryColor, u), WHITE,
-                                  0.45f * (1.0f - fabsf(2.0f * u - 1.0f)));
+            Color col = answer ? mix_color(g->primaryColor, WHITE, 0.82f)
+                               : mix_color(mix_color(g->primaryColor, g->secondaryColor, u), WHITE,
+                                           0.45f * (1.0f - fabsf(2.0f * u - 1.0f)));
             draw_glyph(font, ch, (Vector2){ x + 2.0f, y + 2.0f }, size, with_alpha(shadow, fade));
             draw_glyph(font, ch, (Vector2){ x, y }, size, with_alpha(col, fade * 0.92f));
         }

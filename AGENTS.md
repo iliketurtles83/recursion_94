@@ -73,6 +73,7 @@ ctest --test-dir build --output-on-failure         # engine_core/_ship/_vectorin
 ./build/recursion94 --seed 94               # skip the selector
 ./build/recursion94 --seed 94 --game-shot 5 --out FILE --hidden   # deterministic game frame
 ./build/recursion94 --seed 94 --boss [N]    # start 40 units short of boss N (1..5, default 1; works with --game-shot)
+./build/recursion94 --seed 94 --depth N     # start at recursion depth N (story corruption and answers, difficulty)
 ./build/recursion94 --seed 94 --game-shot 3 --steer 1,-1 --roll 2.5 --steer-box --out FILE --hidden
     # shot pilot holds the stick / rolls right at 2.5 s; draw the steering box (F4 in play)
 ./build/recursion94 --sandbox --env N [--seed N] [--preset NAME] [--set name=value ...]
