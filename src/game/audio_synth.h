@@ -47,6 +47,51 @@ typedef enum {
     SFX_CORE_COLLAPSE
 } SFXType;
 
+// A level's song: the composed layer on top of the seeded synth. The seed still
+// picks tempo, mode and arp timbre; the song fixes progression, bass line, lead
+// motif and the section plan that cycles once the build-up completes.
+#define SONG_MAX_SECTIONS 8
+enum {
+    SECTION_KICK = 1u << 0,
+    SECTION_HATS = 1u << 1,
+    SECTION_SNARE = 1u << 2,
+    SECTION_OPEN_HATS = 1u << 3,
+    SECTION_BASS_ALT = 1u << 4,   // second bass line
+    SECTION_LEAD = 1u << 5,
+    SECTION_BREAK = 1u << 6,      // no kick: pad and arp forward, delay up
+    SECTION_ALL = 0x2fu           // everything but BASS_ALT and BREAK
+};
+
+typedef struct {
+    unsigned char bars;
+    unsigned char flags;
+} SynthSection;
+
+typedef struct {
+    const char *name;
+    signed char progression[8];      // chord root scale degree, one per bar
+    signed char bass[2][16];         // scale degrees above the chord root (7 = octave), -1 rest
+    unsigned short bassSlide[2];     // step bitmasks (bit n = step n)
+    unsigned short bassAccent[2];
+    signed char lead[32];            // two-bar motif, chord-relative scale degrees, -1 rest
+    SynthSection sections[SONG_MAX_SECTIONS];
+    int sectionCount;
+    float introEnd, buildEnd;        // distances: ambient intro ends, full beat reached
+    // Dry mix trims per layer (echo and reverb sends are unchanged). Set them all:
+    // a missing field is 0, which silences the layer.
+    float kickGain, bassGain, subGain, padGain, arpGain, leadGain, hatGain, snareGain;
+} SynthSong;
+
+extern const SynthSong SYNTH_SONG_CORRIDOR;
+
+#ifdef SYNTH_METER
+// Debug-only per-layer energy (sum of squares of each layer's contribution to
+// the left output), for offline mix measurements.
+enum { METER_KICK, METER_BASS, METER_SUB, METER_PAD, METER_ARP, METER_LEAD, METER_HAT,
+       METER_OPEN_HAT, METER_SNARE, METER_ATMOS, METER_ECHO, METER_TOTAL, METER_COUNT };
+extern double g_synthMeter[METER_COUNT];
+#endif
+
 typedef struct {
     float intensity;
     float glitchAmount;
@@ -118,6 +163,10 @@ typedef struct {
     uint32_t noiseState;
     SynthMusicConfig musicConfig;
     SynthMusicState musicState;
+    const SynthSong *song;   // NULL: the original seeded arrangement
+    int chordDegree;
+    int songBar;             // bars since the build-up completed
+    unsigned char sectionFlags;
 
     // Seed defines the baseline tempo; it stays fixed once the intro ramp
     // (ambientBpm -> baseBpm) completes. No runtime intensity/boss nudging.
@@ -248,6 +297,11 @@ typedef struct {
 void InitAudioSynth(SynthSystem *synth, uint32_t runSeed);
 void InitAudioSynthConfigured(SynthSystem *synth, uint32_t runSeed,
                               SynthMusicConfig config);
+// Same as InitAudioSynth, with a level song (NULL = original arrangement).
+void InitAudioSynthSong(SynthSystem *synth, uint32_t runSeed, const SynthSong *song);
+// Offline rendering (no audio device): for tests and the song render tool.
+void InitAudioSynthOffline(SynthSystem *synth, uint32_t runSeed, const SynthSong *song);
+void RenderAudioSynthOffline(SynthSystem *synth, short *stereoOut, unsigned int frames);
 void ReseedAudioSynth(SynthSystem *synth, uint32_t runSeed);
 void UpdateAudioSynth(SynthSystem *synth, float intensity, float glitchAmount,
                       float bossIntensity, float virtualPlayerZ, float preBossHush);

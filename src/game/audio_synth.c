@@ -23,6 +23,12 @@ _Static_assert(ATOMIC_INT_LOCK_FREE == 2,
                "The audio callback requires lock-free atomic integers");
 
 static SynthSystem *g_synth_ref = 0;
+#ifdef SYNTH_METER
+double g_synthMeter[METER_COUNT];
+#define METER(slot, value) (g_synthMeter[slot] += (double)(value) * (double)(value))
+#else
+#define METER(slot, value) ((void)0)
+#endif
 
 static void ConfigureSynthSeed(SynthSystem *synth, uint32_t runSeed);
 static void StartSynthSFX(SynthSystem *synth, SFXType type);
@@ -53,15 +59,15 @@ static void ApplySynthControl(SynthSystem *synth, SynthControl control) {
     synth->glitchAmount = control.glitchAmount;
     synth->targetPreBossHush = control.preBossHush;
 
-    float introProgress = fmaxf(0.0f, fminf(
-        control.virtualPlayerZ / SONG_INTRO_END_DISTANCE, 1.0f));
+    float introEnd = synth->song ? synth->song->introEnd : SONG_INTRO_END_DISTANCE;
+    float buildEnd = synth->song ? synth->song->buildEnd : SONG_BUILD_END_DISTANCE;
+    float introProgress = fmaxf(0.0f, fminf(control.virtualPlayerZ / introEnd, 1.0f));
     float introEase = introProgress * introProgress * (3.0f - 2.0f * introProgress);
     synth->targetBpm = synth->ambientBpm +
                        (synth->baseBpm - synth->ambientBpm) * introEase;
 
     float buildProgress = fmaxf(0.0f, fminf(
-        (control.virtualPlayerZ - SONG_INTRO_END_DISTANCE) /
-        (SONG_BUILD_END_DISTANCE - SONG_INTRO_END_DISTANCE), 1.0f));
+        (control.virtualPlayerZ - introEnd) / (buildEnd - introEnd), 1.0f));
     synth->songBuildProgress = buildProgress;
     float dropProgress = buildProgress;
     dropProgress = dropProgress * dropProgress * (3.0f - 2.0f * dropProgress);
@@ -124,7 +130,9 @@ static void SetPadChord(SynthSystem *synth, int phrase) {
         { 0, 5, 3, 6 }
     };
     static const signed char chordDegrees[PAD_CHORD_NOTES] = { 0, 2, 4, 6, 8 };
-    int rootDegree = progressions[synth->progressionVariant][phrase & 3];
+    int rootDegree = synth->song ? synth->song->progression[phrase & 7]
+                                 : progressions[synth->progressionVariant][phrase & 3];
+    synth->chordDegree = rootDegree;
     int chordRoot = ModeInterval(synth->musicConfig.mode, rootDegree);
     int padRootMidi = synth->rootMidi + 12 + chordRoot;
 
@@ -253,7 +261,24 @@ static void TriggerStep(SynthSystem *synth, float intensity, float bossIntensity
     if (step == 0) {
         synth->barCount++;
         SetPadChord(synth, synth->barCount - 1);
+        // Song sections cycle once the build-up is complete; a boss holds the
+        // fullest section. Before that, the build-up gates below decide alone.
+        synth->sectionFlags = SECTION_ALL;
+        // During the build-up a song plays its first section (under the build gates).
+        if (synth->song && bossIntensity < 0.45f) synth->sectionFlags = synth->song->sections[0].flags;
+        if (synth->song && bossIntensity < 0.45f && synth->songBuildProgress >= 1.0f) {
+            int total = 0;
+            for (int i = 0; i < synth->song->sectionCount; i++) total += synth->song->sections[i].bars;
+            int bar = total > 0 ? synth->songBar % total : 0;
+            for (int i = 0; i < synth->song->sectionCount; i++) {
+                if (bar < synth->song->sections[i].bars) { synth->sectionFlags = synth->song->sections[i].flags; break; }
+                bar -= synth->song->sections[i].bars;
+            }
+            synth->songBar++;
+        }
     }
+    const SynthSong *song = synth->song;
+    unsigned char section = synth->sectionFlags;
 
     // Keep the 909/303 grid tight, with only tiny seeded analog-clock drift.
     uint32_t humanizeSeed = SynthHash(synth->runSeed ^ ((uint32_t)synth->barCount * 0x2f6e2b1u) ^
@@ -275,9 +300,9 @@ static void TriggerStep(SynthSystem *synth, float intensity, float bossIntensity
         synth->musicState = nextState;
     }
 
-    bool kickActive = buildProgress > 0.60f || bossDrop;
-    bool hatsActive = buildProgress > 0.34f || bossDrop;
-    bool snareActive = buildProgress > 0.70f || bossDrop;
+    bool kickActive = (buildProgress > 0.60f || bossDrop) && (section & SECTION_KICK);
+    bool hatsActive = (buildProgress > 0.34f || bossDrop) && (section & SECTION_HATS);
+    bool snareActive = (buildProgress > 0.70f || bossDrop) && (section & SECTION_SNARE);
     if ((step & 3) == 0 && kickActive) {
         synth->kickTime = 0.0f;
         synth->kickPhase = 0.0f;
@@ -286,23 +311,30 @@ static void TriggerStep(SynthSystem *synth, float intensity, float bossIntensity
     }
 
     BassStep bassStep = synth->bassPattern[step];
+    int bassSemitones = synth->chordRoot + bassStep.note;
+    if (song) {
+        int line = (section & SECTION_BASS_ALT) ? 1 : 0;
+        int degree = song->bass[line][step];
+        bassStep.note = (signed char)degree;
+        bassStep.flags = (unsigned char)((((song->bassSlide[line] >> step) & 1u) ? BASS_STEP_SLIDE : 0u) |
+                                         (((song->bassAccent[line] >> step) & 1u) ? BASS_STEP_ACCENT : 0u));
+        if (degree >= 0) bassSemitones = ModeInterval(synth->musicConfig.mode, synth->chordDegree + degree);
+    }
     if (bassStep.note >= 0 && (buildProgress > 0.18f || bossDrop)) {
         synth->bassSlide = (bassStep.flags & BASS_STEP_SLIDE) != 0u;
         synth->bassAccent = (bassStep.flags & BASS_STEP_ACCENT) != 0u ? 1.0f : 0.0f;
         synth->bassEnv = 1.0f;
         synth->bassFilterEnv = 1.0f;
         synth->subEnv = 1.0f;
-        synth->bassTargetFrequency = synth->rootFrequency *
-                                     SemitoneRatio(synth->chordRoot + bassStep.note);
+        synth->bassTargetFrequency = synth->rootFrequency * SemitoneRatio(bassSemitones);
     }
 
     static const float hatVelocities[4] = { 1.0f, 0.60f, 0.85f, 0.55f };
     if (hatsActive) synth->hatTime = 0.0f;
     synth->hatVelocity = hatVelocities[step & 3];
-    if ((step & 3) == 2 && synth->musicState == SYNTH_STATE_HAZARD &&
-        buildProgress > 0.76f) {
-        synth->openHatTime = 0.0f;
-    }
+    bool openHats = song ? (section & SECTION_OPEN_HATS) && buildProgress > 0.76f
+                         : synth->musicState == SYNTH_STATE_HAZARD && buildProgress > 0.76f;
+    if ((step & 3) == 2 && openHats) synth->openHatTime = 0.0f;
     bool fillBar = (synth->barCount & 7) == 0;
     bool snareRoll = snareActive && fillBar && step >= 10;
     if (snareActive && (step == 4 || step == 12 || snareRoll)) {
@@ -338,7 +370,15 @@ static void TriggerStep(SynthSystem *synth, float intensity, float bossIntensity
         synth->arpEnv = 0.34f + melodyBuild * 0.44f + intensity * 0.10f;
     }
 
-    if (synth->musicState == SYNTH_STATE_HAZARD && (buildProgress > 0.72f || bossDrop) &&
+    if (song) {
+        // The motif: two bars of chord-relative degrees, an octave above the old lead.
+        int degree = song->lead[((synth->barCount & 1) << 4) | step];
+        if ((section & SECTION_LEAD) && (buildProgress > 0.72f || bossDrop) && degree >= 0) {
+            synth->leadFrequency = synth->rootFrequency *
+                SemitoneRatio(36 + ModeInterval(synth->musicConfig.mode, synth->chordDegree + degree));
+            synth->leadEnv = 1.0f;
+        }
+    } else if (synth->musicState == SYNTH_STATE_HAZARD && (buildProgress > 0.72f || bossDrop) &&
         (step == 0 || step == 3 || step == 6 || step == 10)) {
         int degree = (int)(SynthHash(humanizeSeed ^ 0x4ead1u) % 7u);
         synth->leadFrequency = synth->rootFrequency *
@@ -373,6 +413,8 @@ static void RenderAudioFrames(SynthSystem *synth, short *output, unsigned int fr
         synth->sidechainGain = 1.0f;
         synth->transitionFxTime = 0.0f;
         synth->transitionFxDirection = 1.0f;
+        synth->songBar = 0;
+        synth->sectionFlags = SECTION_ALL;
         SetPadChord(synth, 0);
     }
     unsigned int commandRead = atomic_load_explicit(&synth->sfxCommandRead,
@@ -551,6 +593,8 @@ static void RenderAudioFrames(SynthSystem *synth, short *output, unsigned int fr
         float padRight = ProcessLadder(&synth->padFilterRight, padRawRight * 0.38f);
         float sidechain = synth->sidechainGain;
         float padGain = (0.16f + padLfo * 0.045f + intensity * 0.055f) * sidechain;
+        bool breakSection = synth->song && (synth->sectionFlags & SECTION_BREAK);
+        if (breakSection) padGain *= 1.35f;
         padLeft *= padGain;
         padRight *= padGain;
 
@@ -794,7 +838,7 @@ static void RenderAudioFrames(SynthSystem *synth, short *output, unsigned int fr
         float sendRight = padRight + arp * 1.42f + lead * 0.42f + atmosphereRight +
                   transitionFx - glitchDownlifter + clap * rhythmGain * 0.18f;
         float feedback = 0.50f + intensity * 0.08f + buildProgress * 0.10f +
-                 preBossHush * 0.08f;
+                 preBossHush * 0.08f + (breakSection ? 0.08f : 0.0f);
         synth->delayDampLeft += (delayedRight - synth->delayDampLeft) * 0.35f;
         synth->delayDampRight += (delayedLeft - synth->delayDampRight) * 0.35f;
         synth->delayLeft[synth->delayIndex] =
@@ -810,6 +854,19 @@ static void RenderAudioFrames(SynthSystem *synth, short *output, unsigned int fr
         ProcessReverb(synth, (sendLeft + sendRight) * 0.5f, &reverbLeft, &reverbRight);
 
         float reverbWet = 0.38f + intensity * 0.08f + preBossHush * 0.22f;
+        if (synth->song) {   // song mix trims: dry signals only, sends above are untouched
+            const SynthSong *m = synth->song;
+            kick *= m->kickGain;
+            bass *= m->bassGain;
+            subBass *= m->subGain;
+            padLeft *= m->padGain;
+            padRight *= m->padGain;
+            arp *= m->arpGain;
+            lead *= m->leadGain;
+            hat *= m->hatGain;
+            openHat *= m->hatGain;
+            clap *= m->snareGain;
+        }
         float musicBedLeft = bass * (0.56f + bossIntensity * 0.08f) + subBass +
               padLeft + arp * 0.66f + lead + hat * rhythmGain * 0.60f +
               openHat * rhythmGain * 0.24f + clap * rhythmGain * 0.30f +
@@ -823,6 +880,18 @@ static void RenderAudioFrames(SynthSystem *synth, short *output, unsigned int fr
         float musicLeft = kick * (0.26f + bossIntensity * 0.015f) + musicBedLeft * 1.12f;
         float musicRight = kick * (0.26f + bossIntensity * 0.015f) + musicBedRight * 1.12f;
         float left = musicLeft * MUSIC_BUS_GAIN + sfx * SFX_BUS_GAIN;
+        METER(METER_KICK, kick * (0.26f + bossIntensity * 0.015f) * MUSIC_BUS_GAIN);
+        METER(METER_BASS, bass * (0.56f + bossIntensity * 0.08f) * 1.12f * MUSIC_BUS_GAIN);
+        METER(METER_SUB, subBass * 1.12f * MUSIC_BUS_GAIN);
+        METER(METER_PAD, padLeft * 1.12f * MUSIC_BUS_GAIN);
+        METER(METER_ARP, arp * 0.66f * 1.12f * MUSIC_BUS_GAIN);
+        METER(METER_LEAD, lead * 1.12f * MUSIC_BUS_GAIN);
+        METER(METER_HAT, hat * rhythmGain * 0.60f * 1.12f * MUSIC_BUS_GAIN);
+        METER(METER_OPEN_HAT, openHat * rhythmGain * 0.24f * 1.12f * MUSIC_BUS_GAIN);
+        METER(METER_SNARE, clap * rhythmGain * 0.30f * 1.12f * MUSIC_BUS_GAIN);
+        METER(METER_ATMOS, atmosphereLeft * 1.12f * MUSIC_BUS_GAIN);
+        METER(METER_ECHO, (delayedLeft * 0.32f + reverbLeft * reverbWet) * 1.12f * MUSIC_BUS_GAIN);
+        METER(METER_TOTAL, SoftClip(left));
         float right = musicRight * MUSIC_BUS_GAIN + sfx * SFX_BUS_GAIN;
 
         if (synth->glitchAmount > 0.08f) {
@@ -992,6 +1061,7 @@ static void InitializeSynthState(SynthSystem *synth, uint32_t runSeed,
     synth->sidechainGain = 1.0f;
     synth->musicState = SYNTH_STATE_AMBIENT;
     synth->transitionFxTime = 2.4f;
+    synth->sectionFlags = SECTION_ALL;
 
     synth->bassFrequency = synth->rootFrequency;
     synth->subEnv = 0.35f;
@@ -1024,9 +1094,38 @@ void InitAudioSynth(SynthSystem *synth, uint32_t runSeed) {
     InitAudioSynthConfigured(synth, runSeed, DefaultMusicConfig(runSeed));
 }
 
+static void StartSynthDevice(SynthSystem *synth);
+
+static void AttachSong(SynthSystem *synth, const SynthSong *song) {
+    synth->song = song;
+    synth->sectionFlags = SECTION_ALL;
+    SetPadChord(synth, synth->barCount >> 1);
+    for (int note = 0; note < PAD_CHORD_NOTES; note++) synth->padFrequency[note] = synth->padTargetFrequency[note];
+}
+
+void InitAudioSynthSong(SynthSystem *synth, uint32_t runSeed, const SynthSong *song) {
+    InitializeSynthState(synth, runSeed, DefaultMusicConfig(runSeed));
+    AttachSong(synth, song);
+    StartSynthDevice(synth);
+}
+
+void InitAudioSynthOffline(SynthSystem *synth, uint32_t runSeed, const SynthSong *song) {
+    InitializeSynthState(synth, runSeed, DefaultMusicConfig(runSeed));
+    AttachSong(synth, song);
+    atomic_store_explicit(&synth->initialized, true, memory_order_release);
+}
+
+void RenderAudioSynthOffline(SynthSystem *synth, short *stereoOut, unsigned int frames) {
+    RenderAudioFrames(synth, stereoOut, frames);
+}
+
 void InitAudioSynthConfigured(SynthSystem *synth, uint32_t runSeed,
                               SynthMusicConfig config) {
     InitializeSynthState(synth, runSeed, config);
+    StartSynthDevice(synth);
+}
+
+static void StartSynthDevice(SynthSystem *synth) {
     SetAudioStreamBufferSizeDefault(BUFFER_FRAMES);
     InitAudioDevice();
     if (!IsAudioDeviceReady()) return;

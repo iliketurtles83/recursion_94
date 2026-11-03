@@ -21,10 +21,12 @@ RECURSION_94.
   - [x] Slow the engine during the boss (legacy travel speed drops to 6 u/s).
   - [x] Boss music: intensity, preBossHush, boss riser.
   - [ ] Optional: camera pull-back / FOV widening on arrival (original §8.3).
-- [ ] **Step 4: one song** tuned for the corridor.
+- [x] **Step 4: one song** tuned for the corridor (`SYNTH_SONG_CORRIDOR`).
 - [ ] **Step 5: playtest and tune.**
   - [ ] Hand-play: audio by ear, beat bloom (`beatBloom` 0.35), flight and
         combat feel, enemy readability, camera framing.
+  - [ ] Listen to the corridor song (`song_render` WAVs): progression, bass,
+        lead motif, section lengths, mix trims, Dorian seeds.
   - [ ] Movement box and barrel rolls.
   - [ ] Backlog: steering-box bottom limit, engine trail join.
 

@@ -2,6 +2,33 @@
 
 This log is the source of truth for architectural choices, visual uplift milestones, feature statuses (Confirmed, Provisional, Rejected), and binary size tracking. The 1.44MB (1,474,560 bytes) contest limit applied to entries before 2026-11-03.
 
+## [Corridor song] First level song on the synth
+
+- Date: 2026-11-03. Status: Step 4 CONFIRMED by offline measurement and
+  determinism tests; not yet heard.
+- New `SynthSong` layer (`src/game/songs.c`, ~40 bytes of pattern data per
+  song). The seed keeps BPM, mode and arp timbre, so the selector's key and
+  tempo stay true. The song fixes an eight-bar progression (i i VI VII iv VI v
+  VII in minor), a rolling octave bass and a half-time break bass with slides
+  and accents, a two-bar chord-relative lead motif (replacing random lead
+  degrees), and a 64-bar section plan: A groove 16, B with lead and open hats
+  16, kickless break 8, B 16, turnaround 8. A boss holds B.
+- Structure fix: the original build reached the full beat at 1,250 units and
+  the pre-boss hush began around 1,150, so the full groove was never heard
+  before the first boss. The corridor song builds over 300 to 750 units.
+- Mix fix, measured with the new `song_render` tool (per-layer RMS): in the
+  original balance the sub was the loudest layer (-16 dB, above the kick),
+  hats and snare sat about 30 dB under the kick (-47 / -52 dB, effectively
+  silent), pad and arp were buried (-43 / -39 dB). Song trims bring the full
+  groove to kick -19, bass -22, sub -24, pad -33, arp -31, lead -27, hats -31,
+  snare -30 dB; peaks stay under -2.7 dBFS, nothing clips.
+- The original arrangement is unchanged without a song (golden hash intact);
+  the corridor song has its own golden hash in `game_audio`.
+- Dorian seeds turn the VI chord into a diminished one; left as seed flavour
+  pending a listen.
+
+---
+
 ## [Boss port] Recursive Core in the corridor
 
 - Date: 2026-11-03. Status: Step 3 CONFIRMED on Linux by tests and scripted

@@ -10,8 +10,8 @@ is five levels, each with its own environment, song and boss.
 - The repo root is the **engine** (formerly rec_tunnel's `sandbox/cybertunnel`).
   `src/game/` is the RECURSION_94 game layer: seed selector and run loop
   (`game.c`), combat logic (`gameplay.c`, ported), its neon presentation and HUD
-  (`combat_draw.c`), the procedural synth (`audio_synth.c`, ported) and the
-  selector art and seed palettes (`demoscene.c`, `palette.h`). `./build/recursion94` starts
+  (`combat_draw.c`), the procedural synth (`audio_synth.c`, ported), the level
+  songs (`songs.c`) and the selector art and seed palettes (`demoscene.c`, `palette.h`). `./build/recursion94` starts
   the game in the server corridor (preset `r94_corridor`); `--sandbox` gives the
   environment harness.
 - `legacy/` holds the rest of the original game (environment, old main loop):
@@ -127,11 +127,20 @@ ctest --test-dir build --output-on-failure         # engine_core/_ship/_vectorin
   every frame (as `env_corridor.c` does for `uWindows`, `uSkyline`, `uDetailRange`).
 - **Params**: every tunable has a globally unique name; group names become debug
   panel and ini sections. Editing a path-affecting group triggers a full rebuild.
-- **Audio**: `game_audio` checks the synth's deterministic PCM hash
-  (`AUDIO_VALIDATION_HASH` in `src/game/audio_synth.c`); re-bless it only for
-  intentional synth changes. The synth runs in Raylib's audio callback thread;
-  the game talks to it through lock-free command queues (`UpdateAudioSynth`,
-  `TriggerSynthSFX`) and reads telemetry such as the beat pulse.
+- **Audio**: `game_audio` checks two deterministic PCM hashes: the original
+  seeded arrangement (`AUDIO_VALIDATION_HASH` in `src/game/audio_synth.c`) and
+  the corridor song (`SONG_CORRIDOR_HASH` in `tests/test_audio.c`). Re-bless
+  them only for intentional changes. The synth runs in Raylib's audio callback
+  thread; the game talks to it through lock-free command queues
+  (`UpdateAudioSynth`, `TriggerSynthSFX`) and reads telemetry such as the beat pulse.
+- **Songs** (`SynthSong`, `src/game/songs.c`): one per level, layered on the
+  seeded synth. The seed keeps tempo, mode and arp timbre; the song fixes the
+  progression, bass lines, lead motif, section plan (cycling after the
+  build-up; a boss holds the fullest section), build-up distances and dry mix
+  trims. With no song (`InitAudioSynth`) the original arrangement plays
+  unchanged. Tune with `./build/song_render corridor|none SEED OUT.wav`: it
+  simulates a run (cruise, boosts, hush, boss, cruise), writes a WAV and
+  prints per-layer RMS for each 10 s window.
 - **Beat**: `ct_set_beat(pulse)` scales bloom by the `beatBloom` parameter
   (default 0, so sandbox looks are unchanged; `r94_corridor` sets 0.35).
 - **Game hook**: game code uses only `src/cybertunnel.h`. It feeds input via

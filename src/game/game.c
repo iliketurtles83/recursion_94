@@ -101,7 +101,7 @@ static void start_run(Game *g, uint32_t seed, bool withAudio)
     ct_reset_route(g->ct, (uint64_t)seed);
     update_arena(g);
     if (withAudio) {
-        InitAudioSynth(&g->synth, seed);
+        InitAudioSynthSong(&g->synth, seed, &SYNTH_SONG_CORRIDOR);   // level 1 song
         g->audioOn = IsAudioDeviceReady();
     }
     g->state = STATE_RUN;
