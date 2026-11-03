@@ -133,6 +133,28 @@ static void test_box_and_dash(FlightParams p)
     }
     path_free(&flat);
 }
+// External drift (boss gravity): with the stick centred the velocity settles at the
+// drift, steering against it still wins, and the box still holds.
+static void test_drift(FlightParams p)
+{
+    p.vectoringStrength=0;p.steerBoxHalfWidth=5.2f;p.steerBoxUp=5.8f;p.steerBoxDown=0;
+    PathSystem flat;path_init(&flat,7,(PathStyle){.baseRadius=6.5f,.radiusNoiseScale=100,.floorDepth=2.2f,.ceilingHeight=14});
+    path_ensure(&flat,0,4000);
+    FlightBox box=flight_steer_box(&p,&flat.style,6.5f);
+    FlightState s;flight_reset(&s,&p,&flat,0);
+    advance(&s,&p,&flat,(FlightInput){.driftX=1.5f,.driftY=.5f},60);
+    CHECK(fabsf(s.vx-1.5f)<.05f&&fabsf(s.vy-.5f)<.05f);
+    float vmax=p.steerAccel/p.steerDamping;
+    flight_reset(&s,&p,&flat,0);
+    advance(&s,&p,&flat,(FlightInput){.steerX=-1,.driftX=.4f*vmax},90);
+    CHECK(s.vx<-.5f*vmax);                                   // steering beats the pull
+    flight_reset(&s,&p,&flat,0);
+    float maxX=0;
+    for(int i=0;i<900;i++){flight_step(&s,&p,&flat,&(FlightInput){.driftX=3*vmax},dt);maxX=fmaxf(maxX,s.x);}
+    CHECK(maxX<=box.xMax+1e-5f&&s.x>box.xMax*.8f);             // pinned at the edge, never past it
+    printf("drift: settles at %.2f m/s, steering wins at 0.4 vmax, held at x=%.2f\n",1.5f,s.x);
+    path_free(&flat);
+}
 int main(void)
 {
     ParamRegistry reg={0};FlightParams p;flight_register_params(&p,&reg);
@@ -141,5 +163,6 @@ int main(void)
     PathSystem path;path_init(&path,83,(PathStyle){.baseRadius=100,.radiusNoiseScale=60,.hasWalls=true});path_ensure(&path,0,2000);
     test_forces(&p,&path);test_roll(&p,&path);test_attachments(&p,&path);test_fixed_steps(&p,&path);path_free(&path);
     test_box_and_dash(p);
+    test_drift(p);
     printf("thrust vectoring: %d checks, %d failures\n",checks,failures);return failures?1:0;
 }

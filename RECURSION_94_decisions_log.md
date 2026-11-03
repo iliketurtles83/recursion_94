@@ -2,6 +2,30 @@
 
 This log is the source of truth for architectural choices, visual uplift milestones, feature statuses (Confirmed, Provisional, Rejected), and binary size tracking. The 1.44MB (1,474,560 bytes) contest limit applied to entries before 2026-11-03.
 
+## [Leviathan gravity] Applied to flight
+
+- Date: 2026-11-03. Status: PROVISIONAL: checked in tests and a logged
+  `--boss 5` shot; hand-play the strength.
+- Engine: `CtInput`/`FlightInput` gain `driftX/driftY` (world units/s, path
+  right/up). It enters through the damping term (`-(v - drift) * damping`),
+  so with the stick centred the velocity settles at the drift, full stick
+  still wins, and the box cushion and clamp still hold. Zero drift is
+  bit-identical to before. `engine_vectoring` checks all three.
+- Game: the original added `pull` to a full-stick target velocity of 14
+  (x) / 10 (y) arena units/s. The engine gets the same fraction of its own
+  full-stick speed (`steerAccel / steerDamping`), so the pull is as strong
+  against the stick as it was: 2.1 / 3.4 / 5.4 (+ depth) out of 14 is 15%,
+  24% and 39% of full stick. One frame behind (gameplay runs after input).
+- New: a soft core. The original pull kept full strength right at the
+  boss's x/y and flipped direction every frame once the ship was under it;
+  it now fades linearly inside 2 arena units (`LEVIATHAN_PULL_CORE`).
+- `--boss N` (1..5) starts just short of boss N; `--boss 5` is the
+  Leviathan (drawn with the Recursive Core chassis for now). Logged run,
+  seed 94, stick centred: pull starts in the shielded phase and the ship
+  drifts from (0, 4.8) to under the boss in about 3 s and follows it.
+
+---
+
 ## [Story and menu] Scroller, title cards, curve timeline, pause menu
 
 - Date: 2026-11-03. Status: PROVISIONAL: checked in shots and tests;

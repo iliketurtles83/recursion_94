@@ -57,6 +57,7 @@ typedef struct CtInput {
     float steerX, steerY;        // -1..1
     bool  boost;
     bool  rollLeft, rollRight;   // barrel roll triggers
+    float driftX, driftY;        // external drift, world units/s along the path's right/up (0 = none)
 } CtInput;
 
 typedef struct CtPathSample {

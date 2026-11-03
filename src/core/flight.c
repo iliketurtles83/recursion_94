@@ -231,8 +231,9 @@ void flight_step(FlightState *st, const FlightParams *p, const PathSystem *path,
             edgeX = a * nx; edgeY = a * ny;
         }
     }
-    st->vx += (sx*p->steerAccel+thrust*(float)dv_dot(force,ps.B)+edgeX-st->vx*p->steerDamping)*fdt;
-    st->vy += (sy*p->steerAccel+thrust*(float)dv_dot(force,ps.N)+edgeY-st->vy*p->steerDamping)*fdt;
+    // Drift enters through the damping term, so the velocity settles at steer + drift.
+    st->vx += (sx*p->steerAccel+thrust*(float)dv_dot(force,ps.B)+edgeX-(st->vx-in->driftX)*p->steerDamping)*fdt;
+    st->vy += (sy*p->steerAccel+thrust*(float)dv_dot(force,ps.N)+edgeY-(st->vy-in->driftY)*p->steerDamping)*fdt;
     st->x += st->vx * fdt;
     st->y += st->vy * fdt;
     // Hard limit behind the cushion (boost vectoring can push past the spring).

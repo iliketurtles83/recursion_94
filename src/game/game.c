@@ -29,6 +29,12 @@
 // bars, to fovBase * (1 - BOSS_PUSH_AMOUNT). It eases back after the fight.
 #define BOSS_PUSH_BARS 4
 #define BOSS_PUSH_AMOUNT 0.20f
+// Full-stick ship speed in the original game (arena units/s, x and y). Leviathan
+// gravity (player.pull) was added to that target velocity; the engine gets the
+// same fraction of its own full-stick speed as a drift, so the pull feels as
+// strong against the stick as it did.
+#define ORIGINAL_STEER_SPEED_X 14.0f
+#define ORIGINAL_STEER_SPEED_Y 10.0f
 
 typedef enum { STATE_SELECT, STATE_RUN } GameState;
 
@@ -57,6 +63,7 @@ typedef struct Game {
     float          push;         // current push-in, 0..1
     double         pushStartStep; // music step of the first push bar (-1: no boss)
     bool           bossTest;     // --boss: start each run just short of the first boss
+    int            bossRound;    // --boss N: that boss instead (1..5)
     bool           showBox;      // F4: steering box and ship centre overlay (prototyping)
     MusicClock     music;
     Story          story;
@@ -112,7 +119,11 @@ static void start_run(Game *g, uint32_t seed, bool withAudio)
     InitGameplay(&g->play, seed);
     music_clock_reset(&g->music, GetSynthSeedBpm(seed));
     story_reset(&g->story, seed, g->music.stepsPerSecond, LEGEND_SECONDS - 1.5f);
-    if (g->bossTest) g->virtualZ = g->play.boss.nextSpawnDistance - 40.0;
+    if (g->bossTest) {
+        // Earlier bosses count as cleared, so round N spawns next (5 = the Leviathan).
+        if (g->bossRound > 1) g->play.boss.encounterIndex = g->bossRound - 1;
+        g->virtualZ = g->play.boss.nextSpawnDistance - 40.0;
+    }
     ct_param_set(g->ct, "baseSpeed", g->baseSpeed);
     ct_param_set(g->ct, "fovBase", g->baseFov);
     g->push = 0.0f;
@@ -262,6 +273,10 @@ static void update_run(Game *g, float dt, const Controls *c)
     bool boosting = c->flight.boost && CanGameplayBoost(&g->play);
     CtInput flight = c->flight;
     flight.boost = boosting;
+    // Gravity from the previous gameplay step (one frame behind; it changes slowly).
+    float vmax = ct_param_get(g->ct, "steerAccel") / fmaxf(ct_param_get(g->ct, "steerDamping"), 0.1f);
+    flight.driftX = g->play.player.pull.x / ORIGINAL_STEER_SPEED_X * vmax;
+    flight.driftY = g->play.player.pull.y / ORIGINAL_STEER_SPEED_Y * vmax;
     if (g->play.gameOver) flight = (CtInput){ 0 };
     ct_set_input(g->ct, &flight);
 
@@ -421,7 +436,7 @@ int game_run(CtTunnel *ct, const GameOptions *o)
     static Game g;   // large (combat pools); keep it off the stack
     g = (Game){ .ct = ct, .state = STATE_SELECT, .selectedSeed = o->seed, .runSeed = o->seed,
                 .baseSpeed = ct_param_get(ct, "baseSpeed"),
-                .baseFov = ct_param_get(ct, "fovBase"), .bossTest = o->bossTest,
+                .baseFov = ct_param_get(ct, "fovBase"), .bossTest = o->bossTest, .bossRound = o->bossRound,
                 .showBox = o->steerBox || o->shotSeconds < 0.0 };
     combat_draw_init(&g.draw);
     ct_set_scene_draw(ct, scene_draw, &g);

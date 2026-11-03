@@ -16,6 +16,9 @@ typedef struct FlightInput {
     float steerX, steerY;    // -1..1 (right, up)
     bool  boost;
     bool  rollLeft, rollRight;
+    // External drift (world units/s, path frame right/up): the lateral velocity
+    // settles at the steering velocity plus this. 0 = none. Used for boss gravity.
+    float driftX, driftY;
 } FlightInput;
 
 typedef struct FlightParams {

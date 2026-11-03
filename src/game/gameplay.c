@@ -708,6 +708,8 @@ static void HitPlayer(GameplaySystem *game, Vector3 hitPosition, GameplayEvents 
 
 // The ship's position comes from the engine's flight model (GameplayInput, in
 // arena units). This keeps the original energy, special-attack and fire logic.
+#define LEVIATHAN_PULL_CORE 2.0f   // arena units
+
 static void UpdatePlayer(GameplaySystem *game, float dt, bool boosting,
                          const GameplayInput *input, GameplayEvents *events) {
     game->player.position.x = ClampFloat(input->playerX, PLAYER_MIN_X, PLAYER_MAX_X);
@@ -725,6 +727,9 @@ static void UpdatePlayer(GameplaySystem *game, float dt, bool boosting,
         float gravity = game->boss.phase == BOSS_SINGULARITY ? 5.4f
                         : game->boss.phase == BOSS_ENRAGED ? 3.4f : 2.1f;
         gravity += fminf((float)(GetGameplayRecursionDepth(game) - 1) * 0.16f, 1.8f);
+        // Soft core: the pull fades out over the last couple of units, so a ship
+        // parked under the boss settles instead of flipping direction every frame.
+        gravity *= fminf(distance / LEVIATHAN_PULL_CORE, 1.0f);
         game->player.pull = (Vector2){ dx / distance * gravity, dy / distance * gravity * 0.72f };
     }
 

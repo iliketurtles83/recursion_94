@@ -13,6 +13,7 @@ typedef struct GameOptions {
     double      shotSeconds;   // >= 0: deterministic run screenshot after this many seconds, then exit
     const char *shotOut;       // screenshot path for shotSeconds
     bool        bossTest;      // --boss: start each run just short of the first boss
+    int         bossRound;     // --boss N: ... of boss N of the recursion (1..5; 0 = 1)
     bool        steerHold;     // --steer X,Y: the shot pilot holds this stick (no weave)
     float       steerX, steerY;
     double      rollAt;        // --roll T: the shot pilot starts a right barrel roll at T s (< 0 = never)

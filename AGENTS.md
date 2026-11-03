@@ -31,7 +31,8 @@ is five levels, each with its own environment, song and boss.
   arena width (`BOSS_SCALE`, `BOSS_CENTER_Y`). During a boss fight the game
   scales the engine's `baseSpeed` by the original travel speed over cruise
   (about a quarter), so the corridor drifts while the arena holds. Leviathan
-  gravity is reported in `player.pull` but not applied yet. The original
+  gravity (`player.pull`) reaches flight as `CtInput.driftX/Y`, scaled to the
+  same fraction of full-stick speed as in the original. The original
   game's environment and its ship, enemy and shot graphics are being dropped. Delete legacy files once their content is ported.
   `archive/AGENTS_legacy.md` has the rules that applied to that code.
 - First milestone: a vertical slice (server corridor, engine flight, ported
@@ -71,7 +72,7 @@ ctest --test-dir build --output-on-failure         # engine_core/_ship/_vectorin
 ./build/recursion94                         # game: seed selector, then the run
 ./build/recursion94 --seed 94               # skip the selector
 ./build/recursion94 --seed 94 --game-shot 5 --out FILE --hidden   # deterministic game frame
-./build/recursion94 --seed 94 --boss        # start 40 units short of the first boss (works with --game-shot)
+./build/recursion94 --seed 94 --boss [N]    # start 40 units short of boss N (1..5, default 1; works with --game-shot)
 ./build/recursion94 --seed 94 --game-shot 3 --steer 1,-1 --roll 2.5 --steer-box --out FILE --hidden
     # shot pilot holds the stick / rolls right at 2.5 s; draw the steering box (F4 in play)
 ./build/recursion94 --sandbox --env N [--seed N] [--preset NAME] [--set name=value ...]

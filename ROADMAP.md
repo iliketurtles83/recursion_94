@@ -59,7 +59,9 @@ RECURSION_94.
 
 - [ ] The other four levels (environment, song, boss each). Boss chassis
       reference: `git show 1a7c6ca:legacy/src/gameplay.c`, `Draw*Boss`.
-- [ ] Apply Leviathan gravity (`player.pull`) to flight (level 5 boss).
+- [x] Apply Leviathan gravity (`player.pull`) to flight (level 5 boss):
+      engine drift input (`CtInput.driftX/Y`), soft core near the boss,
+      `--boss 5` to reach it. Hand-play the strength.
 - [ ] Ship selection. The dart is the primary ship; the courier (fighter
       jet) does not suit cyberspace. The original RECURSION_94 probe
       (`DrawPlayerShip`/`DrawPlayerExhaust`) was not ported: see

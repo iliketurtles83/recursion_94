@@ -22,6 +22,7 @@ typedef struct Cli {
     const char *preset;
     const char *shotOut;
     bool bossTest;
+    int  bossRound;
     bool steerHold, steerBox;
     float steerX, steerY;
     double rollAt;
@@ -33,7 +34,7 @@ typedef struct Cli {
 
 static void usage(void)
 {
-    printf("recursion94 [--seed N] [--w W --h H] [--vsync 0|1] [--fps N] [--env 0..5] [--game-shot SECONDS [--out FILE]] [--boss]\n"
+    printf("recursion94 [--seed N] [--w W --h H] [--vsync 0|1] [--fps N] [--env 0..5] [--game-shot SECONDS [--out FILE]] [--boss [1..5]]\n"
            "            [--steer X,Y] [--roll SECONDS] [--steer-box]\n"
            "            [--bench SECONDS [--speed U]] [--shot S [--out FILE]] [--preset NAME] [--write-preset NAME] [--list-params] [--hdr8] [--noship] [--ui] [--whiteout] [--boost]\n"
            "            [--set NAME=VALUE ...] [--hidden] [--sandbox]\n");
@@ -67,7 +68,11 @@ static Cli parse(int argc, char **argv)
         else if (!strcmp(a, "--hidden")) c.hidden = true;
         else if (!strcmp(a, "--sandbox")) c.sandbox = true;
         else if (!strcmp(a, "--game-shot") && v) { c.gameShot = atof(v); i++; }
-        else if (!strcmp(a, "--boss")) c.bossTest = true;
+        else if (!strcmp(a, "--boss")) {
+            c.bossTest = true;
+            // Optional round 1..5 (5 = the Fractal Leviathan).
+            if (v && v[0] >= '1' && v[0] <= '5' && !v[1]) { c.bossRound = v[0] - '0'; i++; }
+        }
         else if (!strcmp(a, "--steer") && v) { c.steerHold = sscanf(v, "%f,%f", &c.steerX, &c.steerY) == 2; i++; }
         else if (!strcmp(a, "--roll") && v) { c.rollAt = atof(v); i++; }
         else if (!strcmp(a, "--steer-box")) c.steerBox = true;
@@ -164,7 +169,7 @@ int main(int argc, char **argv)
     if (game) {
         GameOptions options = { .seed = cli.hasSeed ? (uint32_t)cli.seed : 94u, .skipSelector = cli.hasSeed,
                                 .shotSeconds = cli.gameShot, .shotOut = cli.shotOut,
-                                .bossTest = cli.bossTest, .steerHold = cli.steerHold,
+                                .bossTest = cli.bossTest, .bossRound = cli.bossRound, .steerHold = cli.steerHold,
                                 .steerX = cli.steerX, .steerY = cli.steerY, .rollAt = cli.rollAt,
                                 .steerBox = cli.steerBox };
         int result = game_run(ct, &options);

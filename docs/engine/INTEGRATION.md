@@ -76,6 +76,9 @@ EndDrawing();
 ship/camera state, the view/projection matrices and the vanishing point used by render.
 
 Input conventions: `steerX` right, `steerY` up; `rollLeft/rollRight` trigger a barrel roll.
+`driftX/driftY` (world units/s along the path's right/up, default 0) add an external
+drift: with the stick centred the ship's sideways velocity settles at the drift, and
+the steering box still holds. The game uses it for the Leviathan's gravity.
 
 ## 5. Rendering into the game's render target
 

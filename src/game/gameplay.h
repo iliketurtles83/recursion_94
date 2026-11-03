@@ -89,7 +89,7 @@ typedef struct {
     bool dodging;          // from GameplayInput: no damage while set
     float chargeTime;
     float bank;
-    Vector2 pull;          // Leviathan gravity request (arena units/s), applied by the flight model
+    Vector2 pull;          // Leviathan gravity (arena units/s); game.c hands it to the engine as drift
     bool fireHeldLast;
 } PlayerState;
 

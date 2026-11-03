@@ -558,6 +558,8 @@ void ct_set_input(CtTunnel *ct, const CtInput *in)
     ct->input.steerX = in->steerX;
     ct->input.steerY = in->steerY;
     ct->input.boost = in->boost;
+    ct->input.driftX = in->driftX;
+    ct->input.driftY = in->driftY;
     // Triggers latch until a sim step consumes them (frames can run without a step).
     ct->input.rollLeft = ct->input.rollLeft || in->rollLeft;
     ct->input.rollRight = ct->input.rollRight || in->rollRight;
