@@ -69,6 +69,13 @@ RECURSION_94.
   - [ ] Curve timeline (GNU Rocket style): animated values as Hermite
         keyframe tracks evaluated at the music clock time, for the intro,
         title, boss arrivals and level transitions. Needs the music clock.
+  - [ ] Story scroller (`recursion_94.md` §9.3–9.4): sine scrolltext
+        over each level transition, in the song's quiet section, with the
+        §9.4 texts and the collapse line after the Leviathan. At recursion
+        depth 2+ the text is corrupted procedurally (hash of seed and
+        depth: glitched characters, stutters, dropped words), with no
+        stored variants. Also archetype title cards for boss arrivals
+        (`THRESHOLD GUARDIAN // RECURSIVE CORE`).
 - [ ] Raymarched SDF bosses and effects. Triangles and ribbons stay, but not
       every boss in that style: give some of the remaining bosses (and maybe
       the selector art) raymarched SDF forms (metaballs, fractal folds, a core
