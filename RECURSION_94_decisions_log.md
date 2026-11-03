@@ -34,6 +34,11 @@ This log is the source of truth for architectural choices, visual uplift milesto
   clearance (-1.6). F4 (or `--steer-box` in shots) draws it with the ship's
   centre dot. The arena now comes from `ct_steer_box` (taller: 26 x 18.5
   arena units instead of 26 x 17).
+- Hand-play: top and bottom edges are right; the sides were too wide. Half
+  width 5.2 -> 4.2 (arena 21 x 18.5): the ship's corners now sit at about
+  20% / 80% of the screen width, clear of the side HUD. The F4 overlay is
+  drawn in the game plane, so its edges slide with the camera and are not all
+  on screen at once; it shows the flight limit, not a screen frame.
 - Camera: `camFollowLateral` 0.85 -> 0.55. At 0.85 the camera chased the ship
   so the box slid off screen and the ship barely moved in the frame; at 0.55
   the box roughly fills the screen and the ship stays visible in all four

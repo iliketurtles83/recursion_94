@@ -15,9 +15,9 @@
 #include <stdio.h>
 
 #define LEGEND_SECONDS 8.0f
-// World units per arena unit. The corridor's steering box (about 10.4 x 7.4)
-// becomes an arena of about 26 x 18.5: as wide as the original game's play field,
-// and taller. Combat timing stays exactly as tuned, because it runs in arena units.
+// World units per arena unit. The corridor's steering box (about 8.4 x 7.4)
+// becomes an arena of about 21 x 18.5: narrower than the original game's play
+// field (30), and taller. Combat timing stays exactly as tuned, because it runs in arena units.
 #define ARENA_SCALE 0.4f
 #define ARENA_FLOOR_Y 0.8f
 // Audio rendered but not yet heard, in device callbacks. Tune by ear: raise it
