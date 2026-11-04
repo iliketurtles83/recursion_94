@@ -77,6 +77,8 @@ typedef struct Game {
     int            bossRound;    // --boss N: that boss instead (1..5)
     int            startDepth;   // --depth N: runs start at recursion depth N
     bool           showBox;      // F4: steering box and ship centre overlay (prototyping)
+    bool           syncTest;     // F5: beat flash from the music clock; [ ] tune the latency
+    double         latency;      // audio still buffered, in device callbacks (MUSIC_LATENCY_CALLBACKS)
     MusicClock     music;
     Story          story;
     Titles         titles;
@@ -241,7 +243,7 @@ static void update_clock(Game *g, float dt)
         music_clock_advance(&g->music, dt);
     } else {
         SynthTelemetry t = GetSynthTelemetry(&g->synth);
-        double buffered = MUSIC_LATENCY_CALLBACKS * t.callbackFrames * (t.currentBpm / 15.0) / SAMPLE_RATE;
+        double buffered = g->latency * t.callbackFrames * (t.currentBpm / 15.0) / SAMPLE_RATE;
         music_clock_follow(&g->music, dt, t.musicStep - buffered, t.currentBpm);
     }
     SetGameplayMusicClock(&g->play, &g->music);
@@ -369,9 +371,30 @@ static void draw_pause_menu(const Game *g, const DemosceneSystem *demo, int w, i
     }
 }
 
+// F5 sync test: the screen edge flashes on every beat of the game's music clock (brighter
+// on the bar). Tune [ ] until the flash sits on the kick, then bake the value into
+// MUSIC_LATENCY_CALLBACKS.
+static void draw_sync_test(const Game *g, int w, int h)
+{
+    float since = music_clock_since(&g->music, MUSIC_BEAT);
+    bool bar = music_clock_since(&g->music, MUSIC_BAR) < 0.5f * MUSIC_BEAT / g->music.stepsPerSecond;
+    float a = fmaxf(0.0f, 1.0f - since / 0.08f);
+    if (a > 0.0f) {
+        Color c = bar ? (Color){ 255, 255, 255, (unsigned char)(255 * a) } : (Color){ 80, 220, 255, (unsigned char)(200 * a) };
+        int t = bar ? 28 : 16;
+        DrawRectangle(0, 0, w, t, c); DrawRectangle(0, h - t, w, t, c);
+        DrawRectangle(0, 0, t, h, c); DrawRectangle(w - t, 0, t, h, c);
+    }
+    double ms = 0.0;
+    if (g->audioOn) ms = g->latency * GetSynthTelemetry(&g->synth).callbackFrames * 1000.0 / SAMPLE_RATE;
+    const char *txt = TextFormat("SYNC TEST  latency %.2f callbacks = %.0f ms   [ earlier   ] later   F5 off", g->latency, ms);
+    DrawText(txt, w / 2 - MeasureText(txt, 18) / 2, 44, 18, (Color){ 255, 255, 255, 230 });
+}
+
 static void draw_overlay(Game *g, int w, int h)
 {
     if (g->showBox) draw_steer_box(g, w, h);
+    if (g->syncTest) draw_sync_test(g, w, h);
     DemosceneSystem demo;
     InitDemoscene(&demo, g->runSeed);
     Color dim = { demo.primary.r, demo.primary.g, demo.primary.b, 170 };
@@ -456,7 +479,7 @@ int game_run(CtTunnel *ct, const GameOptions *o)
                 .baseSpeed = ct_param_get(ct, "baseSpeed"),
                 .baseFov = ct_param_get(ct, "fovBase"),
                 .ship = o->ship >= 1 && o->ship <= SHIP_COUNT ? o->ship - 1 : 0, .bossTest = o->bossTest, .bossRound = o->bossRound, .startDepth = o->depth,
-                .showBox = o->steerBox || o->shotSeconds < 0.0 };
+                .showBox = o->steerBox || o->shotSeconds < 0.0, .latency = MUSIC_LATENCY_CALLBACKS };
     combat_draw_init(&g.draw);
     ct_set_scene_draw(ct, scene_draw, &g);
     bool shotMode = o->shotSeconds >= 0.0;
@@ -523,6 +546,12 @@ int game_run(CtTunnel *ct, const GameOptions *o)
                 continue;
             }
             if (IsKeyPressed(KEY_F4)) g.showBox = !g.showBox;
+            if (IsKeyPressed(KEY_F5)) g.syncTest = !g.syncTest;
+            if (g.syncTest) {
+                // More latency moves the game's clock later against the audio.
+                if (IsKeyPressed(KEY_RIGHT_BRACKET)) g.latency = fmin(g.latency + 0.25, 8.0);
+                if (IsKeyPressed(KEY_LEFT_BRACKET)) g.latency = fmax(g.latency - 0.25, -2.0);
+            }
         }
 
         if (!g.paused) {

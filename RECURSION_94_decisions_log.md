@@ -2,6 +2,23 @@
 
 This log is the source of truth for architectural choices, visual uplift milestones, feature statuses (Confirmed, Provisional, Rejected), and binary size tracking. The 1.44MB (1,474,560 bytes) contest limit applied to entries before 2026-11-03.
 
+## [Flight] Edge cushion and barrel-roll dash after the first hand-play
+
+- Date: 2026-11-04. Status: PROVISIONAL: tests pass; hand-play again.
+- Holding a corner and letting go pushed the ship back toward the centre: the
+  cushion was a position spring sized to balance full stick at the edge, so it
+  pushed inward as soon as the stick was released. It now fades outward stick
+  to nothing over the soft band and damps outward motion, and never pushes
+  inward (`edge_cushion`, `flight.c`). The hard clamp still holds vectoring,
+  dashes and drift.
+- The roll's sideways shift was an instant 18 u/s kick that decayed in about
+  0.14 s, so the shift was mostly done before most of the turn. `barrelRollDash`
+  is now a distance (world units) laid out on the same smoothstep as the roll
+  angle: half the shift at half the turn, all of it when the turn ends.
+  `r94_corridor` uses 2.6, the old kick's total travel (18 / damping 7).
+- F5 sync test in a run: the screen edge flashes on each beat of the game's
+  music clock; `[` `]` change the latency live, shown in callbacks and ms.
+
 ## [Repo] Legacy removed
 
 - Date: 2026-11-04. Status: CONFIRMED.

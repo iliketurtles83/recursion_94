@@ -109,21 +109,30 @@ static void test_box_and_dash(FlightParams p)
         for(int i=0;i<600;i++){flight_step(&s,&p,&flat,&in,dt);maxX=fmaxf(maxX,fabsf(s.x));maxY=fmaxf(maxY,s.y);minY=fminf(minY,s.y);}
         CHECK(maxX<=box.xMax+1e-5f&&maxY<=box.yMax+1e-5f&&minY>=box.yMin-1e-5f);
         CHECK(fabsf(s.x)>box.xMax*.9f);   // the corner is reachable
+        // Releasing the stick in the corner leaves the ship there (no push back to the centre).
+        FlightState held=s;
+        advance(&held,&p,&flat,(FlightInput){0},60);
+        CHECK(fabsf(held.x)>=fabsf(s.x)-.05f&&fabsf(held.y-s.y)<.05f);
         // A dash into the wall still ends inside the box.
         in.rollLeft=corners[c].x<0;in.rollRight=corners[c].x>0;
         for(int i=0;i<200;i++){flight_step(&s,&p,&flat,&in,dt);in.rollLeft=in.rollRight=false;CHECK(fabsf(s.x)<=box.xMax+1e-5f);}
     }
     printf("steering box %.1f..%.1f x %.2f..%.1f: corners reached, never left\n",box.xMin,box.xMax,box.yMin,box.yMax);
-    p.barrelRollDash=18;p.barrelRollCooldown=.35f;
+    p.barrelRollDash=2.6f;p.barrelRollCooldown=.35f;
     for(int side=-1;side<=1;side+=2){
         FlightState s;flight_reset(&s,&p,&flat,0);
         FlightInput in={.rollLeft=side<0,.rollRight=side>0};
         flight_step(&s,&p,&flat,&in,dt);
-        float maxBarrel=0;int steps=1;
-        while(s.barrelT>=0){flight_step(&s,&p,&flat,&(FlightInput){0},dt);maxBarrel=fmaxf(maxBarrel,fabsf(s.barrel));steps++;}
+        float maxBarrel=0,halfX=0;int steps=1;
+        while(s.barrelT>=0){
+            float before=s.barrelT;
+            flight_step(&s,&p,&flat,&(FlightInput){0},dt);maxBarrel=fmaxf(maxBarrel,fabsf(s.barrel));steps++;
+            if(before<.5f&&s.barrelT>=.5f)halfX=s.x;
+        }
         CHECK(maxBarrel>2*3.14159f*.99f);                 // a full turn
         CHECK(fabs(steps*dt-p.barrelRollTime)<2*dt);
-        CHECK(s.x*side>1.5f);                              // dashed toward the roll
+        CHECK(fabsf(s.x-side*p.barrelRollDash)<.01f);      // dashed the full distance toward the roll
+        CHECK(fabsf(halfX-side*p.barrelRollDash*.5f)<.15f); // half the dash at half the turn: in sync
         CHECK(s.barrel==0&&s.barrelCooldown>0);
         FlightInput again={.rollLeft=side<0,.rollRight=side>0};
         flight_step(&s,&p,&flat,&again,dt);CHECK(s.barrelT<0);   // cooling down

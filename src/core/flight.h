@@ -41,7 +41,7 @@ typedef struct FlightParams {
     float shakeAmount;
     float cameraRollFollow;  // 0 = tunnel roll only, 1 = follow ship bank
     float barrelRollTime;
-    float barrelRollDash;    // lateral speed kick in the roll direction (world units/s, 0 = none)
+    float barrelRollDash;    // sideways distance covered over the roll, on the roll's curve (world units, 0 = none)
     float barrelRollCooldown; // seconds after a roll before the next can start
     bool  autopilot;
     int   shipModel;         // FLIGHT_SHIP_*: which model flies (engine positions differ)

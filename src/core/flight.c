@@ -39,7 +39,7 @@ void flight_register_params(FlightParams *p, ParamRegistry *reg)
     params_float(reg, g, "shakeAmount", &p->shakeAmount, 0.06f, 0.0f, 0.5f);
     params_float(reg, g, "cameraRollFollow", &p->cameraRollFollow, 0.35f, 0.0f, 1.0f);
     params_float(reg, g, "barrelRollTime", &p->barrelRollTime, 0.7f, 0.2f, 3.0f);
-    params_float(reg, g, "barrelRollDash", &p->barrelRollDash, 0.0f, 0.0f, 80.0f);
+    params_float(reg, g, "barrelRollDash", &p->barrelRollDash, 0.0f, 0.0f, 20.0f);
     params_float(reg, g, "barrelRollCooldown", &p->barrelRollCooldown, 0.0f, 0.0f, 3.0f);
 }
 
@@ -93,15 +93,17 @@ Vector3 flight_exhaust_offset(int engine,Vector2 angles,float plumeLength)
 static float clampf(float x, float lo, float hi) { return x < lo ? lo : (x > hi ? hi : x); }
 
 // Edge cushion: acceleration along the outward direction for a ship at distance d (outward
-// velocity v) from the centre. Zero until the last `soft` fraction of the limit, then a spring
-// that balances full steering input exactly at the limit, plus damping of outward motion.
-static float edge_cushion(float d, float v, float limit, float soft, float accel, float damping)
+// velocity v, outward stick u) from the centre. Zero until the last `soft` fraction of the
+// limit, then it fades outward stick to nothing at the limit and damps outward motion. It
+// never pushes inward, so a ship parked at the edge stays there when the stick is released.
+static float edge_cushion(float d, float v, float u, float limit, float soft, float accel, float damping)
 {
     float band = limit * soft;
     float pen = d - (limit - band);
     if (band <= 1e-4f || pen <= 0.0f) return 0.0f;
-    float t = pen / band;
-    float a = -accel * t;
+    float t = fminf(pen / band, 1.0f);
+    float a = 0.0f;
+    if (u > 0.0f) a -= accel * t * u;
     if (v > 0.0f) a -= 2.0f * damping * t * v;
     return a;
 }
@@ -222,22 +224,40 @@ void flight_step(FlightState *st, const FlightParams *p, const PathSystem *path,
     FlightBox box = flight_steer_box(p, style, (float)ps.radius);
     float edgeX = 0.0f, edgeY = 0.0f;
     if (!style->hasWalls) {
-        if (st->x >= 0.0f) edgeX = edge_cushion(st->x, st->vx, box.xMax, p->steerSoftEdge, p->steerAccel, p->steerDamping);
-        else edgeX = -edge_cushion(-st->x, -st->vx, -box.xMin, p->steerSoftEdge, p->steerAccel, p->steerDamping);
-        if (st->y >= 0.0f) edgeY = edge_cushion(st->y, st->vy, box.yMax, p->steerSoftEdge, p->steerAccel, p->steerDamping);
-        else edgeY = -edge_cushion(-st->y, -st->vy, -box.yMin, p->steerSoftEdge, p->steerAccel, p->steerDamping);
+        if (st->x >= 0.0f) edgeX = edge_cushion(st->x, st->vx, sx, box.xMax, p->steerSoftEdge, p->steerAccel, p->steerDamping);
+        else edgeX = -edge_cushion(-st->x, -st->vx, -sx, -box.xMin, p->steerSoftEdge, p->steerAccel, p->steerDamping);
+        if (st->y >= 0.0f) edgeY = edge_cushion(st->y, st->vy, sy, box.yMax, p->steerSoftEdge, p->steerAccel, p->steerDamping);
+        else edgeY = -edge_cushion(-st->y, -st->vy, -sy, -box.yMin, p->steerSoftEdge, p->steerAccel, p->steerDamping);
     } else {
         float r0 = sqrtf(st->x * st->x + st->y * st->y);
         if (r0 > 1e-4f) {
             float nx = st->x / r0, ny = st->y / r0;
-            float a = edge_cushion(r0, st->vx * nx + st->vy * ny, limit, p->steerSoftEdge, p->steerAccel, p->steerDamping);
+            float a = edge_cushion(r0, st->vx * nx + st->vy * ny, clampf(sx,-1,1) * nx + clampf(sy,-1,1) * ny, limit, p->steerSoftEdge, p->steerAccel, p->steerDamping);
             edgeX = a * nx; edgeY = a * ny;
         }
+    }
+    // Barrel roll: a full turn on a smoothstep, with the dash riding the same curve, so the
+    // sideways shift ends exactly when the roll does. The box clamp below still holds the dash.
+    float dashX = 0.0f;
+    st->barrelCooldown = fmaxf(0.0f, st->barrelCooldown - fdt);
+    if (st->barrelT < 0.0f && st->barrelCooldown <= 0.0f && (in->rollLeft || in->rollRight)) {
+        st->barrelT = 0.0f;
+        st->barrelDir = in->rollLeft ? -1 : 1;
+    }
+    if (st->barrelT >= 0.0f) {
+        float t0 = st->barrelT;
+        float e0 = t0 * t0 * (3.0f - 2.0f * t0);
+        st->barrelT += fdt / p->barrelRollTime;
+        float t = fminf(st->barrelT, 1.0f);
+        float e = t * t * (3.0f - 2.0f * t);
+        dashX = (float)st->barrelDir * p->barrelRollDash * (e - e0);
+        if (st->barrelT >= 1.0f) { st->barrelT = -1.0f; st->barrel = 0.0f; st->barrelCooldown = p->barrelRollCooldown; }
+        else st->barrel = (float)st->barrelDir * e * 2.0f * PI_F;
     }
     // Drift enters through the damping term, so the velocity settles at steer + drift.
     st->vx += (sx*p->steerAccel+thrust*(float)dv_dot(force,ps.B)+edgeX-(st->vx-in->driftX)*p->steerDamping)*fdt;
     st->vy += (sy*p->steerAccel+thrust*(float)dv_dot(force,ps.N)+edgeY-(st->vy-in->driftY)*p->steerDamping)*fdt;
-    st->x += st->vx * fdt;
+    st->x += st->vx * fdt + dashX;
     st->y += st->vy * fdt;
     // Hard limit behind the cushion (boost vectoring can push past the spring).
     float r = sqrtf(st->x * st->x + st->y * st->y);
@@ -273,21 +293,6 @@ void flight_step(FlightState *st, const FlightParams *p, const PathSystem *path,
     st->bank += (bankTarget - st->bank) * k;
     st->tilt += (tiltTarget - st->tilt) * k;
 
-    st->barrelCooldown = fmaxf(0.0f, st->barrelCooldown - fdt);
-    if (st->barrelT < 0.0f && st->barrelCooldown <= 0.0f && (in->rollLeft || in->rollRight)) {
-        st->barrelT = 0.0f;
-        st->barrelDir = in->rollLeft ? -1 : 1;
-        st->vx += (float)st->barrelDir * p->barrelRollDash;   // dash: the edge cushion still holds the box
-    }
-    if (st->barrelT >= 0.0f) {
-        st->barrelT += fdt / p->barrelRollTime;
-        if (st->barrelT >= 1.0f) { st->barrelT = -1.0f; st->barrel = 0.0f; st->barrelCooldown = p->barrelRollCooldown; }
-        else {
-            float t = st->barrelT;
-            float e = t * t * (3.0f - 2.0f * t);
-            st->barrel = (float)st->barrelDir * e * 2.0f * PI_F;
-        }
-    }
 
     derive(st, p, path, false, dt);
 

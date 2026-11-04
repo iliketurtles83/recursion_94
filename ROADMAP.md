@@ -34,6 +34,10 @@ RECURSION_94.
   - [ ] Movement box and barrel rolls. Built: steering rectangle
         (`steerBoxHalfWidth/Up/Down`, F4 overlay), camera follow 0.55, roll
         = full turn + dash + i-frames + cooldown. Hand-play and adjust.
+    - [x] Hand-play fixes: the edge cushion no longer pushes back from a
+          corner when the stick is released (it fades outward stick and
+          damps outward motion only); the dash follows the roll's curve
+          (2.6 units, ends with the turn).
   - [x] Backlog: steering-box bottom limit (`steerBoxDown`).
   - [x] Engine trail join: data trail (`trailData`) out of the dart's
         engine glow; the dart is the game ship (`shipModel=1`).
@@ -53,7 +57,8 @@ RECURSION_94.
   - [x] Visuals read it: boss firewall nodes and tethers flash on the
         downbeat, unlit HUD meter segments pulse on each bar.
   - [ ] By ear: tune `MUSIC_LATENCY_CALLBACKS` (`game.c`) so shots sit on
-        the kick, not ahead of or behind it.
+        the kick, not ahead of or behind it. F5 in a run flashes the beat
+        from the game clock; `[` `]` move it live (0.25 callback steps).
 
 ## After the slice
 

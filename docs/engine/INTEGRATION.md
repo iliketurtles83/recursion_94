@@ -299,7 +299,7 @@ unknown keys are skipped, and loading first resets everything to defaults).
 | Camera | `shakeAmount` | float | 0.06 | 0 | 0.5 |
 | Camera | `cameraRollFollow` | float | 0.35 | 0 | 1 |
 | Camera | `barrelRollTime` | float | 0.7 | 0.2 | 3 |
-| Camera | `barrelRollDash` | float | 0 | 0 | 80 |
+| Camera | `barrelRollDash` | float | 0 | 0 | 20 |
 | Camera | `barrelRollCooldown` | float | 0 | 0 | 3 |
 | Fog | `fogStart` | float | 60 | 0 | 600 |
 | Fog | `fogEnd` | float | 300 | 1 | 800 |

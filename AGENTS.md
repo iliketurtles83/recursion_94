@@ -98,12 +98,12 @@ ctest --test-dir build --output-on-failure         # engine_core/_ship/_vectorin
   `XAUTHORITY=/run/user/1000/xauth_*`. A visible window on `:1` never presents
   and hangs. Without a display, GLFW fails.
 - Runtime keys: F1 param panel, F2 free cam, F3 overlay, T switch environment,
-  1–9 layer toggles, R reseed, F12 screenshot. In the game: F4 steering box overlay, Esc/P pause menu, F11 or Alt+Enter fullscreen.
+  1–9 layer toggles, R reseed, F12 screenshot. In the game: F4 steering box overlay, F5 sync test (beat flash; `[` `]` tune the music latency live), Esc/P pause menu, F11 or Alt+Enter fullscreen.
 - **Movement box.** In open environments the ship's centre is held in a
   rectangle (`steerBoxHalfWidth`, `steerBoxUp`, `steerBoxDown` in world units,
   0 = the old `steerLimit` x radius; floor and ceiling still clip it). The
   game's arena comes from `ct_steer_box`. Barrel rolls (Q/E) turn a full
-  circle, kick sideways (`barrelRollDash`), give i-frames for the whole roll
+  circle, dash sideways `barrelRollDash` units on the roll's own curve (the shift ends with the turn), give i-frames for the whole roll
   (`GameplayInput.dodging`) and wait `barrelRollCooldown` before the next.
 - **Ship and trail.** `shipModel` (Sim) picks the model: 0 the textured
   courier (sandbox default), 1 the dart (`r94_corridor`), 2 the original
