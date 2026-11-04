@@ -2,6 +2,26 @@
 
 This log is the source of truth for architectural choices, visual uplift milestones, feature statuses (Confirmed, Provisional, Rejected), and binary size tracking. The 1.44MB (1,474,560 bytes) contest limit applied to entries before 2026-11-03.
 
+## [Combat look] Fire colours and shapes by role (bullet-hell rule)
+
+- Date: 2026-11-04. Status: PROVISIONAL: checked in shots; hand-play.
+- Playtest: own and enemy shots could not be told apart. Causes: colours came
+  from seed-palette slots (player shots shared the splitters' and boss nodes'
+  colour, enemy shots the chasers'), enemy shots were small octahedra like the
+  drifters, and everything was the same bloomed wireframe.
+- Fire is now fixed on every seed (`combat_draw.c`): player fire is a white
+  core in a cool sheath (`PLAYER_FIRE`, `PLAYER_CORE`), also for the beam,
+  bomb and lock brackets. Enemy fire is one reserved hot pink (`ENEMY_FIRE`,
+  hue 332): filled camera-facing orbs with a near-white centre and a bright
+  edge, cut out of the corridor by a dark rim disc drawn in the opaque pass;
+  orb + rim are about the hit radius (0.85 arena units). Homing shots add a
+  spinning dashed ring. The enemy telegraph ring uses the enemy-fire colour.
+- Enemies, bosses and debris keep the seed palette, but any saturated colour
+  within 50 degrees of the enemy-fire hue is turned to the edge of that band
+  (`off_fire_hue`), so no seed can paint an enemy like a bullet.
+- Hit feedback: `Enemy.hurt` (1 on a hit that does not kill, decays at 9/s)
+  flashes the enemy toward white; four short white sparks fly off the hit.
+
 ## [Flight] Edge cushion and barrel-roll dash after the first hand-play
 
 - Date: 2026-11-04. Status: PROVISIONAL: tests pass; hand-play again.

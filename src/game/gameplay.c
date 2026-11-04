@@ -580,12 +580,36 @@ static void RegisterKill(GameplaySystem *game, Enemy *enemy, bool charged,
     }
 }
 
+// Impact sparks for a hit that does not kill: a few short white streaks, no shockwave.
+static void SpawnSparks(GameplaySystem *game, const Enemy *enemy) {
+    uint32_t seed = game->runSeed ^ MixBits((uint32_t)enemy->identity * 0x9e3779b9u ^
+                                            (uint32_t)(enemy->age * 977.0f));
+    for (int i = 0; i < 4; i++) {
+        int slot = FindFreeParticle(game);
+        if (slot < 0) return;
+        float angle = Hash01(seed + (uint32_t)i * 3u) * 6.2831853f;
+        float lift = -1.0f + Hash01(seed + (uint32_t)i * 3u + 1u) * 2.0f;
+        float speed = 6.0f + Hash01(seed + (uint32_t)i * 3u + 2u) * 6.0f;
+        CombatParticle *particle = &game->particles[slot];
+        *particle = (CombatParticle){ 0 };
+        particle->active = true;
+        particle->position = enemy->position;
+        particle->position.z += enemy->size.x * 0.5f;   // the face toward the player
+        particle->origin = particle->position;
+        particle->velocity = (Vector3){ cosf(angle) * speed, lift * speed, 2.0f + sinf(angle) * speed * 0.5f };
+        particle->life = 0.12f + Hash01(seed + (uint32_t)i + 80u) * 0.10f;
+        particle->maxLife = particle->life;
+        particle->color = (Color){ 235, 248, 255, 255 };
+    }
+}
+
 static void DamageEnemy(GameplaySystem *game, Enemy *enemy, float damage, bool charged,
                         GameplayEvents *events) {
     if (!enemy->active) return;
     enemy->health -= damage;
     game->cameraKick = fmaxf(game->cameraKick, 0.12f);
     if (enemy->health <= 0.0f) RegisterKill(game, enemy, charged, events);
+    else { enemy->hurt = 1.0f; SpawnSparks(game, enemy); }
 }
 
 static void FireTap(GameplaySystem *game, GameplayEvents *events) {
@@ -1341,6 +1365,7 @@ GameplayEvents UpdateGameplay(GameplaySystem *game, float dt, double virtualPlay
 
     for (int i = 0; i < MAX_ENEMIES; i++) {
         if (game->enemies[i].active) {
+            game->enemies[i].hurt = fmaxf(0.0f, game->enemies[i].hurt - dt * 9.0f);
             UpdateEnemy(game, &game->enemies[i], dt, boosting, &events);
         }
     }

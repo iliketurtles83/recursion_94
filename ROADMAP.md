@@ -60,6 +60,31 @@ RECURSION_94.
         the kick, not ahead of or behind it. F5 in a run flashes the beat
         from the game clock; `[` `]` move it live (0.25 callback steps).
 
+- [ ] **Step 7: readability (playtest reviews, 2026-11-04).**
+  - [x] Visual roles, fixed on every seed: player fire = white-core
+        streaks with one cool tint; enemy fire = one reserved hot colour
+        used by nothing else, filled round orbs with a dark rim (bullet-hell
+        rule), sized to the hit radius. Enemies and bosses keep the seed
+        palette (shifted off the enemy-fire hue).
+  - [ ] Brightness order: enemy fire > enemies > environment; dim the
+        corridor's emissives in the middle of the view during combat.
+  - [x] Hit feedback: enemies flash white when damaged, sparks at impacts.
+  - [ ] Sound: shot sound out of the kick/bass register and louder (SFX bus
+        0.22); enemy-fire sound (the dodge cue); telegraph, hit-tick,
+        lock-on, chain-link, low-energy and roll sounds; pan SFX by screen
+        position; pitch SFX to the seed's scale; small per-shot variation.
+        Check the drumless first ~25 s by ear.
+  - [ ] Barrel roll: i-frames only in the middle of the roll (no
+        near-permanent invulnerability by spamming); reward a near miss
+        (graze) with chain links.
+  - [ ] Boost risk/reward: it speeds up spawns 1.8x; give it a score
+        multiplier.
+  - [ ] Variety: procedural formation grammar (lines, V, rings, snakes,
+        mirrored pairs) spawned on phrase lines from the seed; 3-4 new enemy
+        roles (weaver, mine, shielded = charge only, wall turret); corridor
+        hazards on the bar (closing racks, laser gates); difficulty that
+        follows the song's sections, not only distance.
+
 ## After the slice
 
 - [ ] The other four levels (environment, song, boss each). Boss chassis

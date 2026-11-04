@@ -43,6 +43,7 @@ typedef struct {
     float phaseTime;
     float health;
     float fireTimer;
+    float hurt;     // 1 on a hit that does not kill, decays fast: the white hit flash
     int identity;
     int generation;
     bool active;
