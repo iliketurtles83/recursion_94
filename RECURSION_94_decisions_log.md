@@ -21,6 +21,14 @@ This log is the source of truth for architectural choices, visual uplift milesto
   (`off_fire_hue`), so no seed can paint an enemy like a bullet.
 - Hit feedback: `Enemy.hurt` (1 on a hit that does not kill, decays at 9/s)
   flashes the enemy toward white; four short white sparks fly off the hit.
+- Brightness order: the corridor's rain and outline brightness are baked into
+  chunk geometry, so they cannot be lowered live. Instead the game's glow pass
+  starts by darkening what is already drawn behind the fight: a soft
+  camera-facing ellipse over the arena at z = -26 (full strength to 40% of
+  its radius, fading to the rim), no depth test, black with alpha
+  (`draw_focus_dim`). It eases in at 2.5/s while any enemy or enemy shot is
+  active, to `FOCUS_DIM` 0.6. 1.0 read as a hole; 0.45 was too subtle. The
+  ship, near the camera at the bottom of the view, stays outside it.
 
 ## [Flight] Edge cushion and barrel-roll dash after the first hand-play
 

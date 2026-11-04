@@ -280,6 +280,7 @@ static void update_push(Game *g, float dt)
 static void update_run(Game *g, float dt, const Controls *c)
 {
     update_clock(g, dt);
+    combat_draw_update(&g->draw, &g->play, dt);
     update_arena(g);
     float px, py;
     ship_arena(g, &px, &py);

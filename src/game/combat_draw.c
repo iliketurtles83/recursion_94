@@ -17,18 +17,37 @@ static const char *FS =
     "#version 330\n"
     "in vec4 c; out vec4 o;\n"
     "void main(){ o = vec4(c.rgb * (c.a * 8.0), 1.0); }\n";
+static const char *DIM_FS =
+    "#version 330\n"
+    "in vec4 c; out vec4 o;\n"
+    "void main(){ o = vec4(0.0, 0.0, 0.0, c.a); }\n";
+
+// Combat focus: while anything hostile is on the field, the environment behind the
+// fight is darkened by up to this much, so the order is enemy fire > enemies > world.
+#define FOCUS_DIM 0.6f
 
 void combat_draw_init(CombatDraw *d)
 {
     *d = (CombatDraw){ 0 };
     d->shader = LoadShaderFromMemory(VS, FS);
-    d->ready = IsShaderValid(d->shader);
+    d->dimShader = LoadShaderFromMemory(VS, DIM_FS);
+    d->ready = IsShaderValid(d->shader) && IsShaderValid(d->dimShader);
 }
 
 void combat_draw_unload(CombatDraw *d)
 {
-    if (d->ready) UnloadShader(d->shader);
+    if (IsShaderValid(d->shader)) UnloadShader(d->shader);
+    if (IsShaderValid(d->dimShader)) UnloadShader(d->dimShader);
     d->ready = false;
+}
+
+void combat_draw_update(CombatDraw *d, const GameplaySystem *g, float dt)
+{
+    bool hostile = false;
+    for (int i = 0; i < MAX_ENEMIES && !hostile; i++) hostile = g->enemies[i].active;
+    for (int i = 0; i < MAX_ENEMY_PROJECTILES && !hostile; i++) hostile = g->projectiles[i].active;
+    if (g->gameOver) hostile = false;
+    d->focus += ((hostile ? 1.0f : 0.0f) - d->focus) * (1.0f - expf(-2.5f * dt));
 }
 
 // ---------------------------------------------------------------------------
@@ -420,6 +439,49 @@ static void draw_boss(const CtTunnel *ct, const ArenaMap *m, const double *o, co
     }
 }
 
+// Darken the world already drawn behind the fight: a soft camera-facing ellipse over the
+// arena where enemies hold (z ~ -26), drawn with no depth test before any combat glow.
+// The ship, near the camera at the bottom of the view, stays outside it.
+static void draw_focus_dim(const CombatDraw *d, CtTunnel *ct, const ArenaMap *m, const double *o, const GameplaySystem *g)
+{
+    float a = FOCUS_DIM * d->focus;
+    if (a <= 0.003f) return;
+    const GameplayArena *ar = &g->arena;
+    Frame f = frame_at(ct, m, o, (Vector3){ 0.5f * (ar->minX + ar->maxX), 0.55f * (ar->minY + ar->maxY), -26.0f });
+    Vector3 toCam = Vector3Normalize(Vector3Subtract(gCam, f.c));
+    Vector3 u = Vector3Normalize(Vector3CrossProduct(f.N, toCam));
+    Vector3 v = Vector3CrossProduct(toCam, u);
+    float rx = 1.0f * (ar->maxX - ar->minX) * f.k, ry = 0.8f * (ar->maxY - ar->minY) * f.k;
+    unsigned char inner = (unsigned char)(a * 255.0f);
+    rlDrawRenderBatchActive();
+    rlDisableDepthTest();
+    rlSetBlendMode(BLEND_ALPHA);
+    BeginShaderMode(d->dimShader);
+    rlBegin(RL_QUADS);
+    const int SEG = 32;
+    const float RING[3] = { 0.0f, 0.4f, 1.0f };        // full strength to 40%, fading to the rim
+    const unsigned char ALPHA[3] = { inner, inner, 0 };
+    for (int band = 0; band < 2; band++) {
+        for (int i = 0; i < SEG; i++) {
+            float a0 = (float)i / SEG * 2.0f * PI, a1 = (float)(i + 1) / SEG * 2.0f * PI;
+            Vector3 q[4];
+            float rr[4] = { RING[band], RING[band + 1], RING[band + 1], RING[band] };
+            float aa[4] = { a0, a0, a1, a1 };
+            unsigned char al[4] = { ALPHA[band], ALPHA[band + 1], ALPHA[band + 1], ALPHA[band] };
+            for (int k = 0; k < 4; k++) {
+                q[k] = Vector3Add(f.c, Vector3Add(Vector3Scale(u, cosf(aa[k]) * rx * rr[k]), Vector3Scale(v, sinf(aa[k]) * ry * rr[k])));
+                rlColor4ub(0, 0, 0, al[k]);
+                rlVertex3f(q[k].x, q[k].y, q[k].z);
+            }
+        }
+    }
+    rlEnd();
+    rlDrawRenderBatchActive();
+    EndShaderMode();
+    rlSetBlendMode(BLEND_ADDITIVE);
+    rlEnableDepthTest();
+}
+
 void combat_draw_scene(CombatDraw *d, CtTunnel *ct, const ArenaMap *m, const GameplaySystem *g,
                        const CtSceneView *view, bool emissive)
 {
@@ -431,6 +493,7 @@ void combat_draw_scene(CombatDraw *d, CtTunnel *ct, const ArenaMap *m, const Gam
     set_role_palette(g);
     const double *o = view->origin;
     float time = g->runTime;
+    if (emissive) draw_focus_dim(d, ct, m, o, g);
 
     rlDrawRenderBatchActive();
     BeginShaderMode(d->shader);

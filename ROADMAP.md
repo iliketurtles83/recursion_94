@@ -66,8 +66,9 @@ RECURSION_94.
         used by nothing else, filled round orbs with a dark rim (bullet-hell
         rule), sized to the hit radius. Enemies and bosses keep the seed
         palette (shifted off the enemy-fire hue).
-  - [ ] Brightness order: enemy fire > enemies > environment; dim the
+  - [x] Brightness order: enemy fire > enemies > environment; dim the
         corridor's emissives in the middle of the view during combat.
+        (Combat focus dim, `FOCUS_DIM` 0.6; hand-play the strength.)
   - [x] Hit feedback: enemies flash white when damaged, sparks at impacts.
   - [ ] Sound: shot sound out of the kick/bass register and louder (SFX bus
         0.22); enemy-fire sound (the dodge cue); telegraph, hit-tick,

@@ -17,7 +17,9 @@ typedef struct ArenaMap {
 
 typedef struct CombatDraw {
     Shader   shader;
+    Shader   dimShader;   // black with alpha: darkens what is already drawn
     bool     ready;
+    float    focus;       // 0..1, eased toward 1 while anything hostile is on the field
     // Per-frame state captured in the scene callback (for HUD projection).
     Camera3D camera;
     double   origin[3];
@@ -26,6 +28,9 @@ typedef struct CombatDraw {
 
 void combat_draw_init(CombatDraw *d);
 void combat_draw_unload(CombatDraw *d);
+
+// Per-frame presentation state (the combat focus dim). Call once per game update.
+void combat_draw_update(CombatDraw *d, const GameplaySystem *g, float dt);
 
 // Called from the engine's scene-draw hook: emissive = false for the dark bodies,
 // true for the additive glow pass.
