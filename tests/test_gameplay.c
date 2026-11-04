@@ -149,6 +149,36 @@ static bool check_answers(void)
     return ok;
 }
 
+// Floor-scroller word wrap: every composed line (all texts, depths 1-6) wraps into
+// lines of at most STORY_LINE_CHARS that, rejoined with single spaces, give the
+// text back with its spaces collapsed only at the breaks; no line starts or ends
+// with a space, and the line count fits.
+static bool check_wrap(void)
+{
+    bool ok = true;
+    int worst = 0;
+    for (int text = 0; text <= STORY_COLLAPSE; text++) {
+        for (int depth = 1; depth <= 6; depth++) {
+            char line[STORY_TEXT_MAX];
+            int len = story_compose(text, 94u, depth, line, NULL, sizeof(line));
+            int start[STORY_LINES_MAX], n[STORY_LINES_MAX];
+            int count = story_wrap(line, len, STORY_LINE_CHARS, start, n, STORY_LINES_MAX);
+            ok = ok && count > 0 && count < STORY_LINES_MAX;
+            if (count > worst) worst = count;
+            int at = 0;
+            for (int k = 0; k < count; k++) {
+                ok = ok && n[k] > 0 && n[k] <= STORY_LINE_CHARS;
+                ok = ok && line[start[k]] != ' ' && line[start[k] + n[k] - 1] != ' ';
+                while (at < start[k]) ok = ok && line[at++] == ' ';   // only spaces skipped
+                at = start[k] + n[k];
+            }
+            while (at < len) ok = ok && line[at++] == ' ';
+        }
+    }
+    printf("WRAP: %s (at most %d lines of %d chars)\n", ok ? "yes" : "no", worst, STORY_LINE_CHARS);
+    return ok;
+}
+
 static bool check_story(void)
 {
     char a[STORY_TEXT_MAX], b[STORY_TEXT_MAX];
@@ -172,7 +202,7 @@ static bool check_story(void)
     story_corrupt(story_text(0), 94u, 8, a, sizeof(a));
     ok = ok && strlen(a) > strlen(story_text(0)) * 3 / 4;
     printf("STORY: %s (seeds differ at %d/%d depths)\n", ok && same == 0 ? "yes" : "no", total - same, total);
-    return ok && same == 0 && check_answers();
+    return ok && same == 0 && check_answers() && check_wrap();
 }
 
 int main(void)

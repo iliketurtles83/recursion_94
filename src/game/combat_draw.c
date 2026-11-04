@@ -586,6 +586,57 @@ void combat_draw_scene(CombatDraw *d, CtTunnel *ct, const ArenaMap *m, const Gam
 }
 
 // ---------------------------------------------------------------------------
+// Story floor scroller
+
+// The engine keeps the ship this far (world units) above the corridor floor
+// (FLIGHT_CLEARANCE in core/flight.h); the arena's minY sits at that height.
+#define FLOOR_CLEARANCE_WORLD 0.6f
+#define STORY_DOTS_MAX 8000
+#define STORY_DOT_RADIUS 0.075f   // arena units
+
+void combat_draw_story(CombatDraw *d, CtTunnel *ct, const ArenaMap *m, const GameplaySystem *g,
+                       const Story *story, const CtSceneView *view)
+{
+    if (!d->ready || view->reflection || story->scrollText < 0 || g->gameOver) return;
+    static StoryDot dots[STORY_DOTS_MAX];
+    const GameplayArena *ar = &g->arena;
+    int n = story_floor_dots(story, &g->music, 0.42f * (ar->maxX - ar->minX), dots, STORY_DOTS_MAX);
+    if (n <= 0) return;
+    gCam = view->camera.position;
+    set_role_palette(g);
+    const double *o = view->origin;
+    float floorY = ar->minY - FLOOR_CLEARANCE_WORLD / m->scale + 0.12f;
+    float midX = 0.5f * (ar->minX + ar->maxX);
+    Color voice = mix_color(gPal.primary, PLAYER_CORE, 0.82f);
+
+    rlDrawRenderBatchActive();
+    BeginShaderMode(d->shader);
+    rlBegin(RL_QUADS);
+    for (int i = 0; i < n; i++) {
+        const StoryDot *s = &dots[i];
+        if (s->gain <= 0.01f) continue;
+        Frame f = frame_at(ct, m, o, (Vector3){ midX + s->x, floorY + s->lift, s->z });
+        Vector3 toCam = Vector3Normalize(Vector3Subtract(gCam, f.c));
+        Vector3 u = Vector3CrossProduct(f.N, toCam);
+        if (Vector3Length(u) < 1e-4f) u = f.B;
+        u = Vector3Scale(Vector3Normalize(u), STORY_DOT_RADIUS * f.k);
+        Vector3 v = Vector3Scale(Vector3Normalize(Vector3CrossProduct(toCam, u)), STORY_DOT_RADIUS * f.k);
+        // Primary to secondary along the line, lifted toward white midway; answers near-white.
+        float w = 1.0f - fabsf(2.0f * s->u - 1.0f);
+        Color c = s->answer ? voice : mix_color(mix_color(gPal.primary, gPal.secondary, s->u), PLAYER_CORE, 0.4f * w);
+        col(c, s->gain);
+        rlVertex3f(f.c.x - u.x - v.x, f.c.y - u.y - v.y, f.c.z - u.z - v.z);
+        rlVertex3f(f.c.x + u.x - v.x, f.c.y + u.y - v.y, f.c.z + u.z - v.z);
+        rlVertex3f(f.c.x + u.x + v.x, f.c.y + u.y + v.y, f.c.z + u.z + v.z);
+        rlVertex3f(f.c.x - u.x + v.x, f.c.y - u.y + v.y, f.c.z - u.z + v.z);
+        if ((i & 1023) == 1023) { rlEnd(); rlDrawRenderBatchActive(); rlBegin(RL_QUADS); }
+    }
+    rlEnd();
+    rlDrawRenderBatchActive();
+    EndShaderMode();
+}
+
+// ---------------------------------------------------------------------------
 // HUD
 
 static void meter(int x, int y, int w, int h, float amount, int segments, Color on, Color off)

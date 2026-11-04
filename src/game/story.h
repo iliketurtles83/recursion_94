@@ -1,6 +1,13 @@
-// Story told the demoscene way (recursion_94.md §9.3-9.4): a sine scroller with
-// the dead group's notes at each level entry, the collapse line after the
+// Story told the demoscene way (recursion_94.md §9.3-9.4): a floor dot scroller
+// with the dead group's notes at each level entry, the collapse line after the
 // Leviathan, and archetype title cards when a boss arrives.
+//
+// The scroller is part of the 3D scene: the text is word-wrapped into short
+// lines whose letters are dots (the default font's pixels, read at runtime) on
+// the corridor floor. One line arrives per bar and drifts toward the camera.
+// Far ahead the dots are scattered sparks that pulse on the beat; at reading
+// distance they pull together into letters, and they break up again as they
+// pass under the camera. Answer lines (§9.5) arrive already formed, near-white.
 //
 // The base texts play at recursion depth 1. Deeper, story_corrupt rewrites them
 // from a hash of (seed, depth): glitched characters, stuttered words and words
@@ -21,6 +28,8 @@
 #define STORY_LEVEL_TEXTS BOSSES_PER_RECURSION
 #define STORY_COLLAPSE    BOSSES_PER_RECURSION   // index of the collapse line
 #define STORY_TEXT_MAX    640
+#define STORY_LINE_CHARS  20    // characters per floor line
+#define STORY_LINES_MAX   64
 
 typedef struct Story {
     uint32_t seed;
@@ -32,6 +41,9 @@ typedef struct Story {
     double   scrollStart;       // music step the scroll started on
     char     line[STORY_TEXT_MAX];
     unsigned char voice[STORY_TEXT_MAX];   // 1 = answer character (drawn in the clean voice)
+    int      lineStart[STORY_LINES_MAX];   // floor lines: offsets into line[]
+    int      lineLen[STORY_LINES_MAX];
+    int      lineCount;
     int      cardRound;         // boss title card: round 0..4, -1 = none
     int      cardDepth;
     double   cardStart;
@@ -58,7 +70,25 @@ int         story_answer_pool_count(void);
 void story_reset(Story *s, uint32_t seed, int depth, float stepsPerSecond, float legendSeconds);
 // Per frame, after UpdateGameplay: boss arrivals and defeats queue cards and texts.
 void story_update(Story *s, const GameplaySystem *g, const GameplayEvents *e, const MusicClock *c);
-// 2D overlay. Ends the scroll once its last character has left the screen.
+// 2D overlay: the boss title card.
 void story_draw(Story *s, const GameplaySystem *g, const MusicClock *c, int width, int height);
+
+// Word wrap for the floor lines: breaks text (len chars) into lines of at most
+// `width` characters at spaces (a longer word is split). Spaces at a break are
+// dropped. Pure. Returns the line count (at most max).
+int story_wrap(const char *text, int len, int width, int *start, int *lineLen, int max);
+
+// One scroller dot, in arena units: x lateral (centred), z = -distance ahead,
+// lift = height above the floor. u runs 0..1 along the line (colour).
+typedef struct StoryDot {
+    float x, z, lift;
+    float gain;       // HDR brightness
+    float u;
+    bool  answer;     // the clean voice (§9.5)
+} StoryDot;
+
+// The scroller's dots this frame (0 when no scroll is running). halfWidth is
+// the half width the lines may fill. Needs the default font (a window).
+int story_floor_dots(const Story *s, const MusicClock *c, float halfWidth, StoryDot *out, int max);
 
 #endif // R94_STORY_H

@@ -211,8 +211,13 @@ int story_compose(int index, uint32_t seed, int depth, char *out, unsigned char 
 // Timing
 
 #define CARD_STEPS 32.0                // title card length, 16ths (two bars)
-#define SCROLL_SPEED 0.75f             // font heights per 16th
 #define SCROLL_GAP_BARS 2              // bars after a boss falls before the next scroll
+// Floor scroller geometry, arena units (z = -distance ahead of the ship).
+#define LINE_STEPS 16.0                // one line per bar
+#define LINE_PITCH 10.0f               // z travelled per line (one bar)
+#define Z_FAR -72.0f                   // a line appears here...
+#define Z_GONE 6.0f                    // ...and is gone once its near edge passes here
+#define ROW_PITCH 0.62f                // glyph rows along z (stretched against the low camera)
 
 static void push(Story *s, int text, int depth)
 {
@@ -252,7 +257,38 @@ void story_update(Story *s, const GameplaySystem *g, const GameplayEvents *e, co
         s->queueDepth[0] = s->queueDepth[1];
         s->queued--;
         s->scrollStart = c->valid ? floor(c->step / MUSIC_BAR) * MUSIC_BAR : c->step;
+        s->lineCount = story_wrap(s->line, (int)strlen(s->line), STORY_LINE_CHARS, s->lineStart, s->lineLen, STORY_LINES_MAX);
     }
+    // The scroll ends once its last line has passed under the camera.
+    if (s->scrollText >= 0) {
+        double lines = (c->step - s->scrollStart) / LINE_STEPS;
+        if (lines > (double)(s->lineCount - 1) + (Z_GONE - Z_FAR) / LINE_PITCH) {
+            s->scrollText = -1;
+            s->waitUntil = c->step + MUSIC_BAR;
+        }
+    }
+}
+
+int story_wrap(const char *text, int len, int width, int *start, int *lineLen, int max)
+{
+    int n = 0, i = 0;
+    while (i < len && n < max) {
+        while (i < len && text[i] == ' ') i++;   // no leading spaces
+        if (i >= len) break;
+        int end = i + width < len ? i + width : len;
+        if (end < len && text[end] != ' ') {     // back up to the last space, if any
+            int b = end;
+            while (b > i && text[b] != ' ') b--;
+            if (b > i) end = b;
+        }
+        int e = end;
+        while (e > i && text[e - 1] == ' ') e--;
+        start[n] = i;
+        lineLen[n] = e - i;
+        n++;
+        i = end;
+    }
+    return n;
 }
 
 // ---------------------------------------------------------------------------
@@ -261,12 +297,6 @@ void story_update(Story *s, const GameplaySystem *g, const GameplayEvents *e, co
 static Color with_alpha(Color c, float a)
 {
     return (Color){ c.r, c.g, c.b, (unsigned char)(fminf(fmaxf(a, 0.0f), 1.0f) * (float)c.a) };
-}
-
-static Color mix_color(Color a, Color b, float t)
-{
-    return (Color){ (unsigned char)(a.r + (b.r - a.r) * t), (unsigned char)(a.g + (b.g - a.g) * t),
-                    (unsigned char)(a.b + (b.b - a.b) * t), (unsigned char)(a.a + (b.a - a.a) * t) };
 }
 
 static float glyph_advance(Font f, char ch, float size, float spacing)
@@ -287,42 +317,80 @@ static float beat_flash(const MusicClock *c)
     return since < 10.0f ? expf(-since * 7.0f) : 0.0f;
 }
 
-// Sine scroller: each character rides a wave that rolls once per bar and
-// lifts on the beat, coloured along the line from primary to secondary.
-// Answer characters (§9.5) barely ride the wave, ignore the beat and are
-// drawn near-white: a steadier voice than the decaying notes around them.
-static void draw_scroll(Story *s, const GameplaySystem *g, const MusicClock *c, int w, int h)
+static float smoothstep(float e0, float e1, float x)
 {
+    float t = (x - e0) / (e1 - e0);
+    t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+static bool glyph_pixel(Font f, int glyph, int x, int y)
+{
+    Image im = f.glyphs[glyph].image;
+    if (!im.data || x < 0 || y < 0 || x >= im.width || y >= im.height) return false;
+    return GetImageColor(im, x, y).a > 128;
+}
+
+int story_floor_dots(const Story *s, const MusicClock *c, float halfWidth, StoryDot *out, int max)
+{
+    if (s->scrollText < 0 || max <= 0) return 0;
     Font font = GetFontDefault();
-    float size = fmaxf(20.0f, (float)h / 22.0f), spacing = size / 10.0f;
-    float amp = size * (0.55f + 0.25f * beat_flash(c)), calm = size * 0.12f;
-    float baseY = (float)h - 118.0f - size - amp;
-    float x = (float)w - (float)(c->step - s->scrollStart) * SCROLL_SPEED * size;
-    float phase = (float)(c->step / MUSIC_BAR) * 6.2831853f;
-    float edge = (float)w * 0.08f;
-    Color shadow = { 0, 0, 0, 170 };
-    for (int i = 0; s->line[i]; i++) {
-        char ch = s->line[i];
-        float adv = glyph_advance(font, ch, size, spacing);
-        if (x > (float)w) break;
-        if (x + adv >= 0.0f && ch != ' ') {
-            bool answer = s->voice[i] != 0;
-            float y = baseY + sinf(x * 0.009f - phase) * (answer ? calm : amp);
-            float fade = fminf(fminf(x / edge, ((float)w - x) / edge), 1.0f);
-            // Primary to secondary, lifted toward white midway so the blend never goes grey.
-            float u = 0.5f + 0.5f * sinf(x * 0.004f + phase * 0.5f);
-            Color col = answer ? mix_color(g->primaryColor, WHITE, 0.82f)
-                               : mix_color(mix_color(g->primaryColor, g->secondaryColor, u), WHITE,
-                                           0.45f * (1.0f - fabsf(2.0f * u - 1.0f)));
-            draw_glyph(font, ch, (Vector2){ x + 2.0f, y + 2.0f }, size, with_alpha(shadow, fade));
-            draw_glyph(font, ch, (Vector2){ x, y }, size, with_alpha(col, fade * 0.92f));
+    if (!font.glyphs || font.glyphCount <= 0) return 0;
+    int rows = font.baseSize > 0 ? font.baseSize : 10;
+    float beat = beat_flash(c);
+    float t = (float)((c->step - s->scrollStart) / LINE_STEPS);   // lines since the start
+    // Column pitch: a full line of average glyphs (5 px + 1 gap) fills the width.
+    float pitchX = 2.0f * halfWidth / (float)(STORY_LINE_CHARS * 6);
+    int n = 0;
+    for (int k = 0; k < s->lineCount; k++) {
+        float zLine = Z_FAR + (t - (float)k) * LINE_PITCH;   // the line's near edge (glyph bottom)
+        if (zLine < Z_FAR || zLine - (float)rows * ROW_PITCH > Z_GONE) continue;
+        const char *txt = s->line + s->lineStart[k];
+        int len = s->lineLen[k];
+        int cols = 0;   // measured width in pixel columns
+        for (int i = 0; i < len; i++) {
+            int gi = GetGlyphIndex(font, (unsigned char)txt[i]);
+            cols += font.glyphs[gi].image.width + 1;
         }
-        x += adv;
+        float x0 = -0.5f * (float)cols * pitchX;
+        int col = 0;
+        for (int i = 0; i < len; i++) {
+            int ci = s->lineStart[k] + i;
+            int gi = GetGlyphIndex(font, (unsigned char)txt[i]);
+            int gw = font.glyphs[gi].image.width;
+            bool answer = s->voice[ci] != 0;
+            for (int y = 0; y < rows; y++) {
+                for (int x = 0; x < gw; x++) {
+                    if (!glyph_pixel(font, gi, x, y)) continue;
+                    if (n >= max) return n;
+                    // Glyph top row is farthest: the letters stand upright to the viewer.
+                    float z = zLine - (float)(rows - 1 - y) * ROW_PITCH;
+                    float px = x0 + (float)(col + x) * pitchX;
+                    // Scatter far ahead and again under the camera; answers arrive formed.
+                    float far = answer ? 0.0f : smoothstep(-34.0f, -62.0f, z);
+                    float gone = smoothstep(-7.0f, 1.0f, z);
+                    float scatter = fmaxf(far, gone);
+                    uint32_t id = (uint32_t)(ci * 131 + y * 17 + x);
+                    float hx = hash01(s->seed, (uint32_t)s->scrollText, id, 1u) - 0.5f;
+                    float hy = hash01(s->seed, (uint32_t)s->scrollText, id, 2u);
+                    float hz = hash01(s->seed, (uint32_t)s->scrollText, id, 3u) - 0.5f;
+                    float sc = scatter * scatter;
+                    StoryDot *d = &out[n++];
+                    d->x = px + sc * hx * 14.0f;
+                    d->z = z + sc * hz * 10.0f;
+                    d->lift = sc * hy * 5.0f;
+                    float fadeIn = smoothstep(Z_FAR, Z_FAR + 10.0f, z);
+                    float fadeOut = 1.0f - smoothstep(-5.0f, 2.0f, z);
+                    float sparkle = 1.0f + far * (1.4f * beat + 0.6f * hash01(s->seed, (uint32_t)(c->step * 0.5), id, 4u));
+                    d->gain = (answer ? 3.4f : 2.8f) * fadeIn * fadeOut * sparkle;
+                    d->u = cols > 0 ? (float)(col + x) / (float)cols : 0.0f;
+                    d->answer = answer;
+                }
+            }
+            col += gw + 1;
+        }
     }
-    if (x < 0.0f) {   // the whole line has left the screen
-        s->scrollText = -1;
-        s->waitUntil = c->step + MUSIC_BAR;
-    }
+    return n;
 }
 
 // Title card tracks, in 16ths from the boss's arrival.
@@ -385,6 +453,5 @@ static void draw_card(const Story *s, const GameplaySystem *g, const MusicClock 
 
 void story_draw(Story *s, const GameplaySystem *g, const MusicClock *c, int w, int h)
 {
-    if (s->scrollText >= 0 && !g->gameOver) draw_scroll(s, g, c, w, h);
     if (s->cardRound >= 0) draw_card(s, g, c, w, h);
 }

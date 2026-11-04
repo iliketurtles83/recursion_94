@@ -2,6 +2,27 @@
 
 This log is the source of truth for architectural choices, visual uplift milestones, feature statuses (Confirmed, Provisional, Rejected), and binary size tracking. The 1.44MB (1,474,560 bytes) contest limit applied to entries before 2026-11-03.
 
+## [Story] Floor dot scroller replaces the 2D sine scroller
+
+- Date: 2026-11-04. Status: PROVISIONAL: checked in shots; hand-play.
+- Playtest: the 2D sine scroller broke the 3D feel. The story text is now part
+  of the scene: `story_wrap` breaks the composed line into lines of at most 20
+  characters; `story_floor_dots` lays each line's lit glyph pixels (the raylib
+  default font's CPU glyph images, 10 px high, read at runtime, nothing
+  stored) as dots on the corridor floor in arena units; `combat_draw_story`
+  draws them as camera-facing glow quads in the game's glow pass.
+- One line per bar (`LINE_STEPS` 16) appears at z = -72 and drifts toward the
+  camera, 10 arena units per bar. Glyph rows are 0.62 units apart along z, to
+  counter the low camera's foreshortening; the line spans 84% of the arena.
+  Spacing 8 ran the lines together in perspective; 10 separates them.
+- Far ahead (z -62..-34) the dots are scattered sparks, lifted off the floor
+  and pulsing on the beat; at reading distance (about z -30..-8) they are
+  letters; from z -7 they scatter again and fade before they reach the
+  camera (they turned into large blocks under it otherwise). Answer lines
+  (§9.5) skip the far scatter and are near-white: they arrive formed.
+- The scroll ends once its last line has passed (`story_update`); the boss
+  title card stays a 2D overlay.
+
 ## [Audio] Shot and enemy-fire sounds, stereo effects
 
 - Date: 2026-11-04. Status: PROVISIONAL: by ear.

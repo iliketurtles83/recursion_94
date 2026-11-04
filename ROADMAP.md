@@ -117,6 +117,12 @@ RECURSION_94.
         depth: glitched characters, stutters, dropped words), with no
         stored variants. Also archetype title cards for boss arrivals
         (`THRESHOLD GUARDIAN // RECURSIVE CORE`). Built (`src/game/story.c`).
+    - [x] Floor dot scroller (playtest: the 2D sine scroller broke the 3D
+          feel): word-wrapped lines of glowing dots (the default font's
+          pixels) on the corridor floor, one line per bar drifting toward the
+          camera; scattered beat-pulsing sparks far ahead pull into letters at
+          reading distance and break up under the camera. Answers arrive
+          formed and near-white.
     - [ ] Hand-play: scroll speed, placement, timing against the song's
           quiet section, corruption rates.
     - [x] Depth 3+: lines that seem to answer the ship (`recursion_94.md`

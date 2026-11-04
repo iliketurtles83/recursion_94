@@ -119,6 +119,7 @@ static void scene_draw(void *user, const CtSceneView *view, bool emissive)
 {
     Game *g = (Game *)user;
     if (g->state == STATE_RUN) combat_draw_scene(&g->draw, g->ct, &g->map, &g->play, view, emissive);
+    if (g->state == STATE_RUN && emissive) combat_draw_story(&g->draw, g->ct, &g->map, &g->play, &g->story, view);
 }
 
 static void start_run(Game *g, uint32_t seed, bool withAudio)

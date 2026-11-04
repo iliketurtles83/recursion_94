@@ -6,6 +6,7 @@
 
 #include "cybertunnel.h"
 #include "gameplay.h"
+#include "story.h"
 #include "raylib.h"
 
 // Arena units -> world: s = shipS - z*scale; offset = B*x*scale + N*(y - yZero)*scale.
@@ -36,6 +37,10 @@ void combat_draw_update(CombatDraw *d, const GameplaySystem *g, float dt);
 // true for the additive glow pass.
 void combat_draw_scene(CombatDraw *d, CtTunnel *ct, const ArenaMap *map, const GameplaySystem *g,
                        const CtSceneView *view, bool emissive);
+
+// Glow pass only: the story's floor dot scroller (story.h), on the corridor floor.
+void combat_draw_story(CombatDraw *d, CtTunnel *ct, const ArenaMap *map, const GameplaySystem *g,
+                       const Story *story, const CtSceneView *view);
 
 // 2D overlay: energy, chain links, score, combo/weapon, hit flash, game over.
 void combat_draw_hud(const CombatDraw *d, const GameplaySystem *g, int width, int height);
