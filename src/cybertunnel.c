@@ -234,9 +234,7 @@ static void update_trail_mesh(CtTunnel *ct)
     Vector3 eng[2];
     const FlightView *v = &ct->view;
     float boost=flight_speed_norm(&ct->fp,v->speed);
-    bool courier = ct->fp.shipModel == FLIGHT_SHIP_COURIER;
-    if (!courier) flight_engine_offsets(ct->fp.shipModel, eng);
-    else for(int e=0;e<2;e++)eng[e]=Vector3Scale(flight_exhaust_offset(e,v->gimbal[e],.48f+2.6f*boost),ct->fp.courierScale);
+    flight_engine_offsets(ct->fp.shipModel, eng);   // the courier has no trail (see draw_ship_emissive)
     float w0 = ct->core.trailWidth*(1+.8f*boost), i0 = ct->core.trailIntensity*(.5f+.5f*boost);
     if (ct->core.trailData) {
         // Data trail: starts inside the engine glow at its width and brightness (dart glow:
@@ -244,7 +242,6 @@ static void update_trail_mesh(CtTunnel *ct)
         // ~0.03 s (about a metre at cruise) into a thin ribbon.
         // The vertex hash carries the point's age in seconds; trail.fs shapes the rest.
         float gw = ct->fp.shipModel == FLIGHT_SHIP_PROBE ? SHIPPROBE_GLOW_HALF : 0.09f, gi = ct->core.engineIntensity;
-        if (courier) { gw = w0; gi = i0; }   // the courier's trail starts at its flame tip
         float span = (float)FLIGHT_TRAIL_LEN / (float)FLIGHT_HZ;
         // trailStretch < 1 pulls the wake toward the ship along the path but keeps its
         // sideways history, so the whole trail fits in front of the chase camera.
@@ -353,7 +350,7 @@ static void draw_ship_opaque(CtTunnel *ct, const FrameContext *ctx)
     ct->mat.maps[MATERIAL_MAP_ALBEDO].texture=previousTexture;
 }
 
-// update_trail_mesh() must have run this frame.
+// update_trail_mesh() must have run this frame (dart and probe; the courier has no trail).
 static void draw_ship_emissive(CtTunnel *ct, const FrameContext *ctx)
 {
     const FlightView *v = &ct->view;
@@ -382,6 +379,7 @@ static void draw_ship_emissive(CtTunnel *ct, const FrameContext *ctx)
         sl_f2(sl,ct->shAfterburner,"uGimbalLeft",v->gimbal[0].x,v->gimbal[0].y);
         sl_f2(sl,ct->shAfterburner,"uGimbalRight",v->gimbal[1].x,v->gimbal[1].y);
         draw_mesh(ct,ct->shAfterburner,ct->shipFlames,xf);
+        return;   // the jet burns a traditional afterburner and leaves no trail
     }
     if (ct->core.trailData) {
         int tr = ct->shTrail;
@@ -801,7 +799,7 @@ void ct_render(CtTunnel *ct, const RenderTexture2D *target, int width, int heigh
     const ChunkGpu *const *vis = chunks_visible(&ct->chunks, &nvis);
 
     bool ship = ct->cfg.drawShip && ct->core.showShip;
-    if (ship) {update_trail_mesh(ct);if(ct->fp.shipModel==FLIGHT_SHIP_COURIER)update_nozzles(ct);}
+    if (ship) {if(ct->fp.shipModel==FLIGHT_SHIP_COURIER)update_nozzles(ct);else update_trail_mesh(ct);}
     render_reflection(ct, vis, nvis, ship);
 
     pipe_begin_scene(&ct->pipe, c->view, c->proj, (Color){ 3, 6, 12, 255 });

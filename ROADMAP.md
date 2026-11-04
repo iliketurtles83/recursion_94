@@ -66,7 +66,7 @@ RECURSION_94.
       (default), the original RECURSION_94 probe (ported from
       `DrawPlayerShip` as `src/render/shipprobe.c`), the courier jet.
   - [ ] Hand-play the probe and jet in combat (size against the arena,
-        glow strength); the jet keeps its afterburner flames.
+        glow strength); the jet has afterburner flames and no trail.
 - [ ] Font and logo design (not the DATA // RUN Rajdhani font).
 - [ ] Demoscene presentation layer.
   - [x] Curve timeline (GNU Rocket style): `src/game/timeline.h`, const

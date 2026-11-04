@@ -109,7 +109,8 @@ ctest --test-dir build --output-on-failure         # engine_core/_ship/_vectorin
   courier (sandbox default), 1 the dart (`r94_corridor`), 2 the original
   RECURSION_94 probe (`src/render/shipprobe.c`). The seed selector picks the
   game ship (Tab / 1-3: dart, probe, jet = courier; `--ship N`) and the run
-  sets `shipModel`. `trailData` swaps the
+  sets `shipModel`. The jet burns a traditional afterburner and leaves no
+  trail; the trail below is the dart's and probe's. `trailData` swaps the
   engine trail for a light/data wake (`trail.fs`): it grows out of the dart's
   engine glows, runs white -> cyan -> blue with packets racing back and a
   world-fixed block dissolve at the tail. `trailStretch` (0.2 in the game)

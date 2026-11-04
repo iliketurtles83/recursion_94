@@ -20,8 +20,10 @@ This log is the source of truth for architectural choices, visual uplift milesto
   weapon-tier pods, the invulnerability flash and the small hardware
   (cables, louvers, fasteners, intake fins). Trim colours are fixed (dart
   cyan, violet second tone) since the engine has no seed palette.
-- The jet is the courier at `courierScale` 0.55, with its afterburner flames
-  (the one exception to "no flame looks", since it was asked for as is).
+- The jet is the courier at `courierScale` 0.55. It burns a traditional
+  afterburner (`shipmodel_flames`) and leaves no trail, in the game and the
+  sandbox (2026-11-04); the dart and probe keep the futuristic glows and data
+  trail. The jet is the one exception to "no flame looks".
 
 ## [Titles] Intro, level transitions and selector title on the timeline
 
