@@ -440,6 +440,8 @@ static void UpdateBoss(GameplaySystem *game, float dt, double virtualPlayerZ,
         }
     }
 
+    events->enemyVolleys++;
+    events->enemyVolleyX = origin.x;
     float projectileSpeed = 23.0f + game->difficulty * 9.0f + LoopPressure(game) * 8.0f +
                             (boss->phase == BOSS_ENRAGED ? 4.0f : 0.0f) +
                             (boss->phase == BOSS_SINGULARITY ? 7.0f : 0.0f);
@@ -840,11 +842,15 @@ static void UpdateEnemy(GameplaySystem *game, Enemy *enemy, float dt, bool overd
                     enemy->velocity.y = (game->player.position.y - enemy->position.y) / travel;
                     enemy->velocity.z = attackSpeed;
                 } else if (enemy->type == ENEMY_SPLITTER) {
+                    events->enemyVolleys++;
+                    events->enemyVolleyX = enemy->position.x;
                     float pressure = overdrive ? 4.0f : 0.0f;
                     SpawnProjectile(game, enemy->position, 21.0f + game->difficulty * 6.0f + pressure, -1.6f);
                     SpawnProjectile(game, enemy->position, 23.0f + game->difficulty * 6.0f + pressure, 0.0f);
                     SpawnProjectile(game, enemy->position, 21.0f + game->difficulty * 6.0f + pressure, 1.6f);
                 } else {
+                    events->enemyVolleys++;
+                    events->enemyVolleyX = enemy->position.x;
                     SpawnProjectile(game, enemy->position,
                                     22.0f + game->difficulty * 7.0f +
                                     (overdrive ? 4.0f : 0.0f), 0.0f);

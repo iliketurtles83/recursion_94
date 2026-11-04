@@ -5,7 +5,7 @@
 
 // Golden hash of the corridor song render below. Re-bless only for intentional
 // changes to the song or the synth (the original arrangement has its own hash).
-#define SONG_CORRIDOR_HASH UINT64_C(0x2b15006e766e83fb)
+#define SONG_CORRIDOR_HASH UINT64_C(0xf86fc8551d5d8cc0)
 
 // Renders 24 s of the corridor song with the controls jumping through the
 // build-up, the full groove, the pre-boss hush and a boss fight.

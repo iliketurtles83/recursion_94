@@ -189,7 +189,14 @@ static void play_events(Game *g, const GameplayEvents *e)
 {
     if (e->playerHit) g->glitch = 1.0f;
     if (!g->audioOn) return;
-    for (int i = 0; i < e->tapShots; i++) TriggerSynthSFX(&g->synth, SFX_LASER_TAP);
+    // Stereo: enemy volleys sit where they were fired from; the player's taps lean a
+    // little toward the ship's side.
+    float half = fmaxf(0.5f * (g->play.arena.maxX - g->play.arena.minX), 1.0f);
+    float mid = 0.5f * (g->play.arena.maxX + g->play.arena.minX);
+    for (int i = 0; i < e->tapShots; i++)
+        TriggerSynthSFXAt(&g->synth, SFX_LASER_TAP, 0.35f * (g->play.player.position.x - mid) / half);
+    if (e->enemyVolleys > 0)
+        TriggerSynthSFXAt(&g->synth, SFX_ENEMY_FIRE, (e->enemyVolleyX - mid) / half);
     for (int i = 0; i < e->chargeShots; i++) TriggerSynthSFX(&g->synth, SFX_LASER_CHARGE);
     for (int i = 0; i < e->enemiesDestroyed; i++) TriggerSynthSFX(&g->synth, SFX_EXPLOSION);
     if (e->beamFired) TriggerSynthSFX(&g->synth, SFX_LASER_CHARGE);

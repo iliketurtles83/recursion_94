@@ -70,11 +70,13 @@ RECURSION_94.
         corridor's emissives in the middle of the view during combat.
         (Combat focus dim, `FOCUS_DIM` 0.6; hand-play the strength.)
   - [x] Hit feedback: enemies flash white when damaged, sparks at impacts.
-  - [ ] Sound: shot sound out of the kick/bass register and louder (SFX bus
-        0.22); enemy-fire sound (the dodge cue); telegraph, hit-tick,
-        lock-on, chain-link, low-energy and roll sounds; pan SFX by screen
-        position; pitch SFX to the seed's scale; small per-shot variation.
-        Check the drumless first ~25 s by ear.
+  - [x] Sound, first pass: shot sound out of the kick/bass register and
+        louder; enemy-fire sound (the dodge cue), panned to the shooter;
+        stereo SFX; per-shot pitch variation. `song_render sfx` demo.
+        Listen and adjust.
+  - [ ] Sound, next: telegraph, hit-tick, lock-on, chain-link, low-energy
+        and roll sounds; pitch SFX to the seed's scale (decide by ear);
+        check the drumless first ~25 s by ear.
   - [ ] Barrel roll: i-frames only in the middle of the roll (no
         near-permanent invulnerability by spamming); reward a near miss
         (graze) with chain links.

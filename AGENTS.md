@@ -163,7 +163,9 @@ ctest --test-dir build --output-on-failure         # engine_core/_ship/_vectorin
   trims. With no song (`InitAudioSynth`) the original arrangement plays
   unchanged. Tune with `./build/song_render corridor|none SEED OUT.wav`: it
   simulates a run (cruise, boosts, hush, boss, cruise), writes a WAV and
-  prints per-layer RMS for each 10 s window.
+  prints per-layer RMS for each 10 s window. `song_render sfx SEED OUT.wav`
+  renders an effects demo (player shots, enemy fire left/centre/right, both)
+  over the corridor song mid-run.
 - **Music clock** (`src/game/music_clock.h`): the game's position in the song
   in 16th steps. With audio it follows `SynthTelemetry.musicStep` minus the
   buffered audio (`MUSIC_LATENCY_CALLBACKS`); `--game-shot` free-runs it at

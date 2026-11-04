@@ -2,6 +2,24 @@
 
 This log is the source of truth for architectural choices, visual uplift milestones, feature statuses (Confirmed, Provisional, Rejected), and binary size tracking. The 1.44MB (1,474,560 bytes) contest limit applied to entries before 2026-11-03.
 
+## [Audio] Shot and enemy-fire sounds, stereo effects
+
+- Date: 2026-11-04. Status: PROVISIONAL: by ear.
+- The player's tap was a 310 -> 118 Hz sine pulse, masked by the kick and
+  bass, and peaked around -21 dBFS. It is now a bright tick above them: a sine
+  falling 1650 -> 780 Hz with a quiet fifth and a 1 ms noise click, 85 ms,
+  volume 0.95 (was 0.42).
+- New `SFX_ENEMY_FIRE`: buzzy (odd harmonics, slight vibrato), falling
+  940 -> 330 Hz over 170 ms, volume 0.85, priority with explosions. One per
+  enemy or boss volley (`GameplayEvents.enemyVolleys`, `enemyVolleyX`).
+- Effects are stereo: `TriggerSynthSFXAt(type, pan)`, equal-power pan with
+  the centre unchanged, clamped to +-0.8. Enemy volleys sit where they were
+  fired; the player's taps lean 35% toward the ship's side.
+- Taps and enemy fire vary +-4% in pitch per shot, from a hash of an effect
+  counter (not the noise stream). Voices 6 -> 10.
+- Re-blessed `AUDIO_VALIDATION_HASH` and `SONG_CORRIDOR_HASH`.
+  `song_render sfx SEED OUT.wav` renders a demo of both sounds over the song.
+
 ## [Combat look] Fire colours and shapes by role (bullet-hell rule)
 
 - Date: 2026-11-04. Status: PROVISIONAL: checked in shots; hand-play.

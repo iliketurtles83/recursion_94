@@ -17,7 +17,7 @@
 // Golden PCM hash of the validation render (seed 94). Output has been stable
 // since 57966d2 across GCC/glibc and MinGW; the value stored there was never
 // produced by that code. Re-bless only for intentional synth changes.
-#define AUDIO_VALIDATION_HASH UINT64_C(0xa2b83674276419d1)
+#define AUDIO_VALIDATION_HASH UINT64_C(0x7306a9fcc27d467c)
 
 _Static_assert(ATOMIC_INT_LOCK_FREE == 2,
                "The audio callback requires lock-free atomic integers");
@@ -31,12 +31,12 @@ double g_synthMeter[METER_COUNT];
 #endif
 
 static void ConfigureSynthSeed(SynthSystem *synth, uint32_t runSeed);
-static void StartSynthSFX(SynthSystem *synth, SFXType type);
+static void StartSynthSFX(SynthSystem *synth, SFXCommand command);
 
 static int SFXPriority(SFXType type) {
     if (type == SFX_CORE_COLLAPSE) return 4;
     if (type == SFX_BOSS_RISER || type == SFX_POWER_UP) return 3;
-    if (type == SFX_GLITCH_HIT || type == SFX_EXPLOSION) return 2;
+    if (type == SFX_GLITCH_HIT || type == SFX_EXPLOSION || type == SFX_ENEMY_FIRE) return 2;
     if (type == SFX_LASER_CHARGE) return 1;
     return 0;
 }
@@ -719,7 +719,7 @@ static void RenderAudioFrames(SynthSystem *synth, short *output, unsigned int fr
                                stepped * 0.08f;
         }
 
-        float sfx = 0.0f;
+        float sfx = 0.0f, sfxLeft = 0.0f, sfxRight = 0.0f;
         for (int voice = 0; voice < MAX_SFX_VOICES; voice++) {
             SFXVoice *sfxVoice = &synth->sfxPool[voice];
             if (!sfxVoice->active) continue;
@@ -729,21 +729,37 @@ static void RenderAudioFrames(SynthSystem *synth, short *output, unsigned int fr
                 sfxVoice->active = false;
                 continue;
             }
+            sfx = 0.0f;   // this voice only; panned into sfxLeft/Right below
 
             if (sfxVoice->type == SFX_LASER_TAP) {
-                // A compact low-mid pulse, metallic edge and transient replace
-                // the exposed high-frequency sweep of an arcade laser.
-                float pitchDecay = expf(-sfxVoice->time * 42.0f);
-                float frequency = sfxVoice->freqEnd +
-                                  (sfxVoice->freqStart - sfxVoice->freqEnd) * pitchDecay;
-                float body = sinf(2.0f * PI * frequency * sfxVoice->time) * 0.82f;
-                float edge = sinf(2.0f * PI * frequency * 2.73f * sfxVoice->time +
-                                  sinf(2.0f * PI * 71.0f * sfxVoice->time) * 0.7f) * 0.24f;
-                float transient = NextNoise(synth) * expf(-sfxVoice->time * 240.0f) * 0.55f;
-                float attack = fminf(sfxVoice->time / 0.0015f, 1.0f);
-                float envelope = attack * expf(-progress * 5.2f);
-                sfx += SoftClip((body + edge + transient) * 1.45f) *
-                       envelope * sfxVoice->volume;
+                // Player shot: a bright tick above the kick and bass. A clean sine
+                // falling an octave, a quiet fifth above it and a short noise click.
+                float pitchDecay = expf(-sfxVoice->time * 55.0f);
+                float frequency = (sfxVoice->freqEnd + (sfxVoice->freqStart - sfxVoice->freqEnd) * pitchDecay) *
+                                  sfxVoice->pitch;
+                sfxVoice->phase += frequency * dt;
+                sfxVoice->phase2 += frequency * 1.5f * dt;
+                sfxVoice->phase -= floorf(sfxVoice->phase);
+                sfxVoice->phase2 -= floorf(sfxVoice->phase2);
+                float body = sinf(2.0f * PI * sfxVoice->phase) * 0.8f +
+                             sinf(2.0f * PI * sfxVoice->phase2) * 0.18f;
+                float click = NextNoise(synth) * expf(-sfxVoice->time * 900.0f) * 0.9f;
+                float attack = fminf(sfxVoice->time / 0.001f, 1.0f);
+                float envelope = attack * expf(-sfxVoice->time * 38.0f);
+                sfx += SoftClip((body * envelope + click) * 1.3f) * sfxVoice->volume;
+            } else if (sfxVoice->type == SFX_ENEMY_FIRE) {
+                // Enemy shot: buzzy and falling (odd harmonics, a little vibrato),
+                // so it is never confused with the player's clean tick.
+                float pitchDecay = expf(-sfxVoice->time * 16.0f);
+                float frequency = (sfxVoice->freqEnd + (sfxVoice->freqStart - sfxVoice->freqEnd) * pitchDecay) *
+                                  sfxVoice->pitch * (1.0f + 0.03f * sinf(2.0f * PI * 38.0f * sfxVoice->time));
+                sfxVoice->phase += frequency * dt;
+                sfxVoice->phase -= floorf(sfxVoice->phase);
+                float p = 2.0f * PI * sfxVoice->phase;
+                float buzz = sinf(p) + sinf(3.0f * p) * 0.33f + sinf(5.0f * p) * 0.2f + sinf(7.0f * p) * 0.12f;
+                float attack = fminf(sfxVoice->time / 0.003f, 1.0f);
+                float envelope = attack * expf(-progress * 3.4f);
+                sfx += SoftClip(buzz * 0.9f) * envelope * sfxVoice->volume;
             } else if (sfxVoice->type == SFX_LASER_CHARGE) {
                 float pitchDecay = expf(-sfxVoice->time * 10.0f);
                 float frequency = sfxVoice->freqEnd +
@@ -813,6 +829,10 @@ static void RenderAudioFrames(SynthSystem *synth, short *output, unsigned int fr
                 sfx += SoftClip(sub * 0.92f + debris * 0.58f + fracture * 0.18f * pulse + impact) *
                        envelope * sfxVoice->volume;
             }
+            // Equal-power pan, normalised so the centre is unchanged.
+            float angle = (sfxVoice->pan + 1.0f) * 0.25f * PI;
+            sfxLeft += sfx * cosf(angle) * 1.41421356f;
+            sfxRight += sfx * sinf(angle) * 1.41421356f;
         }
 
         unsigned int readIndex = (synth->delayIndex + SYNTH_DELAY_FRAMES - synth->delayFrames) & DELAY_MASK;
@@ -881,7 +901,7 @@ static void RenderAudioFrames(SynthSystem *synth, short *output, unsigned int fr
                reverbRight * reverbWet;
         float musicLeft = kick * (0.26f + bossIntensity * 0.015f) + musicBedLeft * 1.12f;
         float musicRight = kick * (0.26f + bossIntensity * 0.015f) + musicBedRight * 1.12f;
-        float left = musicLeft * MUSIC_BUS_GAIN + sfx * SFX_BUS_GAIN;
+        float left = musicLeft * MUSIC_BUS_GAIN + sfxLeft * SFX_BUS_GAIN;
         METER(METER_KICK, kick * (0.26f + bossIntensity * 0.015f) * MUSIC_BUS_GAIN);
         METER(METER_BASS, bass * (0.56f + bossIntensity * 0.08f) * 1.12f * MUSIC_BUS_GAIN);
         METER(METER_SUB, subBass * 1.12f * MUSIC_BUS_GAIN);
@@ -894,7 +914,7 @@ static void RenderAudioFrames(SynthSystem *synth, short *output, unsigned int fr
         METER(METER_ATMOS, atmosphereLeft * 1.12f * MUSIC_BUS_GAIN);
         METER(METER_ECHO, (delayedLeft * 0.32f + reverbLeft * reverbWet) * 1.12f * MUSIC_BUS_GAIN);
         METER(METER_TOTAL, SoftClip(left));
-        float right = musicRight * MUSIC_BUS_GAIN + sfx * SFX_BUS_GAIN;
+        float right = musicRight * MUSIC_BUS_GAIN + sfxRight * SFX_BUS_GAIN;
 
         if (synth->glitchAmount > 0.08f) {
             float levels = 32.0f - synth->glitchAmount * 20.0f;
@@ -1185,7 +1205,8 @@ void UpdateAudioSynth(SynthSystem *synth, float intensity, float glitchAmount,
     atomic_store_explicit(&synth->controlWrite, nextWrite, memory_order_release);
 }
 
-static void StartSynthSFX(SynthSystem *synth, SFXType type) {
+static void StartSynthSFX(SynthSystem *synth, SFXCommand command) {
+    SFXType type = command.type;
     int selectedVoice = -1;
     int selectedPriority = SFXPriority(type);
     float selectedProgress = -1.0f;
@@ -1210,10 +1231,23 @@ static void StartSynthSFX(SynthSystem *synth, SFXType type) {
         SFXVoice *voice = &synth->sfxPool[selectedVoice];
         voice->type = type;
         voice->time = 0.0f;
+        voice->pan = command.pan;
+        voice->phase = 0.0f; voice->phase2 = 0.0f;
+        // Per-shot variation: +-4% pitch from a hash of the effect counter (not the
+        // noise stream, so the drums' noise is unchanged).
+        uint32_t h = ++synth->sfxSerial * 0x9e3779b9u;
+        h ^= h >> 15; h *= 0x2c1b3c6du; h ^= h >> 12;
+        voice->pitch = type == SFX_LASER_TAP || type == SFX_ENEMY_FIRE
+            ? 0.96f + (float)(h & 0xffffu) / 65535.0f * 0.08f : 1.0f;
 
         if (type == SFX_LASER_TAP) {
-            voice->duration = 0.11f; voice->freqStart = 310.0f;
-            voice->freqEnd = 118.0f; voice->volume = 0.42f;
+            // Above the kick and bass: a bright tick that falls an octave.
+            voice->duration = 0.085f; voice->freqStart = 1650.0f;
+            voice->freqEnd = 780.0f; voice->volume = 0.95f;
+        } else if (type == SFX_ENEMY_FIRE) {
+            // Buzzy and falling, so it never sounds like the player's clean tick.
+            voice->duration = 0.17f; voice->freqStart = 940.0f;
+            voice->freqEnd = 330.0f; voice->volume = 0.85f;
         } else if (type == SFX_LASER_CHARGE) {
             voice->duration = 0.32f; voice->freqStart = 380.0f;
             voice->freqEnd = 105.0f; voice->volume = 0.74f;
@@ -1243,8 +1277,13 @@ static void StartSynthSFX(SynthSystem *synth, SFXType type) {
 }
 
 void TriggerSynthSFX(SynthSystem *synth, SFXType type) {
+    TriggerSynthSFXAt(synth, type, 0.0f);
+}
+
+void TriggerSynthSFXAt(SynthSystem *synth, SFXType type, float pan) {
     if (!atomic_load_explicit(&synth->initialized, memory_order_acquire) ||
-        type <= SFX_NONE || type > SFX_CORE_COLLAPSE) return;
+        type <= SFX_NONE || type >= SFX_COUNT) return;
+    pan = pan < -0.8f ? -0.8f : (pan > 0.8f ? 0.8f : pan);
 
     unsigned int commandWrite = atomic_load_explicit(&synth->sfxCommandWrite,
                                                      memory_order_relaxed);
@@ -1256,7 +1295,7 @@ void TriggerSynthSFX(SynthSystem *synth, SFXType type) {
         return;
     }
 
-    synth->sfxCommands[commandWrite] = type;
+    synth->sfxCommands[commandWrite] = (SFXCommand){ type, pan };
     atomic_store_explicit(&synth->sfxCommandWrite, nextWrite, memory_order_release);
 }
 

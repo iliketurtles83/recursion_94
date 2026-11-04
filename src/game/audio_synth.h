@@ -8,7 +8,7 @@
 
 #define SAMPLE_RATE 44100
 #define BUFFER_FRAMES 4096
-#define MAX_SFX_VOICES 6
+#define MAX_SFX_VOICES 10
 #define SYNTH_DELAY_FRAMES 16384
 #define PAD_CHORD_NOTES 5
 #define PAD_UNISON_VOICES 5
@@ -44,8 +44,16 @@ typedef enum {
     SFX_EXPLOSION,
     SFX_POWER_UP,
     SFX_BOSS_RISER,
-    SFX_CORE_COLLAPSE
+    SFX_CORE_COLLAPSE,
+    SFX_ENEMY_FIRE,     // the dodge cue: buzzy, falling, panned to the shooter
+    SFX_COUNT
 } SFXType;
+
+// One queued effect: type and stereo position (-1 left .. 1 right).
+typedef struct {
+    SFXType type;
+    float pan;
+} SFXCommand;
 
 // A level's song: the composed layer on top of the seeded synth. The seed still
 // picks tempo, mode and arp timbre; the song fixes progression, bass line, lead
@@ -138,6 +146,9 @@ typedef struct {
     float freqStart;
     float freqEnd;
     float volume;
+    float pan;      // -1 left .. 1 right
+    float pitch;    // per-shot variation (multiplies the sweep), 1 = none
+    float phase, phase2;   // accumulated oscillator phases (cycles) for the swept voices
     bool active;
     // Only used by SFX_EXPLOSION to turn raw noise into a swept "boom" instead
     // of flat hiss; harmless to carry on other voice types.
@@ -280,7 +291,8 @@ typedef struct {
     ReverbAllpass reverbAllpasses[REVERB_ALLPASS_COUNT];
 
     SFXVoice sfxPool[MAX_SFX_VOICES];
-    SFXType sfxCommands[SFX_COMMAND_CAPACITY];
+    SFXCommand sfxCommands[SFX_COMMAND_CAPACITY];
+    unsigned int sfxSerial;   // audio thread: counts started effects (per-shot variation)
     atomic_uint sfxCommandRead;
     atomic_uint sfxCommandWrite;
     SynthControl controls[SYNTH_CONTROL_CAPACITY];
@@ -313,6 +325,8 @@ void ReseedAudioSynth(SynthSystem *synth, uint32_t runSeed);
 void UpdateAudioSynth(SynthSystem *synth, float intensity, float glitchAmount,
                       float bossIntensity, float virtualPlayerZ, float preBossHush);
 void TriggerSynthSFX(SynthSystem *synth, SFXType type);
+// Same, placed in the stereo field (-1 left .. 1 right; clamped to +-0.8).
+void TriggerSynthSFXAt(SynthSystem *synth, SFXType type, float pan);
 void UnloadAudioSynth(SynthSystem *synth);
 
 float GetSynthSeedBpm(uint32_t runSeed);

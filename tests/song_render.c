@@ -2,6 +2,9 @@
 // pre-boss hush, a boss fight, more cruise), writes a 16-bit stereo WAV and, when
 // built with SYNTH_METER, prints per-layer levels for each 10 s window.
 //   song_render corridor|none SEED OUT.wav
+//   song_render sfx SEED OUT.wav    effects demo over the corridor song mid-run:
+//     0-4 s music, 4-8 s player shots (held fire, 8ths), 8-14 s enemy fire
+//     left / centre / right on the beat, 14-24 s both together.
 #include "audio_synth.h"
 
 #include <math.h>
@@ -16,9 +19,62 @@ static void put16(FILE *f, unsigned v) { fputc(v & 255, f); fputc(v >> 8 & 255, 
 
 typedef struct { const char *label; float bossLayer; float hush; bool boss; } Phase;
 
+static void write_header(FILE *f)
+{
+    fwrite("RIFF", 1, 4, f); put32(f, 0); fwrite("WAVEfmt ", 1, 8, f);
+    put32(f, 16); put16(f, 1); put16(f, 2); put32(f, SAMPLE_RATE); put32(f, SAMPLE_RATE * 4); put16(f, 4); put16(f, 16);
+    fwrite("data", 1, 4, f); put32(f, 0);
+}
+
+static void finish(FILE *f, long frames)
+{
+    long bytes = frames * 4;
+    fseek(f, 4, SEEK_SET); put32(f, (unsigned)(36 + bytes));
+    fseek(f, 40, SEEK_SET); put32(f, (unsigned)bytes);
+    fclose(f);
+}
+
+// Effects demo: the game's shot and enemy-fire sounds over the music, on its grid.
+static int render_sfx_demo(uint32_t seed, const char *out)
+{
+    static SynthSystem synth;
+    InitAudioSynthOffline(&synth, seed, &SYNTH_SONG_CORRIDOR);
+    FILE *f = fopen(out, "wb");
+    if (!f) { perror(out); return 1; }
+    write_header(f);
+    double stepsPerSecond = GetSynthSeedBpm(seed) / 15.0;   // 16ths
+    double z = 900.0;   // mid-run: drums and bass are in
+    short buf[BLOCK * 2];
+    long frames = 0;
+    long lastStep = -1;
+    static const float pans[3] = { -0.8f, 0.0f, 0.8f };
+    for (double t = 0.0; t < 24.0; t += 1.0 / 60.0) {
+        long step = (long)(t * stepsPerSecond);
+        if (step != lastStep) {
+            lastStep = step;
+            bool eighth = step % 2 == 0, beat = step % 4 == 0;
+            if (t >= 4.0 && t < 8.0 && eighth) TriggerSynthSFX(&synth, SFX_LASER_TAP);
+            if (t >= 8.0 && t < 14.0 && beat) TriggerSynthSFXAt(&synth, SFX_ENEMY_FIRE, pans[(step / 4) % 3]);
+            if (t >= 14.0) {
+                if (eighth) TriggerSynthSFX(&synth, SFX_LASER_TAP);
+                if (step % 8 == 4) TriggerSynthSFXAt(&synth, SFX_ENEMY_FIRE, pans[(step / 8) % 3]);
+            }
+        }
+        z += 22.0 / 60.0;
+        UpdateAudioSynth(&synth, 0.55f, 0.0f, 0.0f, (float)z, 0.0f);
+        RenderAudioSynthOffline(&synth, buf, BLOCK);
+        fwrite(buf, sizeof(short), BLOCK * 2, f);
+        frames += BLOCK;
+    }
+    finish(f, frames);
+    printf("%s: effects demo, %.1f s (music / shots / enemy fire L-C-R / both)\n", out, frames / (double)SAMPLE_RATE);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
-    if (argc < 4) { fprintf(stderr, "usage: song_render corridor|none SEED OUT.wav\n"); return 2; }
+    if (argc < 4) { fprintf(stderr, "usage: song_render corridor|none|sfx SEED OUT.wav\n"); return 2; }
+    if (strcmp(argv[1], "sfx") == 0) return render_sfx_demo((uint32_t)strtoul(argv[2], NULL, 10), argv[3]);
     const SynthSong *song = strcmp(argv[1], "corridor") == 0 ? &SYNTH_SONG_CORRIDOR : NULL;
     uint32_t seed = (uint32_t)strtoul(argv[2], NULL, 10);
     static SynthSystem synth;
@@ -28,9 +84,7 @@ int main(int argc, char **argv)
 
     FILE *f = fopen(argv[3], "wb");
     if (!f) { perror(argv[3]); return 1; }
-    fwrite("RIFF", 1, 4, f); put32(f, 0); fwrite("WAVEfmt ", 1, 8, f);
-    put32(f, 16); put16(f, 1); put16(f, 2); put32(f, SAMPLE_RATE); put32(f, SAMPLE_RATE * 4); put16(f, 4); put16(f, 16);
-    fwrite("data", 1, 4, f); put32(f, 0);
+    write_header(f);
 
     const double bossAt = 1500.0, bossSeconds[4] = { 2.6, 25.0, 20.0, 25.0 };
     double z = 0.0, t = 0.0, bossT = -1.0, after = 0.0;
@@ -108,10 +162,7 @@ int main(int argc, char **argv)
             windowSq = 0.0; peak = 0;
         }
     }
-    long bytes = frames * 4;
-    fseek(f, 4, SEEK_SET); put32(f, (unsigned)(36 + bytes));
-    fseek(f, 40, SEEK_SET); put32(f, (unsigned)bytes);
-    fclose(f);
+    finish(f, frames);
     printf("%s: %.1f s, %ld samples near full scale\n", argv[3], frames / (double)SAMPLE_RATE, clipped);
     return 0;
 }

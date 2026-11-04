@@ -120,6 +120,8 @@ typedef struct {
     bool bossStarted;
     bool bossDefeated;
     bool recursionCompleted;
+    int enemyVolleys;      // enemy and boss volleys fired this step (one sound each)
+    float enemyVolleyX;    // arena x of the last volley, for stereo placement
 } GameplayEvents;
 
 typedef enum {
