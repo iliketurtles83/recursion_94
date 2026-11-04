@@ -101,4 +101,4 @@ RECURSION_94.
 - [x] Pause menu with quit confirmation; fullscreen toggle (F11 /
       Alt+Enter, borderless). Check fullscreen by hand.
 - [ ] Period-look decision.
-- [ ] Delete `legacy/` files once their content is ported.
+- [x] Delete `legacy/` (original game kept as tag `r94-floppy`).

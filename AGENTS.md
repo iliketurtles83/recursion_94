@@ -15,8 +15,8 @@ is five levels, each with its own environment, song and boss.
   and level transitions (`titles.c`), the curve timeline (`timeline.h`) and the selector art and seed palettes (`demoscene.c`, `palette.h`). `./build/recursion94` starts
   the game in the server corridor (preset `r94_corridor`); `--sandbox` gives the
   environment harness.
-- `legacy/` holds the rest of the original game (environment, old main loop):
-  unbuilt reference only. Combat and bosses are ported. The Recursive Core has
+- The original game lives in git history only (tag `r94-floppy`; `legacy/`
+  was deleted once combat and bosses were ported). The Recursive Core has
   its neon chassis (`draw_boss` in `combat_draw.c`) and is drawn for every
   round until the other four bosses get theirs; the original chassis code is in
   git history (`git show 1a7c6ca:legacy/src/gameplay.c`, `Draw*Boss`).
@@ -33,7 +33,7 @@ is five levels, each with its own environment, song and boss.
   (about a quarter), so the corridor drifts while the arena holds. Leviathan
   gravity (`player.pull`) reaches flight as `CtInput.driftX/Y`, scaled to the
   same fraction of full-stick speed as in the original. The original
-  game's environment and its ship, enemy and shot graphics are being dropped. Delete legacy files once their content is ported.
+  game's environment and its ship, enemy and shot graphics were dropped.
   `archive/AGENTS_legacy.md` has the rules that applied to that code.
 - First milestone: a vertical slice (server corridor, engine flight, ported
   weapons/enemies, one boss, one song).

@@ -2,6 +2,15 @@
 
 This log is the source of truth for architectural choices, visual uplift milestones, feature statuses (Confirmed, Provisional, Rejected), and binary size tracking. The 1.44MB (1,474,560 bytes) contest limit applied to entries before 2026-11-03.
 
+## [Repo] Legacy removed
+
+- Date: 2026-11-04. Status: CONFIRMED.
+- `legacy/` (old environment, main loop, shaders, build scripts and a
+  prebuilt `recursion94.exe`) is deleted: combat and bosses are ported and
+  the industrial environment is dropped. The original game is the annotated
+  tag `r94-floppy` (`c92edf1`, master before the unification merge); the boss
+  chassis reference stays at `git show 1a7c6ca:legacy/src/gameplay.c`.
+
 ## [Ship] Ship selection: dart, probe, jet
 
 - Date: 2026-11-03. Status: PROVISIONAL: checked in shots; hand-play.

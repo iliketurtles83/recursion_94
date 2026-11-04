@@ -1,7 +1,7 @@
 # RECURSION_94 — Project Design Reference (v2)
 
-> **Status (2026-11-03):** this describes the original game, now in `legacy/`
-> (paths below are relative to it). The game is being rebuilt on the imported
+> **Status (2026-11-03):** this describes the original game, kept in git
+> history (tag `r94-floppy`; paths below are relative to its root). The game is being rebuilt on the imported
 > cybertunnel engine. The audio (§6), gameplay (§4, §7) and boss (§8) sections are
 > the spec being ported. The environment (§5) and the 1.44 MB target are
 > superseded. §9 (Story) is new design for the rebuild. See `AGENTS.md`.

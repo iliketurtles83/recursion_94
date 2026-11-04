@@ -8,8 +8,8 @@ Written in C11 with Raylib 6 and hand-written GLSL.
 
 ## Status
 
-RECURSION_94 is being rebuilt. The original floppy-sized game (in `legacy/`, not
-built) is being merged with the procedural flight engine and environments from the
+RECURSION_94 is being rebuilt. The original floppy-sized game (git tag
+`r94-floppy`) is being merged with the procedural flight engine and environments from the
 rec_tunnel sandbox, which now live at the repo root. The plan is five levels, each
 with its own environment, song and boss. The first milestone is a one-level
 vertical slice. Today the executable runs a playable combat slice: pick a seed, then fight
