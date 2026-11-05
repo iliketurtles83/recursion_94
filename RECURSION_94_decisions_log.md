@@ -23,11 +23,15 @@ This log is the source of truth for architectural choices, visual uplift milesto
     undecided.
   - Charge feedback: yes; the growing crosshair: no (the game has no crosshair).
   - Boss patterns: keep 886ba1b's Bastion cannons, Prism decoys, Mantis
-    sweeps and Leviathan patterns. The lattice wall becomes a desperation
-    attack at low boss health.
-  - Upgrades: acquired during the level, with a limited number of shots;
-    unspent shots carry over to the next stage. Weapons and upgrades need a
-    lot more design and testing. The 13 permanent salvage cards: open.
+    sweeps and Leviathan patterns. The lattice wall becomes the Core's
+    desperation attack at low health. It is advanced and hard to evade but
+    suits the barrel roll; consider moving it to a later boss.
+  - Upgrades: no salvage cards. Upgrade weapons are in-game pickups only,
+    left behind when a group is wiped out or a harder enemy is killed, with
+    a limited number of shots. Unspent shots carry over to the next stage
+    and reset to zero on death. Weapons and upgrades need a lot more design
+    and testing.
+  - The collaborator knows about the port.
   - UI: the final design waits until the game is done; debug info is fine
     until then. Minimum: energy bar, clear "special ready" markers, an ammo
     bar for upgrade weapons, boss bar. Records and saving: not wanted now.

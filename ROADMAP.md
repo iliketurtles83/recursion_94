@@ -88,9 +88,12 @@ RECURSION_94.
   - [ ] Port from collaborator commit `886ba1b` (decisions 2026-11-05):
         sniper, carrier, support roles (reworked: distinct depth, shape and
         group), charge feedback on the ship (no crosshair), Core lattice as
-        a low-health desperation attack, the other bosses' patterns (with
-        their chassis), in-level upgrade weapons with limited shots carried
-        between stages, minimal HUD (energy, specials ready, ammo, boss).
+        a low-health desperation attack (later: consider moving it to a
+        later boss, it suits the barrel roll), the other bosses' patterns
+        (with their chassis), upgrade weapons as pickups only (dropped by a
+        wiped group or a harder enemy; limited shots, carried between
+        stages, reset on death; no salvage cards), minimal HUD (energy,
+        specials ready, ammo, boss).
   - [ ] Variety: procedural formation grammar (lines, V, rings, snakes,
         mirrored pairs) spawned on phrase lines from the seed; 3-4 new enemy
         roles (weaver, mine, shielded = charge only, wall turret); corridor
