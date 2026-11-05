@@ -194,6 +194,20 @@ static Enemy *SpawnEnemyAt(GameplaySystem *game, EnemyType type, Vector3 positio
             enemy->size = (Vector3){ 2.5f, 2.5f, 2.5f };
             enemy->health = 2.0f;
             break;
+        case ENEMY_SNIPER:
+            enemy->size = (Vector3){ 1.0f, 1.0f, 3.2f };
+            enemy->health = 2.0f;
+            enemy->fireTimer = 1.4f + Hash01(seed + 23u) * 0.8f;
+            break;
+        case ENEMY_CARRIER:
+            enemy->size = (Vector3){ 4.4f, 1.8f, 4.4f };
+            enemy->health = 5.0f;
+            enemy->fireTimer = 1.6f;
+            break;
+        case ENEMY_SUPPORT:
+            enemy->size = (Vector3){ 2.2f, 2.2f, 2.2f };
+            enemy->health = 3.0f;
+            break;
         case ENEMY_BOSS_NODE:
             enemy->size = game->boss.leviathan
                 ? (Vector3){ 2.35f, 2.35f, 2.35f }
@@ -223,8 +237,55 @@ static Enemy *SpawnEnemyAt(GameplaySystem *game, EnemyType type, Vector3 positio
     return enemy;
 }
 
+static int CountActive(const GameplaySystem *game, EnemyType type) {
+    int n = 0;
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        if (game->enemies[i].active && game->enemies[i].type == type &&
+            game->enemies[i].phase != ENEMY_ABSORBED) n++;
+    }
+    return n;
+}
+
+// Role groups (886ba1b's sniper, carrier and support), introduced by distance
+// (difficulty 0.22 / 0.32 / 0.42: roughly 12, 20 and 30 s into the first
+// level) and at most one group of each on the field. Each role has its own
+// height band and hold depth, so they read apart before their outlines do.
+#define ROLE_SPAWN_Z -110.0f
+static bool SpawnRoleGroup(GameplaySystem *game, uint32_t seed) {
+    float roll = Hash01(seed + 40u);
+    float d = game->difficulty;
+    if (d > 0.22f && roll < 0.14f && CountActive(game, ENEMY_SNIPER) == 0) {
+        // A mirrored pair high up, far back.
+        float x = (0.40f + Hash01(seed + 41u) * 0.25f) * game->arena.maxX;
+        for (int side = -1; side <= 1; side += 2) {
+            Vector3 p = { (float)side * x, ARENA_Y(0.84f), ROLE_SPAWN_Z };
+            SpawnEnemyAt(game, ENEMY_SNIPER, p, 0, seed + (uint32_t)(side + 2) * 31u);
+        }
+        return true;
+    }
+    if (d > 0.32f && roll < 0.26f && CountActive(game, ENEMY_CARRIER) == 0) {
+        // Alone, low, off to one side.
+        float x = (Hash01(seed + 42u) * 2.0f - 1.0f) * 0.45f * game->arena.maxX;
+        SpawnEnemyAt(game, ENEMY_CARRIER, (Vector3){ x, ARENA_Y(0.22f), ROLE_SPAWN_Z }, 0, seed + 7u);
+        return true;
+    }
+    if (d > 0.42f && roll < 0.38f && CountActive(game, ENEMY_SUPPORT) == 0) {
+        // A drifter line with its support behind the middle.
+        float cx = (Hash01(seed + 43u) * 2.0f - 1.0f) * 0.5f * game->arena.maxX;
+        float cy = ARENA_Y(0.40f + Hash01(seed + 44u) * 0.25f);
+        for (int i = 0; i < 3; i++) {
+            Vector3 p = { cx + ((float)i - 1.0f) * ENEMY_FORMATION_SPACING * 0.8f, cy, ROLE_SPAWN_Z + 4.0f };
+            SpawnEnemyAt(game, ENEMY_DRIFTER, p, 0, seed + 50u + (uint32_t)i * 31u);
+        }
+        SpawnEnemyAt(game, ENEMY_SUPPORT, (Vector3){ cx, cy + 1.2f, ROLE_SPAWN_Z - 6.0f }, 0, seed + 9u);
+        return true;
+    }
+    return false;
+}
+
 static void SpawnFormation(GameplaySystem *game) {
     uint32_t seed = game->runSeed ^ (uint32_t)(game->spawnSerial + 1) * 0x9e3779b9u;
+    if (SpawnRoleGroup(game, seed)) return;
     int count = game->boss.encounterIndex > 0 ? 2 : 1;
     if (game->difficulty > 0.08f && Hash01(seed + 1u) > 0.35f) count++;
     if (game->difficulty > 0.42f && Hash01(seed + 2u) > 0.48f) count++;
@@ -672,12 +733,16 @@ static void RegisterKill(GameplaySystem *game, Enemy *enemy, bool charged,
         events->weaponTierAdvanced = true;
     }
     int overdriveMultiplier = game->overdriveActive ? 2 : 1;
-    game->score += 100 * game->combo * (deadType == ENEMY_SPLITTER ? 2 : 1) *
-                   overdriveMultiplier;
+    int worth = deadType == ENEMY_CARRIER ? 4
+              : (deadType == ENEMY_SNIPER || deadType == ENEMY_SUPPORT) ? 3
+              : deadType == ENEMY_SPLITTER ? 2 : 1;
+    game->score += 100 * game->combo * worth * overdriveMultiplier;
     if (!game->suppressLinkRewards) {
         int linkReward = deadType == ENEMY_BOSS_CORE ? 10
                        : deadType == ENEMY_BOSS_NODE ? 5
-                       : deadType == ENEMY_SPLITTER ? 2 : 1;
+                       : deadType == ENEMY_CARRIER ? 3
+                       : (deadType == ENEMY_SPLITTER || deadType == ENEMY_SNIPER ||
+                          deadType == ENEMY_SUPPORT) ? 2 : 1;
         if (game->overdriveActive && deadType != ENEMY_BOSS_CORE) linkReward++;
         game->chainLinks = game->chainLinks + linkReward > MAX_CHAIN_LINKS
             ? MAX_CHAIN_LINKS : game->chainLinks + linkReward;
@@ -693,7 +758,8 @@ static void RegisterKill(GameplaySystem *game, Enemy *enemy, bool charged,
         ? (Color){ 255, 55, 130, 255 }
         : (Color){ 0, 235, 255, 255 };
     int burstCount = deadType == ENEMY_BOSS_CORE ? 32
-                     : (deadType == ENEMY_SPLITTER ? 14 : 8);
+                     : deadType == ENEMY_CARRIER ? 20
+                     : (deadType == ENEMY_SPLITTER || deadType == ENEMY_SUPPORT ? 14 : 8);
     SpawnBurst(game, deathPosition, burstColor, burstCount);
 
     if (deadType == ENEMY_SPLITTER && generation == 0) {
@@ -737,9 +803,24 @@ static void SpawnSparks(GameplaySystem *game, const Enemy *enemy) {
     }
 }
 
+// The support protecting this enemy (slot), or -1.
+int GetEnemySupport(const GameplaySystem *game, const Enemy *enemy) {
+    if (enemy->type == ENEMY_SUPPORT || enemy->type == ENEMY_BOSS_CORE ||
+        enemy->type == ENEMY_BOSS_NODE || enemy->phase == ENEMY_ABSORBED) return -1;
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        const Enemy *s = &game->enemies[i];
+        if (!s->active || s->type != ENEMY_SUPPORT || s->phase == ENEMY_ABSORBED) continue;
+        float dx = s->position.x - enemy->position.x, dy = s->position.y - enemy->position.y,
+              dz = s->position.z - enemy->position.z;
+        if (dx * dx + dy * dy + dz * dz < SUPPORT_RADIUS * SUPPORT_RADIUS) return i;
+    }
+    return -1;
+}
+
 static void DamageEnemy(GameplaySystem *game, Enemy *enemy, float damage, bool charged,
                         GameplayEvents *events) {
     if (!enemy->active) return;
+    if (GetEnemySupport(game, enemy) >= 0) damage *= 0.5f;
     enemy->health -= damage;
     game->cameraKick = fmaxf(game->cameraKick, 0.12f);
     if (enemy->health <= 0.0f) RegisterKill(game, enemy, charged, events);
@@ -936,10 +1017,76 @@ static void UpdateAbsorbed(GameplaySystem *game, Enemy *enemy, float dt, Gamepla
     }
 }
 
+// Sniper, carrier, support. Each holds its own depth; the sniper commits its
+// aim point at the start of the telegraph and never tracks after it.
+#define SNIPER_HOLD_Z -48.0f
+#define CARRIER_HOLD_Z -37.0f
+#define SUPPORT_HOLD_Z -33.0f
+#define SNIPER_SHOT_SPEED 46.0f
+
+static void UpdateRoleEnemy(GameplaySystem *game, Enemy *enemy, float dt, bool overdrive,
+                            GameplayEvents *events) {
+    enemy->age += dt;
+    enemy->phaseTime += dt;
+    float identity = (float)enemy->identity;
+    float holdZ = enemy->type == ENEMY_SNIPER ? SNIPER_HOLD_Z
+                : enemy->type == ENEMY_CARRIER ? CARRIER_HOLD_Z : SUPPORT_HOLD_Z;
+    if (enemy->phase == ENEMY_APPROACH) {
+        enemy->position.z += (enemy->type == ENEMY_CARRIER ? 15.0f : 20.0f) * dt;
+        if (enemy->position.z >= holdZ) {
+            enemy->position.z = holdZ;
+            enemy->basePosition = enemy->position;
+            SetEnemyPhase(enemy, ENEMY_HOVER);
+        }
+    } else {
+        float sway = enemy->type == ENEMY_CARRIER ? 1.6f : enemy->type == ENEMY_SNIPER ? 0.6f : 1.0f;
+        enemy->position.x = enemy->basePosition.x + sinf(enemy->age * 0.55f + identity) * sway;
+        enemy->position.y = enemy->basePosition.y + sinf(enemy->age * 0.8f + identity) * 0.3f;
+    }
+    if (enemy->type == ENEMY_SUPPORT) { if (enemy->age > 30.0f) enemy->active = false; return; }
+
+    if (enemy->phase == ENEMY_HOVER) {
+        enemy->fireTimer -= dt * (overdrive ? 1.6f : 1.0f);
+        if (enemy->fireTimer <= 0.0f) {
+            enemy->aim = game->player.position;
+            SetEnemyPhase(enemy, ENEMY_TELEGRAPH);
+        }
+    } else if (enemy->phase == ENEMY_TELEGRAPH) {
+        float delay = enemy->type == ENEMY_SNIPER ? SNIPER_MARK_SECONDS : CARRIER_BAY_SECONDS;
+        if (TimerOnGrid(game, delay - enemy->phaseTime, MUSIC_STEP)) {
+            if (enemy->type == ENEMY_SNIPER) {
+                events->enemyVolleys++;
+                events->enemyVolleyX = enemy->position.x;
+                SpawnAimedProjectile(game, enemy->position, enemy->aim, SNIPER_SHOT_SPEED);
+                enemy->fireTimer = 2.6f * (1.0f - game->difficulty * 0.25f);
+            } else {
+                int room = 0;
+                for (int i = 0; i < MAX_ENEMIES; i++) room += !game->enemies[i].active;
+                for (int side = -1; side <= 1 && room > 8; side += 2, room--) {
+                    Vector3 p = enemy->position;
+                    p.x += (float)side * enemy->size.x * 0.6f;
+                    p.z += 1.5f;
+                    Enemy *child = SpawnEnemyAt(game, ENEMY_CHASER, p, 1,
+                                                game->runSeed ^ (uint32_t)game->spawnSerial * 31u);
+                    if (child) {
+                        child->phase = ENEMY_HOVER;
+                        child->basePosition = p;
+                        child->fireTimer = 1.4f + 0.3f * (float)(side + 1);
+                    }
+                }
+                enemy->fireTimer = 4.4f * (1.0f - game->difficulty * 0.2f);
+            }
+            SetEnemyPhase(enemy, ENEMY_HOVER);
+        }
+    }
+    if (enemy->age > 30.0f) enemy->active = false;
+}
+
 static void UpdateEnemy(GameplaySystem *game, Enemy *enemy, float dt, bool overdrive,
                         GameplayEvents *events) {
     if (enemy->phase == ENEMY_ABSORBED) { UpdateAbsorbed(game, enemy, dt, events); return; }
     if (enemy->type == ENEMY_BOSS_NODE || enemy->type == ENEMY_BOSS_CORE) return;
+    if (enemy->type >= ENEMY_SNIPER) { UpdateRoleEnemy(game, enemy, dt, overdrive, events); return; }
     enemy->age += dt;
     enemy->phaseTime += dt;
     float identity = (float)enemy->identity;

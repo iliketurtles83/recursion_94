@@ -2,6 +2,31 @@
 
 This log is the source of truth for architectural choices, visual uplift milestones, feature statuses (Confirmed, Provisional, Rejected), and binary size tracking. The 1.44MB (1,474,560 bytes) contest limit applied to entries before 2026-11-03.
 
+## [Combat] Sniper, carrier and support roles
+
+- Date: 2026-11-05. Status: PROVISIONAL: checked in tests and shots; hand-play.
+- Ported from collaborator commit 886ba1b, reworked after playing it (the
+  three were hard to tell apart and attacked from the same plane). Each role
+  now has its own group, height band, hold depth and outline:
+  - Sniper: a mirrored pair high up (84% of arena height), holding at z -48.
+    A needle inside a turning scope ring with four spars (the chase camera
+    sees it end-on, so the needle alone was a dot). It commits an aim point (where the player
+    was), shows it for 1.05 s as a dashed sight line and a closing reticle
+    on the player's plane, then fires one fast shot (46 u/s) at that point.
+    It never tracks after the mark. 2 health.
+  - Carrier: alone, low (22%), holding at z -37. A flat hex hull (4.4 wide) with two
+    launch bays that open (grow, turn enemy-fire pink) for 0.8 s, then two
+    small chasers launch. Every ~4.4 s, while the pool has room. 5 health.
+  - Support: behind a line of three drifters, holding at z -33. An
+    octahedron in a hex halo; never fires. Ordinary enemies within 10 arena
+    units take half damage; each shows a dashed tether to the support and a
+    small hex. 3 health.
+- Introduced by distance (difficulty 0.22 / 0.32 / 0.42, about 12, 20 and
+  30 s into the first level), at most one group of each on the field.
+  Rewards: carrier 4x score and 3 links; sniper and support 3x and 2 links.
+- 886ba1b's patrol/assault/recovery cycle and survivor retreat were not
+  ported.
+
 ## [Combat] Core desperation lattice
 
 - Date: 2026-11-05. Status: PROVISIONAL: checked in tests and shots; hand-play.

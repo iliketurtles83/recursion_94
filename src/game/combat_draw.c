@@ -196,7 +196,22 @@ static const Vector3 DART_V[4] = { {0,0,1.3f}, {0,0.62f,-0.7f}, {-0.6f,-0.36f,-0
 static const int DART_E[6][2] = { {0,1},{0,2},{0,3},{1,2},{2,3},{3,1} };
 static const int DART_F[4][3] = { {0,1,2},{0,2,3},{0,3,1},{1,3,2} };
 
+// Needle (sniper): long along z, pointing at the player.
+static const Vector3 NEEDLE_V[6] = { {0,0,1.6f}, {0,0,-1.6f}, {0.3f,0,0}, {-0.3f,0,0}, {0,0.3f,0}, {0,-0.3f,0} };
+static const int NEEDLE_E[12][2] = { {0,2},{0,3},{0,4},{0,5},{1,2},{1,3},{1,4},{1,5},{2,4},{4,3},{3,5},{5,2} };
+static const int NEEDLE_F[8][3] = { {0,2,4},{0,4,3},{0,3,5},{0,5,2},{1,4,2},{1,3,4},{1,5,3},{1,2,5} };
+// Flat hex hull (carrier): six corners in the x/z plane, top and bottom.
+static const Vector3 HULL_V[12] = {
+    { 1.0f, 0.42f, 0.0f }, { 0.5f, 0.42f, 0.69f }, { -0.5f, 0.42f, 0.69f }, { -1.0f, 0.42f, 0.0f }, { -0.5f, 0.42f, -0.69f }, { 0.5f, 0.42f, -0.69f },
+    { 1.0f, -0.42f, 0.0f }, { 0.5f, -0.42f, 0.69f }, { -0.5f, -0.42f, 0.69f }, { -1.0f, -0.42f, 0.0f }, { -0.5f, -0.42f, -0.69f }, { 0.5f, -0.42f, -0.69f } };
+static const int HULL_E[18][2] = { {0,1},{1,2},{2,3},{3,4},{4,5},{5,0}, {6,7},{7,8},{8,9},{9,10},{10,11},{11,6},
+                                   {0,6},{1,7},{2,8},{3,9},{4,10},{5,11} };
+static const int HULL_F[20][3] = { {0,1,2},{0,2,3},{0,3,4},{0,4,5}, {6,8,7},{6,9,8},{6,10,9},{6,11,10},
+                                   {0,6,7},{0,7,1},{1,7,8},{1,8,2},{2,8,9},{2,9,3},{3,9,10},{3,10,4},{4,10,11},{4,11,5},{5,11,6},{5,6,0} };
+
 static const Shape SHAPE_OCT = { OCT_V, 6, OCT_E, 12, OCT_F, 8 };
+static const Shape SHAPE_NEEDLE = { NEEDLE_V, 6, NEEDLE_E, 12, NEEDLE_F, 8 };
+static const Shape SHAPE_HULL = { HULL_V, 12, HULL_E, 18, HULL_F, 20 };
 static const Shape SHAPE_CUBE = { CUBE_V, 8, CUBE_E, 12, CUBE_F, 12 };
 static const Shape SHAPE_DART = { DART_V, 4, DART_E, 6, DART_F, 4 };
 
@@ -263,6 +278,9 @@ static Color enemy_color(const GameplaySystem *g, const Enemy *e)
         case ENEMY_CHASER: return gPal.threat;
         case ENEMY_SPLITTER: return gPal.secondary;
         case ENEMY_BOSS_NODE: return gPal.secondary;
+        case ENEMY_SNIPER: return gPal.hot;
+        case ENEMY_CARRIER: return mix_color(gPal.secondary, gPal.primary, 0.5f);
+        case ENEMY_SUPPORT: return mix_color(gPal.primary, PLAYER_CORE, 0.55f);
         default: return mix_color(gPal.threat, gPal.hot, 0.45f);
     }
 }
@@ -283,6 +301,83 @@ static void lock_brackets(const Frame *f, float s, float time, float w, Color c)
     }
 }
 
+// Sniper, carrier and support (886ba1b roles). Each has its own outline;
+// the sniper's mark and the support's tethers say what they are doing.
+static void draw_role_enemy(const CtTunnel *ct, const ArenaMap *m, const double *o, const GameplaySystem *g,
+                            const Enemy *e, const Frame *f, Color c, float fade, float time, bool emissive)
+{
+    float id = (float)e->identity, w = 0.05f;
+    float gain = (2.8f + e->hurt * 4.0f) * fade;
+    bool tele = e->phase == ENEMY_TELEGRAPH;
+    if (e->type == ENEMY_SNIPER) {
+        // Seen end-on from the chase camera, so the silhouette is a scope: a
+        // ring with four spars around the needle's nose, turning slowly.
+        Xform t = { 1.3f, 0.0f, 0.0f };
+        if (!emissive) { if (fade > 0.05f) shape_body(f, &SHAPE_NEEDLE, t, c); return; }
+        shape_edges(f, &SHAPE_NEEDLE, t, c, gain, w);
+        float spin = time * 0.6f + id;
+        ring(f, 1.15f, 8, spin, w, c, gain, 0.35f);
+        for (int k = 0; k < 4; k++) {
+            float a = spin + k * PI * 0.5f;
+            ribbon(fp(f, cosf(a) * 0.55f, sinf(a) * 0.55f, 0.0f), fp(f, cosf(a) * 1.75f, sinf(a) * 1.75f, 0.0f), w, c, gain);
+        }
+        if (tele) {
+            // The mark: a dashed sight line to the committed aim point and a
+            // closing reticle there, brightening until the shot.
+            float k = fminf(e->phaseTime / SNIPER_MARK_SECONDS, 1.0f);
+            float a = (1.5f + 4.5f * k) * fade;
+            Vector3 from = e->position, to = e->aim;
+            for (int seg = 0; seg < 24; seg += 2) {
+                Vector3 p0 = Vector3Lerp(from, to, seg / 24.0f), p1 = Vector3Lerp(from, to, (seg + 1) / 24.0f);
+                ribbon(frame_at(ct, m, o, p0).c, frame_at(ct, m, o, p1).c, 0.03f + 0.03f * k, ENEMY_FIRE, a);
+            }
+            Frame af = frame_at(ct, m, o, to);
+            ring(&af, 1.4f - 0.7f * k, 4, PI * 0.25f, 0.04f, ENEMY_FIRE, a, 0.6f);
+            ring(&af, 0.2f, 8, 0.0f, 0.04f, ENEMY_FIRE_CORE, a, 0.0f);
+        }
+    } else if (e->type == ENEMY_CARRIER) {
+        float r = e->size.x * 0.55f;
+        Xform t = { r, sinf(e->age * 0.4f + id) * 0.25f, 0.15f };
+        if (!emissive) { if (fade > 0.05f) shape_body(f, &SHAPE_HULL, t, c); return; }
+        shape_edges(f, &SHAPE_HULL, t, c, gain, w * 1.2f);
+        // Launch bays at the sides; they open (ring grows, hot) before a launch.
+        float open = tele ? fminf(e->phaseTime / CARRIER_BAY_SECONDS, 1.0f) : 0.0f;
+        for (int side = -1; side <= 1; side += 2) {
+            Frame bf = *f;
+            bf.c = fp(f, (float)side * r * 0.62f, 0.0f, 0.4f);
+            ring(&bf, 0.35f + 0.35f * open, 6, time * 2.0f * side, w, open > 0.0f ? ENEMY_FIRE : c,
+                 (2.0f + 4.0f * open) * fade, 0.0f);
+        }
+    } else {   // support
+        float r = e->size.x * 0.5f;
+        Xform t = { r * 0.8f, time * 0.9f + id, time * 0.6f };
+        if (!emissive) { if (fade > 0.05f) shape_body(f, &SHAPE_OCT, t, c); return; }
+        shape_edges(f, &SHAPE_OCT, t, c, gain, w);
+        ring(f, r * 1.5f, 6, -time * 0.8f + id, w, c, gain * 0.9f, 0.0f);       // hex halo
+        ring(f, r * 1.9f, 6, time * 0.5f, w * 0.7f, c, gain * 0.5f, 0.5f);
+    }
+    if (e->locked) lock_brackets(f, e->size.x * 0.95f, time, w * 1.4f, PLAYER_FIRE);
+}
+
+// Support tether: a pulsing dashed line from a protected enemy to its support,
+// and a small hex around the protected enemy (it takes half damage).
+static void draw_support_tether(const CtTunnel *ct, const ArenaMap *m, const double *o, const GameplaySystem *g,
+                                const Enemy *e, const Frame *f, float time, float fade)
+{
+    int slot = GetEnemySupport(g, e);
+    if (slot < 0) return;
+    const Enemy *s = &g->enemies[slot];
+    Color c = enemy_color(g, s);
+    float flow = time * 3.0f;
+    for (int seg = 0; seg < 10; seg++) {
+        float u0 = (seg + fmodf(flow, 1.0f)) / 10.0f, u1 = u0 + 0.05f;
+        if (u1 > 1.0f) continue;
+        Vector3 p0 = Vector3Lerp(s->position, e->position, u0), p1 = Vector3Lerp(s->position, e->position, u1);
+        ribbon(frame_at(ct, m, o, p0).c, frame_at(ct, m, o, p1).c, 0.04f, c, 2.4f * fade);
+    }
+    ring(f, e->size.x * 0.85f, 6, time * 0.7f, 0.04f, c, 2.0f * fade, 0.0f);
+}
+
 static void draw_enemy(const CtTunnel *ct, const ArenaMap *m, const double *o, const GameplaySystem *g,
                        const Enemy *e, float time, bool emissive)
 {
@@ -294,11 +389,13 @@ static void draw_enemy(const CtTunnel *ct, const ArenaMap *m, const double *o, c
     float gain = (2.6f + telegraph * 3.5f + e->hurt * 4.0f) * fade;
     float r = e->size.x * 0.5f;
     float w = 0.05f;
+    if (e->type >= ENEMY_SNIPER) { draw_role_enemy(ct, m, o, g, e, &f, c, fade, time, emissive); return; }
     const Shape *shape = e->type == ENEMY_CHASER ? &SHAPE_DART : e->type == ENEMY_SPLITTER ? &SHAPE_CUBE : &SHAPE_OCT;
     Xform t = { r, e->age * (e->type == ENEMY_SPLITTER ? 0.9f : 1.6f) + id, e->type == ENEMY_CHASER ? 0.0f : e->age * 0.7f + id * 0.37f };
     if (e->type == ENEMY_CHASER) t = (Xform){ r * 1.15f, 0.0f, 0.0f };
     if (!emissive) { if (fade > 0.05f) shape_body(&f, shape, t, c); return; }
     shape_edges(&f, shape, t, c, gain, w);
+    draw_support_tether(ct, m, o, g, e, &f, time, fade);
     if (e->type == ENEMY_SPLITTER) {
         Xform inner = { r * 0.45f, -e->age * 1.7f, e->age * 1.1f };
         shape_edges(&f, &SHAPE_CUBE, inner, scale_color(c, 1.3f), gain * 1.3f, w * 0.8f);
@@ -309,6 +406,7 @@ static void draw_enemy(const CtTunnel *ct, const ArenaMap *m, const double *o, c
     if (telegraph > 0.0f) ring(&f, r * (1.6f + e->phaseTime * 1.5f), 16, 0.0f, w, ENEMY_FIRE, telegraph * 4.0f * fade, 0.2f);
     if (e->locked) lock_brackets(&f, r * 1.9f, time, w * 1.4f, PLAYER_FIRE);
 }
+
 
 // ---------------------------------------------------------------------------
 // Boss: the Recursive Core. A turbine of eight kite petals around a reactor of

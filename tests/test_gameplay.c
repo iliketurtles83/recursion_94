@@ -11,6 +11,8 @@
 // Plus the Core's desperation lattice: walls alternate with fans, every wall
 // shot crosses the player's plane outside the guided lane, and the guide
 // leads the wall by about a second.
+// Plus the 886ba1b roles: snipers come as a mirrored pair at their own depth
+// and commit their aim, carriers launch chasers, supports halve damage nearby.
 #include "gameplay.h"
 #include "music_clock.h"
 #include "story.h"
@@ -343,6 +345,79 @@ static bool check_lattice(void)
     return ok;
 }
 
+static bool check_roles(void)
+{
+    static GameplaySystem game;
+    InitGameplay(&game, 94u);
+    game.bossesEnabled = false;
+    GameplayInput in = { 0 };
+    in.playerY = 2.4f;
+    const float dt = 1.0f / 60.0f;
+    int sniperPairs = 0, carriers = 0, supports = 0, launches = 0, marks = 0, aimMoved = 0;
+    int sniperShots = 0, sniperMisses = 0;
+    bool seen[MAX_ENEMIES] = { 0 };
+    int seenSerial[MAX_ENEMIES];
+    float holdZ[3] = { 0, 0, 0 };
+    Vector3 lastAim[MAX_ENEMIES];
+    for (int frame = 0; frame < 60 * 180; frame++) {
+        game.player.energy = 100.0f;
+        game.player.invulnerability = 1.0f;
+        in.playerX = sinf(frame * 0.01f) * 6.0f;          // keep moving: the aim must not follow
+        int chasersBefore = 0;
+        for (int i = 0; i < MAX_ENEMIES; i++)
+            chasersBefore += game.enemies[i].active && game.enemies[i].type == ENEMY_CHASER && game.enemies[i].generation > 0;
+        bool shotWas[MAX_ENEMY_PROJECTILES];
+        for (int i = 0; i < MAX_ENEMY_PROJECTILES; i++) shotWas[i] = game.projectiles[i].active;
+        UpdateGameplay(&game, dt, 1000.0, false, &in);
+        int chasersAfter = 0, newSnipers = 0;
+        for (int i = 0; i < MAX_ENEMIES; i++) {
+            Enemy *e = &game.enemies[i];
+            if (!e->active) { seen[i] = false; continue; }
+            chasersAfter += e->type == ENEMY_CHASER && e->generation > 0;
+            if (!seen[i] || seenSerial[i] != e->identity) {
+                seen[i] = true; seenSerial[i] = e->identity;
+                if (e->type == ENEMY_SNIPER) newSnipers++;
+                if (e->type == ENEMY_CARRIER) carriers++;
+                if (e->type == ENEMY_SUPPORT) supports++;
+            }
+            if (e->type >= ENEMY_SNIPER && e->phase == ENEMY_HOVER) holdZ[e->type - ENEMY_SNIPER] = e->position.z;
+            if (e->type == ENEMY_SNIPER && e->phase == ENEMY_TELEGRAPH) {
+                if (e->phaseTime <= dt * 1.5f) marks++;
+                else if (fabsf(lastAim[i].x - e->aim.x) > 1e-4f) aimMoved++;
+                lastAim[i] = e->aim;
+            }
+        }
+        if (newSnipers == 2) sniperPairs++;
+        if (chasersAfter > chasersBefore) launches++;
+        for (int i = 0; i < MAX_ENEMY_PROJECTILES; i++) {
+            const EnemyProjectile *p = &game.projectiles[i];
+            if (shotWas[i] || !p->active) continue;
+            float speed = sqrtf(p->velocity.x * p->velocity.x + p->velocity.y * p->velocity.y + p->velocity.z * p->velocity.z);
+            if (fabsf(speed - 46.0f) > 0.5f) continue;     // the sniper shot
+            sniperShots++;
+            // It must cross the player's plane at an aim point committed earlier,
+            // not where the player is now.
+            float t = (game.player.position.z - p->position.z) / p->velocity.z;
+            float x = p->position.x + p->velocity.x * t;
+            if (fabsf(x - game.player.position.x) < 1e-3f && fabsf(in.playerX) > 0.5f) sniperMisses++;
+        }
+    }
+    // Support: an enemy next to one takes half damage.
+    InitGameplay(&game, 94u);
+    game.enemies[0] = (Enemy){ .active = true, .type = ENEMY_DRIFTER, .health = 1.0f, .position = { 0, 3, -25 } };
+    game.enemies[1] = (Enemy){ .active = true, .type = ENEMY_SUPPORT, .health = 3.0f, .position = { 0, 4, -33 } };
+    game.enemies[2] = (Enemy){ .active = true, .type = ENEMY_DRIFTER, .health = 1.0f, .position = { 14, 3, -25 } };
+    bool shielded = GetEnemySupport(&game, &game.enemies[0]) == 1 && GetEnemySupport(&game, &game.enemies[2]) < 0 &&
+                    GetEnemySupport(&game, &game.enemies[1]) < 0;
+    bool ok = sniperPairs >= 2 && carriers >= 1 && supports >= 1 && launches >= 2 && marks >= 2 &&
+              aimMoved == 0 && sniperShots >= 2 && sniperMisses == 0 && shielded &&
+              holdZ[0] < holdZ[1] && holdZ[1] < holdZ[2] && holdZ[2] < -30.0f;
+    printf("ROLES: %s (sniper pairs %d, marks %d, shots %d, aim moved %d; carriers %d, launches %d; supports %d, shield %s; hold z %.0f/%.0f/%.0f)\n",
+           ok ? "yes" : "no", sniperPairs, marks, sniperShots, aimMoved, carriers, launches, supports,
+           shielded ? "yes" : "no", holdZ[0], holdZ[1], holdZ[2]);
+    return ok;
+}
+
 int main(void)
 {
     SetTraceLogLevel(LOG_INFO);
@@ -369,5 +444,6 @@ int main(void)
     bool story = check_story();
     bool arrival = check_boss_arrival();
     bool lattice = check_lattice();
-    return specials && onGrid && rateKept && follow && bossOk && timeline && story && arrival && lattice ? 0 : 1;
+    bool roles = check_roles();
+    return specials && onGrid && rateKept && follow && bossOk && timeline && story && arrival && lattice && roles ? 0 : 1;
 }

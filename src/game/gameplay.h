@@ -18,13 +18,21 @@
 #define BOMB_LINK_COST 100
 #define BOSS_LATTICE_GAP 3.0f       // Core wall: no shot centre within this of the lane
 #define ENEMY_SHOT_HIT_RADIUS 0.85f // sqrt of the player hit test's 0.72
+#define SNIPER_MARK_SECONDS 1.05f   // sniper: aim committed, then one fast shot
+#define CARRIER_BAY_SECONDS 0.8f    // carrier: bays open, then two chasers launch
+#define SUPPORT_RADIUS 10.0f        // arena units: ordinary enemies this close to a support take half damage
 
 typedef enum {
     ENEMY_DRIFTER = 0,
     ENEMY_CHASER,
     ENEMY_SPLITTER,
     ENEMY_BOSS_NODE,
-    ENEMY_BOSS_CORE
+    ENEMY_BOSS_CORE,
+    // Roles from collaborator commit 886ba1b, each on its own depth and height
+    // band, with its own outline and group:
+    ENEMY_SNIPER,    // mirrored pair, high and far back; marks an aim point, then one fast shot
+    ENEMY_CARRIER,   // alone, low and mid-depth, heavy; launches two small chasers at a time
+    ENEMY_SUPPORT    // behind its group; halves damage to ordinary enemies near it, never fires
 } EnemyType;
 
 typedef enum {
@@ -40,6 +48,7 @@ typedef struct {
     Vector3 velocity;
     Vector3 basePosition;
     Vector3 size;
+    Vector3 aim;    // sniper: the committed aim point while it telegraphs
     EnemyType type;
     EnemyPhase phase;
     float age;
@@ -205,6 +214,8 @@ typedef struct {
 void InitGameplay(GameplaySystem *game, uint32_t runSeed);
 void AdvanceGameplayLoop(GameplaySystem *game, uint32_t runSeed, double virtualPlayerZ);
 int GetGameplayRound(const GameplaySystem *game);
+// The support protecting this enemy (its slot), or -1. Protected enemies take half damage.
+int GetEnemySupport(const GameplaySystem *game, const Enemy *enemy);
 int GetGameplayRecursionDepth(const GameplaySystem *game);
 bool CanGameplayBoost(const GameplaySystem *game);
 // Unboosted, no-boss travel speed; GetGameplayTravelSpeed / this = engine speed factor.

@@ -89,9 +89,11 @@ RECURSION_94.
         fans with a wall of ~55-90 shots that opens into a lattice on the
         player's plane, one clear lane marked by white gate brackets about
         1 s ahead. Hand-play: wall density, lane width, warning time.
+  - [x] Sniper, carrier, support (from `886ba1b`): own group, height band,
+        hold depth and outline; sniper sight line and reticle, carrier
+        bays, support tethers. Hand-play: can you tell them apart, timings.
   - [ ] Port from collaborator commit `886ba1b` (decisions 2026-11-05):
-        sniper, carrier, support roles (reworked: distinct depth, shape and
-        group), charge feedback on the ship (no crosshair), Core lattice as
+        charge feedback on the ship (no crosshair), Core lattice as
         a low-health desperation attack (later: consider moving it to a
         later boss, it suits the barrel roll), the other bosses' patterns
         (with their chassis), upgrade weapons as pickups only (dropped by a
