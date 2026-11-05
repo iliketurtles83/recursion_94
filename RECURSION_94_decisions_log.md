@@ -2,6 +2,25 @@
 
 This log is the source of truth for architectural choices, visual uplift milestones, feature statuses (Confirmed, Provisional, Rejected), and binary size tracking. The 1.44MB (1,474,560 bytes) contest limit applied to entries before 2026-11-03.
 
+## [Combat] Core desperation lattice
+
+- Date: 2026-11-05. Status: PROVISIONAL: checked in tests and shots; hand-play.
+- From 886ba1b's Core pattern, used only when the Core is enraged (shields
+  down, health under 46%), as decided after playing that build. Volleys
+  alternate: a fan, then the wall. The fan before a wall picks the lane
+  (moves each time, kept inside the arena) and raises the guide: white
+  inward brackets on the lane's edges at three depths ahead of the ship, in
+  the player's colours. The wall follows 1.05 s later and rests 1.75 s after.
+- The wall is bounds-relative: columns 2.4 and rows 2.0 arena units apart
+  over the whole arena, aimed from the core at points on the player's plane,
+  so it opens from a point into a lattice as it arrives. No shot centre
+  within 3.0 of the lane (`BOSS_LATTICE_GAP`); the guide marks 3.0 - 0.85
+  (shot hit radius), which is always safe. Cell centres are also just
+  passable (1.56 from the nearest shots vs 0.85), and a barrel roll's
+  i-frames carry through. Wall shots never home, even under boost.
+- About 55-90 shots per wall: the enemy shot pool went from 128 to 192.
+- Later: consider moving it to a later boss.
+
 ## [Combat] Boss arrival window; collaborator build 886ba1b reviewed
 
 - Date: 2026-11-05. Status: PROVISIONAL: checked in tests and shots; hand-play.

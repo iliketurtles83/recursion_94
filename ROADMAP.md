@@ -85,6 +85,10 @@ RECURSION_94.
   - [x] Boss arrival window: no formations once the boss is due; the boss
         lands on a bar line (field clear, or 2 bars at most) and pulls the
         survivors in, where they burst (no reward, no boss damage).
+  - [x] Core desperation lattice (from `886ba1b`): enraged Core alternates
+        fans with a wall of ~55-90 shots that opens into a lattice on the
+        player's plane, one clear lane marked by white gate brackets about
+        1 s ahead. Hand-play: wall density, lane width, warning time.
   - [ ] Port from collaborator commit `886ba1b` (decisions 2026-11-05):
         sniper, carrier, support roles (reworked: distinct depth, shape and
         group), charge feedback on the ship (no crosshair), Core lattice as

@@ -268,6 +268,22 @@ static void SpawnProjectile(GameplaySystem *game, Vector3 origin, float speed, f
     projectile->homing = game->overdriveActive;
 }
 
+// A shot from origin through an aim point on the player's plane. Never homes
+// (patterns keep their shape under boost).
+static void SpawnAimedProjectile(GameplaySystem *game, Vector3 origin, Vector3 aim, float speed) {
+    int slot = FindFreeProjectile(game);
+    if (slot < 0) return;
+    float dx = aim.x - origin.x, dy = aim.y - origin.y, dz = aim.z - origin.z;
+    float length = sqrtf(dx * dx + dy * dy + dz * dz);
+    if (length < 0.001f) length = 1.0f;
+    EnemyProjectile *projectile = &game->projectiles[slot];
+    projectile->active = true;
+    projectile->position = origin;
+    projectile->velocity = (Vector3){ dx / length * speed, dy / length * speed, dz / length * speed };
+    projectile->life = 6.0f;
+    projectile->homing = false;
+}
+
 static int EnemySlot(const GameplaySystem *game, const Enemy *enemy) {
     return enemy ? (int)(enemy - game->enemies) : -1;
 }
@@ -354,6 +370,8 @@ static void SpawnBoss(GameplaySystem *game, double virtualPlayerZ, GameplayEvent
     boss->reinforcementTimer = 3.4f;
     boss->rotation = Hash01(encounterSeed) * 6.2831853f;
     boss->attackPattern = 0;
+    boss->latticeArmed = false;
+    boss->latticeGuide = 0.0f;
     boss->position = (Vector3){ 0.0f, BOSS_CENTER_Y, boss->leviathan ? -148.0f : -125.0f };
     boss->shieldNodes = 4;
     boss->introFlash = 1.0f;
@@ -377,6 +395,59 @@ static void SpawnBoss(GameplaySystem *game, double virtualPlayerZ, GameplayEvent
     events->bossStarted = true;
 }
 
+// Core desperation attack (enraged, from 886ba1b's Core pattern): a wall of
+// shots that opens from the core into a lattice on the player's plane, with one
+// clear lane. In the enraged phase every other volley is the wall; the volley
+// before it picks the lane and raises the guide (combat_draw), so the lane is
+// known about a second ahead. The holes between shots are tight but passable;
+// a barrel roll's i-frames also carry you through.
+#define LATTICE_DX 2.4f
+#define LATTICE_DY 2.0f
+#define LATTICE_WARN 1.05f      // seconds from the guide to the wall's volley
+#define LATTICE_REST 1.75f      // seconds after a wall before the next volley
+
+static bool CoreDesperate(const GameplaySystem *game) {
+    const BossState *boss = &game->boss;
+    return GetGameplayRound(game) == 1 && !boss->leviathan && boss->phase == BOSS_ENRAGED;
+}
+
+static float LatticeSpeed(const GameplaySystem *game) {
+    return 24.0f + game->difficulty * 5.0f + LoopPressure(game) * 5.0f;
+}
+
+static void ArmLattice(GameplaySystem *game, Vector3 origin) {
+    BossState *boss = &game->boss;
+    const GameplayArena *a = &game->arena;
+    float cx = 0.5f * (a->minX + a->maxX);
+    float reach = fmaxf(0.5f * (a->maxX - a->minX) - BOSS_LATTICE_GAP - 0.5f, 0.0f);
+    boss->latticeLane = cx + sinf((float)boss->attackPattern * 0.78f + (float)boss->encounterIndex) * reach;
+    float flight = fabsf(origin.z - game->player.position.z) / LatticeSpeed(game);
+    boss->latticeGuide = LATTICE_WARN + flight + 0.3f;
+    boss->latticeArmed = true;
+}
+
+static int FireLattice(GameplaySystem *game, Vector3 origin) {
+    BossState *boss = &game->boss;
+    const GameplayArena *a = &game->arena;
+    float cx = 0.5f * (a->minX + a->maxX);
+    int cols = (int)((a->maxX - a->minX) / LATTICE_DX) + 2;
+    float h = a->maxY - a->minY;
+    int rows = (int)ceilf(h / LATTICE_DY) + 1;
+    float speed = LatticeSpeed(game);
+    int fired = 0;
+    for (int c = 0; c < cols; c++) {
+        float x = cx + ((float)c - (float)(cols - 1) * 0.5f) * LATTICE_DX;
+        if (fabsf(x - boss->latticeLane) < BOSS_LATTICE_GAP) continue;
+        for (int r = 0; r < rows; r++) {
+            float y = a->minY + h * (float)r / (float)(rows - 1);
+            SpawnAimedProjectile(game, origin, (Vector3){ x, y, game->player.position.z }, speed);
+            fired++;
+        }
+    }
+    boss->latticeArmed = false;
+    return fired;
+}
+
 static void UpdateBoss(GameplaySystem *game, float dt, double virtualPlayerZ,
                        GameplayEvents *events) {
     BossState *boss = &game->boss;
@@ -396,6 +467,7 @@ static void UpdateBoss(GameplaySystem *game, float dt, double virtualPlayerZ,
     }
 
     boss->phaseTime += dt;
+    boss->latticeGuide = fmaxf(0.0f, boss->latticeGuide - dt);
     float rotationSpeed = boss->phase == BOSS_SINGULARITY ? 2.85f
                         : boss->phase == BOSS_ENRAGED ? 1.95f
                         : boss->leviathan ? 1.38f : 1.05f;
@@ -491,6 +563,13 @@ static void UpdateBoss(GameplaySystem *game, float dt, double virtualPlayerZ,
 
     events->enemyVolleys++;
     events->enemyVolleyX = origin.x;
+    if (boss->latticeArmed) {
+        if (CoreDesperate(game)) FireLattice(game, origin);
+        boss->latticeArmed = false;
+        boss->attackPattern++;
+        boss->fireTimer = LATTICE_REST;
+        return;
+    }
     float projectileSpeed = 23.0f + game->difficulty * 9.0f + LoopPressure(game) * 8.0f +
                             (boss->phase == BOSS_ENRAGED ? 4.0f : 0.0f) +
                             (boss->phase == BOSS_SINGULARITY ? 7.0f : 0.0f);
@@ -519,6 +598,10 @@ static void UpdateBoss(GameplaySystem *game, float dt, double virtualPlayerZ,
     cooldown -= game->difficulty * (boss->leviathan ? 0.12f : 0.22f);
     cooldown -= fminf((float)(GetGameplayRecursionDepth(game) - 1) * 0.012f, 0.08f);
     boss->fireTimer = fmaxf(cooldown, 0.24f);
+    if (CoreDesperate(game) && (boss->attackPattern & 1)) {   // every other volley: the wall next
+        ArmLattice(game, origin);
+        boss->fireTimer = LATTICE_WARN;
+    }
 }
 
 static void SpawnBurst(GameplaySystem *game, Vector3 position, Color color, int count) {

@@ -8,6 +8,9 @@
 // Plus the boss arrival: no formations while clearing, the boss lands on a bar
 // line within BOSS_CLEAR_BARS + 1 bars (the first bar line if the field is
 // clear), and survivors are pulled in and explode with no reward or boss damage.
+// Plus the Core's desperation lattice: walls alternate with fans, every wall
+// shot crosses the player's plane outside the guided lane, and the guide
+// leads the wall by about a second.
 #include "gameplay.h"
 #include "music_clock.h"
 #include "story.h"
@@ -277,6 +280,69 @@ static bool check_boss_arrival(void)
     return ok;
 }
 
+static bool check_lattice(void)
+{
+    static GameplaySystem game;
+    InitGameplay(&game, 94u);
+    game.boss.nextSpawnDistance = 0.0;
+    GameplayInput in = { 0 };
+    in.playerY = 2.4f;
+    const float dt = 1.0f / 60.0f;
+    UpdateGameplay(&game, dt, 1.0, false, &in);          // boss arrives (no clock: field clear)
+    for (int n = 0; n < 4; n++) {
+        int slot = game.boss.nodeSlots[n];
+        if (slot >= 0) game.enemies[slot].active = false;
+    }
+    game.boss.shieldNodes = 0;
+    game.boss.phase = BOSS_EXPOSED;
+    game.enemies[game.boss.coreSlot].health = game.boss.maxHealth * 0.40f;   // -> enraged
+
+    int walls = 0, volleys = 0, worstMiss = 0, fewest = 1000;
+    float guideLead = 0.0f, minLead = 1000.0f, widest = 0.0f;
+    bool ok = true;
+    for (int frame = 0; frame < 60 * 20; frame++) {
+        game.player.energy = 100.0f;
+        game.player.invulnerability = 1.0f;
+        bool was[MAX_ENEMY_PROJECTILES];
+        for (int i = 0; i < MAX_ENEMY_PROJECTILES; i++) was[i] = game.projectiles[i].active;
+        float guideBefore = game.boss.latticeGuide;
+        GameplayEvents e = UpdateGameplay(&game, dt, 1.0, false, &in);
+        if (guideBefore <= 0.0f && game.boss.latticeGuide > 0.0f) guideLead = 0.0f;
+        guideLead += dt;
+        volleys += e.enemyVolleys;
+        int fresh = 0;
+        float xs[MAX_ENEMY_PROJECTILES];
+        for (int i = 0; i < MAX_ENEMY_PROJECTILES; i++) {
+            const EnemyProjectile *p = &game.projectiles[i];
+            if (was[i] || !p->active || p->velocity.z <= 0.0f) continue;
+            float t = (game.player.position.z - p->position.z) / p->velocity.z;
+            xs[fresh++] = p->position.x + p->velocity.x * t;
+        }
+        if (fresh < 20) continue;                          // a fan or reinforcements
+        walls++;
+        if (fresh < fewest) fewest = fresh;
+        if (guideLead < minLead) minLead = guideLead;
+        for (int i = 0; i < fresh; i++) {
+            if (fabsf(xs[i] - game.boss.latticeLane) < BOSS_LATTICE_GAP - 1e-3f) worstMiss++;
+        }
+        // Columns either side of the lane must sit no more than one spacing apart
+        // elsewhere (no accidental second gap).
+        for (int i = 0; i < fresh; i++) {
+            float nearest = 1000.0f;
+            for (int j = 0; j < fresh; j++) {
+                float d = fabsf(xs[j] - xs[i]);
+                if (d > 0.5f && d < nearest) nearest = d;
+            }
+            if (nearest < 1000.0f && nearest > widest) widest = nearest;
+        }
+    }
+    if (game.boss.phase != BOSS_ENRAGED || walls < 3 || worstMiss > 0 || minLead < 1.0f ||
+        widest > 2.6f || volleys < walls * 2 - 1) ok = false;
+    printf("LATTICE: %s (%d walls of >=%d shots in %d volleys, guide lead %.2f s, shots in lane %d, column step %.2f)\n",
+           ok ? "yes" : "no", walls, fewest, volleys, minLead, worstMiss, widest);
+    return ok;
+}
+
 int main(void)
 {
     SetTraceLogLevel(LOG_INFO);
@@ -302,5 +368,6 @@ int main(void)
     bool timeline = check_timeline();
     bool story = check_story();
     bool arrival = check_boss_arrival();
-    return specials && onGrid && rateKept && follow && bossOk && timeline && story && arrival ? 0 : 1;
+    bool lattice = check_lattice();
+    return specials && onGrid && rateKept && follow && bossOk && timeline && story && arrival && lattice ? 0 : 1;
 }

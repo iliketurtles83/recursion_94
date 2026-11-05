@@ -7,7 +7,7 @@
 #include <stdint.h>
 
 #define MAX_ENEMIES 48
-#define MAX_ENEMY_PROJECTILES 128
+#define MAX_ENEMY_PROJECTILES 192   // room for a Core lattice wall (~90) on top of the fight
 #define MAX_PLAYER_PROJECTILES 32
 #define MAX_COMBAT_PARTICLES 96
 #define MAX_LOCK_TARGETS 6
@@ -16,6 +16,8 @@
 #define MAX_CHAIN_LINKS 100
 #define BEAM_LINK_COST 50
 #define BOMB_LINK_COST 100
+#define BOSS_LATTICE_GAP 3.0f       // Core wall: no shot centre within this of the lane
+#define ENEMY_SHOT_HIT_RADIUS 0.85f // sqrt of the player hit test's 0.72
 
 typedef enum {
     ENEMY_DRIFTER = 0,
@@ -153,6 +155,9 @@ typedef struct {
     BossPhase phase;
     bool leviathan;
     bool active;
+    float latticeLane;     // Core desperation wall: arena x of the safe lane
+    float latticeGuide;    // seconds the safe-lane guide stays up (0 = none)
+    bool latticeArmed;     // the next volley is the wall
     bool clearing;         // boss distance reached: no new formations, the boss arrives on a bar line
     int clearBars;         // bar lines crossed while clearing
     float clearTime;

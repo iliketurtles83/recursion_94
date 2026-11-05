@@ -558,6 +558,28 @@ void combat_draw_scene(CombatDraw *d, CtTunnel *ct, const ArenaMap *m, const Gam
                 ribbon(frame_at(ct, m, o, back).c, frame_at(ct, m, o, p->position).c, 0.06f, off_fire_hue(p->color), 6.0f * life);
             }
         }
+        // Core lattice guide: the safe lane's edges as inward brackets at three
+        // depths ahead of the ship, in the player's colours (safe = ours).
+        const BossState *b = &g->boss;
+        if (b->active && b->latticeGuide > 0.0f) {
+            float a = fminf(b->latticeGuide / 0.3f, 1.0f) * (0.75f + 0.25f * sinf(time * 14.0f));
+            float y0 = g->arena.minY, y1 = g->arena.maxY;
+            for (int k = 0; k < 3; k++) {
+                float z = g->player.position.z - 3.0f - 9.0f * (float)k;
+                float fade = a * (1.0f - 0.28f * (float)k);
+                for (int side = -1; side <= 1; side += 2) {
+                    float x = b->latticeLane + (float)side * (BOSS_LATTICE_GAP - ENEMY_SHOT_HIT_RADIUS);
+                    float lip = -(float)side * 0.9f;
+                    Vector3 lo = frame_at(ct, m, o, (Vector3){ x, y0, z }).c;
+                    Vector3 hi = frame_at(ct, m, o, (Vector3){ x, y1, z }).c;
+                    Vector3 loLip = frame_at(ct, m, o, (Vector3){ x + lip, y0, z }).c;
+                    Vector3 hiLip = frame_at(ct, m, o, (Vector3){ x + lip, y1, z }).c;
+                    ribbon(lo, hi, 0.07f, PLAYER_FIRE, 3.5f * fade);
+                    ribbon(lo, loLip, 0.07f, PLAYER_CORE, 5.0f * fade);
+                    ribbon(hi, hiLip, 0.07f, PLAYER_CORE, 5.0f * fade);
+                }
+            }
+        }
         // Chain-link beam: a lance down the player's lane.
         if (g->beamTimer > 0.0f) {
             float a = g->beamTimer / 0.34f;
