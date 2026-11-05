@@ -5,6 +5,9 @@
 // spawns land on beats and enemy shots on 16ths, at about the untimed rate.
 // Plus the curve timeline (key values, interpolation, clamping) and the story
 // text corruption (depth 1 untouched, deeper deterministic and still mostly readable).
+// Plus the boss arrival: no formations while clearing, the boss lands on a bar
+// line within BOSS_CLEAR_BARS + 1 bars (the first bar line if the field is
+// clear), and survivors are pulled in and explode with no reward or boss damage.
 #include "gameplay.h"
 #include "music_clock.h"
 #include "story.h"
@@ -205,6 +208,75 @@ static bool check_story(void)
     return ok && same == 0 && check_answers() && check_wrap();
 }
 
+typedef struct { bool ok; int survivors, absorbed, bars; } Arrival;
+
+static Arrival run_arrival(bool clearField)
+{
+    static GameplaySystem game;
+    Arrival a = { 0 };
+    InitGameplay(&game, 94u);
+    MusicClock clock;
+    music_clock_reset(&clock, 129.0f);
+    GameplayInput in = { 0 };
+    in.playerY = 2.4f;
+    const float dt = 1.0f / 60.0f;
+    bool ok = true;
+    for (int frame = 0; frame < 60 * 10; frame++) {   // fill the field
+        music_clock_advance(&clock, dt);
+        SetGameplayMusicClock(&game, &clock);
+        game.player.invulnerability = 1.0f;
+        UpdateGameplay(&game, dt, 600.0, false, &in);
+    }
+    if (clearField) for (int i = 0; i < MAX_ENEMIES; i++) game.enemies[i].active = false;
+    double z = game.boss.nextSpawnDistance;
+    double startStep = -1.0;
+    int score = 0, spawnFrame = -1;
+    for (int frame = 0; frame < 60 * 12; frame++) {
+        music_clock_advance(&clock, dt);
+        SetGameplayMusicClock(&game, &clock);
+        game.player.invulnerability = 1.0f;
+        float spawnBefore = game.spawnTimer;
+        bool wasActive = game.boss.active;
+        GameplayEvents e = UpdateGameplay(&game, dt, z, false, &in);
+        if (startStep < 0.0 && game.boss.clearing) startStep = clock.prevStep;
+        if (game.boss.clearing && game.spawnTimer > spawnBefore) ok = false;   // a formation spawned
+        if (!wasActive && game.boss.active) {
+            spawnFrame = frame;
+            if (!music_clock_crossed(&clock, MUSIC_BAR)) ok = false;
+            a.bars = (int)ceil((clock.step - startStep) / MUSIC_BAR);
+            score = game.score;
+            for (int i = 0; i < MAX_ENEMIES; i++) {
+                if (game.enemies[i].active && game.enemies[i].phase == ENEMY_ABSORBED) a.survivors++;
+            }
+        }
+        a.absorbed += e.enemiesAbsorbed;
+        if (spawnFrame >= 0 && frame == spawnFrame + 90) break;   // 1.5 s after arrival
+    }
+    if (spawnFrame < 0) ok = false;
+    else {
+        const Enemy *core = &game.enemies[game.boss.coreSlot];
+        if (game.score != score || core->health != game.boss.maxHealth) ok = false;
+        for (int i = 0; i < MAX_ENEMIES; i++) {
+            if (game.enemies[i].active && game.enemies[i].phase == ENEMY_ABSORBED) ok = false;
+        }
+        if (a.absorbed != a.survivors) ok = false;
+        if (clearField ? a.bars > 1 : a.bars > 3) ok = false;
+        if (!clearField && a.survivors == 0) ok = false;   // the window should leave some to absorb
+    }
+    a.ok = ok;
+    return a;
+}
+
+static bool check_boss_arrival(void)
+{
+    Arrival busy = run_arrival(false);
+    Arrival clear = run_arrival(true);
+    bool ok = busy.ok && clear.ok;
+    printf("BOSS ARRIVAL: %s (busy field: %d bars, %d/%d absorbed; clear field: %d bar)\n",
+           ok ? "yes" : "no", busy.bars, busy.absorbed, busy.survivors, clear.bars);
+    return ok;
+}
+
 int main(void)
 {
     SetTraceLogLevel(LOG_INFO);
@@ -229,5 +301,6 @@ int main(void)
            rateKept ? "yes" : "no", spawnRatio, shotRatio, follow ? "yes" : "no");
     bool timeline = check_timeline();
     bool story = check_story();
-    return specials && onGrid && rateKept && follow && bossOk && timeline && story ? 0 : 1;
+    bool arrival = check_boss_arrival();
+    return specials && onGrid && rateKept && follow && bossOk && timeline && story && arrival ? 0 : 1;
 }

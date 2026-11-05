@@ -200,6 +200,7 @@ static void play_events(Game *g, const GameplayEvents *e)
         TriggerSynthSFXAt(&g->synth, SFX_ENEMY_FIRE, (e->enemyVolleyX - mid) / half);
     for (int i = 0; i < e->chargeShots; i++) TriggerSynthSFX(&g->synth, SFX_LASER_CHARGE);
     for (int i = 0; i < e->enemiesDestroyed; i++) TriggerSynthSFX(&g->synth, SFX_EXPLOSION);
+    if (e->enemiesAbsorbed > 0) TriggerSynthSFX(&g->synth, SFX_EXPLOSION);   // one per frame: they land together
     if (e->beamFired) TriggerSynthSFX(&g->synth, SFX_LASER_CHARGE);
     if (e->bombFired || e->weaponTierAdvanced) TriggerSynthSFX(&g->synth, SFX_POWER_UP);
     if (e->playerHit) TriggerSynthSFX(&g->synth, SFX_GLITCH_HIT);
@@ -224,6 +225,7 @@ static void update_music(Game *g, bool boosting, float dt)
     if (!b->active && p->bossesEnabled) {
         double toBoss = b->nextSpawnDistance - g->virtualZ;
         if (toBoss > 0.0 && toBoss < BOSS_HUSH_WINDOW) hush = (float)(1.0 - toBoss / BOSS_HUSH_WINDOW);
+        if (b->clearing) hush = 1.0f;
     }
     intensity *= 1.0f - hush * 0.5f;
     if (p->gameOver) intensity = 0.10f;

@@ -94,6 +94,7 @@ static int WeaponTierForChain(int combo) {
 
 static bool IsEnemyTargetable(const GameplaySystem *game, const Enemy *enemy) {
     if (!enemy->active) return false;
+    if (enemy->phase == ENEMY_ABSORBED) return false;
     if (game->boss.phase == BOSS_APPROACH &&
         (enemy->type == ENEMY_BOSS_CORE || enemy->type == ENEMY_BOSS_NODE)) return false;
     if (enemy->type == ENEMY_BOSS_CORE &&
@@ -295,14 +296,52 @@ static void SpawnPlayerProjectile(GameplaySystem *game, Vector3 origin, Vector3 
     projectile->charged = charged;
 }
 
+// Boss arrival window. Once the boss distance is reached no new formations
+// spawn, and the boss arrives on a bar line: the first one after the field is
+// clear, or after BOSS_CLEAR_BARS bars at the latest (survivors are then
+// pulled into it). Without a music clock it is a plain BOSS_CLEAR_SECONDS.
+#define BOSS_CLEAR_BARS 2
+#define BOSS_CLEAR_SECONDS 4.0f
+#define ABSORB_SECONDS 0.85f
+#define ABSORB_STAGGER 0.35f
+
+static bool FieldClear(const GameplaySystem *game) {
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        if (game->enemies[i].active) return false;
+    }
+    return true;
+}
+
+static bool BossArrivalDue(GameplaySystem *game) {
+    BossState *boss = &game->boss;
+    bool clear = FieldClear(game);
+    if (!game->music.valid) return clear || boss->clearTime >= BOSS_CLEAR_SECONDS;
+    if (!music_clock_crossed(&game->music, MUSIC_BAR)) return false;
+    boss->clearBars++;
+    return clear || boss->clearBars > BOSS_CLEAR_BARS;
+}
+
 static void SpawnBoss(GameplaySystem *game, double virtualPlayerZ, GameplayEvents *events) {
     BossState *boss = &game->boss;
     uint32_t encounterSeed = game->runSeed ^
         (uint32_t)(boss->encounterIndex + 1) * 0x9e3779b9u;
 
-    // Clear the lane so the encounter reads as a deliberate arena rather than
-    // another formation stacked on top of regular enemies.
-    for (int i = 0; i < MAX_ENEMIES; i++) game->enemies[i].active = false;
+    // Survivors are pulled into the arriving boss and explode there
+    // (UpdateAbsorbed): no reward, no damage to the boss. The core and its
+    // four nodes need five free slots; if the pool is that full, the
+    // furthest-along absorbed enemies go at once.
+    int freeSlots = 0;
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        Enemy *enemy = &game->enemies[i];
+        if (!enemy->active) { freeSlots++; continue; }
+        enemy->phase = ENEMY_ABSORBED;
+        enemy->phaseTime = 0.0f;
+        enemy->basePosition = enemy->position;
+        enemy->locked = false;
+    }
+    for (int i = 0; i < MAX_ENEMIES && freeSlots < 5; i++) {
+        if (game->enemies[i].active) { game->enemies[i].active = false; freeSlots++; }
+    }
     for (int i = 0; i < MAX_ENEMY_PROJECTILES; i++) game->projectiles[i].active = false;
     for (int i = 0; i < MAX_PLAYER_PROJECTILES; i++) game->playerProjectiles[i].active = false;
     ClearLocks(game);
@@ -342,7 +381,17 @@ static void UpdateBoss(GameplaySystem *game, float dt, double virtualPlayerZ,
                        GameplayEvents *events) {
     BossState *boss = &game->boss;
     if (!boss->active) {
-        if (virtualPlayerZ >= boss->nextSpawnDistance) SpawnBoss(game, virtualPlayerZ, events);
+        if (!boss->clearing) {
+            if (virtualPlayerZ < boss->nextSpawnDistance) return;
+            boss->clearing = true;
+            boss->clearBars = 0;
+            boss->clearTime = 0.0f;
+        }
+        boss->clearTime += dt;
+        if (BossArrivalDue(game)) {
+            boss->clearing = false;
+            SpawnBoss(game, virtualPlayerZ, events);
+        }
         return;
     }
 
@@ -782,8 +831,31 @@ static void SetEnemyPhase(Enemy *enemy, EnemyPhase phase) {
     enemy->phaseTime = 0.0f;
 }
 
+// Pulled into the arriving boss: bulges outward first, then falls in with
+// increasing speed, whitening, and bursts at the boss's position.
+static void UpdateAbsorbed(GameplaySystem *game, Enemy *enemy, float dt, GameplayEvents *events) {
+    enemy->phaseTime += dt;
+    enemy->age += dt;
+    float span = ABSORB_SECONDS + Hash01(game->runSeed ^ (uint32_t)enemy->identity * 0x2c1b3c6du) * ABSORB_STAGGER;
+    float t = fminf(enemy->phaseTime / span, 1.0f);
+    float side = t * t * (3.0f - 2.0f * t);
+    float bulge = sinf(t * 3.14159265f) * 0.45f;
+    Vector3 a = enemy->basePosition;
+    Vector3 b = game->boss.position;
+    enemy->position.x = a.x + (b.x - a.x) * side + (a.x - b.x) * bulge;
+    enemy->position.y = a.y + (b.y - a.y) * side + (a.y - b.y) * bulge * 0.5f;
+    enemy->position.z = a.z + (b.z - a.z) * t * t;
+    enemy->hurt = t;
+    if (t >= 1.0f) {
+        SpawnBurst(game, enemy->position, game->threatColor, 10);
+        enemy->active = false;
+        events->enemiesAbsorbed++;
+    }
+}
+
 static void UpdateEnemy(GameplaySystem *game, Enemy *enemy, float dt, bool overdrive,
                         GameplayEvents *events) {
+    if (enemy->phase == ENEMY_ABSORBED) { UpdateAbsorbed(game, enemy, dt, events); return; }
     if (enemy->type == ENEMY_BOSS_NODE || enemy->type == ENEMY_BOSS_CORE) return;
     enemy->age += dt;
     enemy->phaseTime += dt;
@@ -882,6 +954,9 @@ static void UpdateEnemy(GameplaySystem *game, Enemy *enemy, float dt, bool overd
                 SetEnemyPhase(enemy, ENEMY_HOVER);
             }
             break;
+
+        case ENEMY_ABSORBED:
+            break;   // handled by UpdateAbsorbed
     }
 
     if (enemy->age > 28.0f) enemy->active = false;
@@ -1062,6 +1137,7 @@ void AdvanceGameplayLoop(GameplaySystem *game, uint32_t runSeed, double virtualP
     game->boss.coreSlot = -1;
     for (int node = 0; node < 4; node++) game->boss.nodeSlots[node] = -1;
     game->boss.leviathan = false;
+    game->boss.clearing = false;
     game->boss.nextSpawnDistance = virtualPlayerZ + 1450.0f +
         Hash01(runSeed ^ (uint32_t)game->boss.encounterIndex * 0x51c3u) * 320.0f;
     game->spawnTimer = 0.45f;
@@ -1359,7 +1435,7 @@ GameplayEvents UpdateGameplay(GameplaySystem *game, float dt, double virtualPlay
     game->difficulty = ClampFloat(log1pf((float)(fmax(virtualPlayerZ, 0.0) / 350.0)) *
                                   0.43429448f, 0.0f, 1.0f);
     if (game->bossesEnabled) UpdateBoss(game, dt, virtualPlayerZ, &events);
-    if (!game->boss.active) {
+    if (!game->boss.active && !game->boss.clearing) {
         game->spawnTimer -= dt * (boosting ? 1.8f : 1.0f);
         if (TimerOnGrid(game, game->spawnTimer, MUSIC_BEAT)) {
             SpawnFormation(game);

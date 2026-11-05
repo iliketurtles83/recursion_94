@@ -29,7 +29,8 @@ typedef enum {
     ENEMY_APPROACH = 0,
     ENEMY_HOVER,
     ENEMY_TELEGRAPH,
-    ENEMY_ATTACK
+    ENEMY_ATTACK,
+    ENEMY_ABSORBED   // boss arrival: pulled into the boss, explodes there (no reward, no boss damage)
 } EnemyPhase;
 
 typedef struct {
@@ -113,6 +114,7 @@ typedef struct {
     int tapShots;
     int chargeShots;
     int enemiesDestroyed;
+    int enemiesAbsorbed;   // survivors that reached the arriving boss and exploded
     bool beamFired;
     bool bombFired;
     bool playerHit;
@@ -151,6 +153,9 @@ typedef struct {
     BossPhase phase;
     bool leviathan;
     bool active;
+    bool clearing;         // boss distance reached: no new formations, the boss arrives on a bar line
+    int clearBars;         // bar lines crossed while clearing
+    float clearTime;
 } BossState;
 
 typedef struct {

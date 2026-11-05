@@ -2,6 +2,36 @@
 
 This log is the source of truth for architectural choices, visual uplift milestones, feature statuses (Confirmed, Provisional, Rejected), and binary size tracking. The 1.44MB (1,474,560 bytes) contest limit applied to entries before 2026-11-03.
 
+## [Combat] Boss arrival window; collaborator build 886ba1b reviewed
+
+- Date: 2026-11-05. Status: PROVISIONAL: checked in tests and shots; hand-play.
+- Boss arrival (replaces the instant wipe and 886ba1b's 2.2 s fly-away,
+  which was hard to notice): when the boss distance is reached, no new
+  formations spawn and the music hushes. The boss arrives on a bar line: the
+  first one after the field is clear, or after `BOSS_CLEAR_BARS` (2) bars at
+  the latest, so there is no stall if the player leaves one alive. Survivors
+  are then pulled into the arriving boss (outward swing, accelerating fall,
+  whitening, `ENEMY_ABSORBED`) and burst there: no reward, no damage to the
+  boss, one explosion sound per frame. If the pool is too full for the
+  boss's five slots, absorbed enemies are dropped at once.
+- Collaborator commit `886ba1b` (origin/master, old layout) was played on
+  2026-11-05. Decisions:
+  - Sniper, carrier and support craft: adopt the roles, but they need work.
+    In 886ba1b they attack from the same plane and are hard to tell apart;
+    they should come in groups (design doc) and read differently.
+  - The patrol/assault/recovery rhythm was not noticed. Survivors retreating:
+    undecided.
+  - Charge feedback: yes; the growing crosshair: no (the game has no crosshair).
+  - Boss patterns: keep 886ba1b's Bastion cannons, Prism decoys, Mantis
+    sweeps and Leviathan patterns. The lattice wall becomes a desperation
+    attack at low boss health.
+  - Upgrades: acquired during the level, with a limited number of shots;
+    unspent shots carry over to the next stage. Weapons and upgrades need a
+    lot more design and testing. The 13 permanent salvage cards: open.
+  - UI: the final design waits until the game is done; debug info is fine
+    until then. Minimum: energy bar, clear "special ready" markers, an ammo
+    bar for upgrade weapons, boss bar. Records and saving: not wanted now.
+
 ## [Story] Floor dot scroller replaces the 2D sine scroller
 
 - Date: 2026-11-04. Status: PROVISIONAL: checked in shots; hand-play.

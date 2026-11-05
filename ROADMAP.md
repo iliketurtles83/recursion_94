@@ -82,6 +82,15 @@ RECURSION_94.
         (graze) with chain links.
   - [ ] Boost risk/reward: it speeds up spawns 1.8x; give it a score
         multiplier.
+  - [x] Boss arrival window: no formations once the boss is due; the boss
+        lands on a bar line (field clear, or 2 bars at most) and pulls the
+        survivors in, where they burst (no reward, no boss damage).
+  - [ ] Port from collaborator commit `886ba1b` (decisions 2026-11-05):
+        sniper, carrier, support roles (reworked: distinct depth, shape and
+        group), charge feedback on the ship (no crosshair), Core lattice as
+        a low-health desperation attack, the other bosses' patterns (with
+        their chassis), in-level upgrade weapons with limited shots carried
+        between stages, minimal HUD (energy, specials ready, ammo, boss).
   - [ ] Variety: procedural formation grammar (lines, V, rings, snakes,
         mirrored pairs) spawned on phrase lines from the seed; 3-4 new enemy
         roles (weaver, mine, shielded = charge only, wall turret); corridor
