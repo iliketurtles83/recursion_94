@@ -46,6 +46,10 @@ typedef enum {
     SFX_BOSS_RISER,
     SFX_CORE_COLLAPSE,
     SFX_ENEMY_FIRE,     // the dodge cue: buzzy, falling, panned to the shooter
+    // Pickup weapons, pitched to the seed's scale (SFXCommand.degree):
+    SFX_ARC_NOTE,       // each arc jump: a bright pluck, the next arpeggio note
+    SFX_DRILL_TICK,     // drill ticks: a short low click on the root
+    SFX_MIRROR,         // a caught shot: a high bell
     SFX_COUNT
 } SFXType;
 
@@ -53,6 +57,7 @@ typedef enum {
 typedef struct {
     SFXType type;
     float pan;
+    int degree;     // scale degree above the root, for the pitched effects
 } SFXCommand;
 
 // A level's song: the composed layer on top of the seeded synth. The seed still
@@ -327,6 +332,8 @@ void UpdateAudioSynth(SynthSystem *synth, float intensity, float glitchAmount,
 void TriggerSynthSFX(SynthSystem *synth, SFXType type);
 // Same, placed in the stereo field (-1 left .. 1 right; clamped to +-0.8).
 void TriggerSynthSFXAt(SynthSystem *synth, SFXType type, float pan);
+// A pitched effect on a degree of the seed's scale (SFX_ARC_NOTE, _DRILL_TICK, _MIRROR).
+void TriggerSynthSFXNote(SynthSystem *synth, SFXType type, float pan, int degree);
 void UnloadAudioSynth(SynthSystem *synth);
 
 float GetSynthSeedBpm(uint32_t runSeed);

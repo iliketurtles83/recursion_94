@@ -177,6 +177,11 @@ static Enemy *SpawnEnemyAt(GameplaySystem *game, EnemyType type, Vector3 positio
     enemy->basePosition = position;
     enemy->identity = game->spawnSerial++;
     enemy->generation = generation;
+    enemy->group = game->spawnGroup;
+    if (enemy->group > 0) {
+        EnemyGroup *g = &game->groups[enemy->group % GROUP_RING];
+        if (g->id == enemy->group) g->spawned++;
+    }
     enemy->fireTimer = (0.65f + Hash01(seed + 19u) * 0.75f) *
                        (1.0f - game->difficulty * 0.50f) *
                        (1.0f - LoopPressure(game) * 0.35f);
@@ -237,6 +242,20 @@ static Enemy *SpawnEnemyAt(GameplaySystem *game, EnemyType type, Vector3 positio
     return enemy;
 }
 
+// Enemies spawned between BeginGroup and EndGroup form one group.
+static void BeginGroup(GameplaySystem *game, bool role) {
+    game->spawnGroup = ++game->groupSerial;
+    game->groups[game->spawnGroup % GROUP_RING] = (EnemyGroup){ game->spawnGroup, 0, 0, role };
+}
+
+static void EndGroup(GameplaySystem *game) { game->spawnGroup = 0; }
+
+static void JoinGroup(GameplaySystem *game, Enemy *enemy, int group) {
+    enemy->group = group;
+    EnemyGroup *g = &game->groups[group % GROUP_RING];
+    if (group > 0 && g->id == group) g->spawned++;
+}
+
 static int CountActive(const GameplaySystem *game, EnemyType type) {
     int n = 0;
     for (int i = 0; i < MAX_ENEMIES; i++) {
@@ -256,28 +275,34 @@ static bool SpawnRoleGroup(GameplaySystem *game, uint32_t seed) {
     float d = game->difficulty;
     if (d > 0.22f && roll < 0.14f && CountActive(game, ENEMY_SNIPER) == 0) {
         // A mirrored pair high up, far back.
+        BeginGroup(game, true);
         float x = (0.40f + Hash01(seed + 41u) * 0.25f) * game->arena.maxX;
         for (int side = -1; side <= 1; side += 2) {
             Vector3 p = { (float)side * x, ARENA_Y(0.84f), ROLE_SPAWN_Z };
             SpawnEnemyAt(game, ENEMY_SNIPER, p, 0, seed + (uint32_t)(side + 2) * 31u);
         }
+        EndGroup(game);
         return true;
     }
     if (d > 0.32f && roll < 0.26f && CountActive(game, ENEMY_CARRIER) == 0) {
         // Alone, low, off to one side.
         float x = (Hash01(seed + 42u) * 2.0f - 1.0f) * 0.45f * game->arena.maxX;
+        BeginGroup(game, true);
         SpawnEnemyAt(game, ENEMY_CARRIER, (Vector3){ x, ARENA_Y(0.22f), ROLE_SPAWN_Z }, 0, seed + 7u);
+        EndGroup(game);
         return true;
     }
     if (d > 0.42f && roll < 0.38f && CountActive(game, ENEMY_SUPPORT) == 0) {
         // A drifter line with its support behind the middle.
         float cx = (Hash01(seed + 43u) * 2.0f - 1.0f) * 0.5f * game->arena.maxX;
         float cy = ARENA_Y(0.40f + Hash01(seed + 44u) * 0.25f);
+        BeginGroup(game, true);
         for (int i = 0; i < 3; i++) {
             Vector3 p = { cx + ((float)i - 1.0f) * ENEMY_FORMATION_SPACING * 0.8f, cy, ROLE_SPAWN_Z + 4.0f };
             SpawnEnemyAt(game, ENEMY_DRIFTER, p, 0, seed + 50u + (uint32_t)i * 31u);
         }
         SpawnEnemyAt(game, ENEMY_SUPPORT, (Vector3){ cx, cy + 1.2f, ROLE_SPAWN_Z - 6.0f }, 0, seed + 9u);
+        EndGroup(game);
         return true;
     }
     return false;
@@ -295,6 +320,7 @@ static void SpawnFormation(GameplaySystem *game) {
     float centerX = -ENEMY_FORMATION_CENTER_X +
                     Hash01(seed + 3u) * ENEMY_FORMATION_CENTER_X * 2.0f;
     float centerY = ARENA_Y(0.129f + Hash01(seed + 4u) * 0.742f);
+    BeginGroup(game, false);
     for (int i = 0; i < count; i++) {
         float typeRoll = Hash01(seed + 11u + (uint32_t)i * 7u);
         EnemyType type = ENEMY_DRIFTER;
@@ -309,6 +335,7 @@ static void SpawnFormation(GameplaySystem *game) {
         };
         SpawnEnemyAt(game, type, position, 0, seed + (uint32_t)i * 31u);
     }
+    EndGroup(game);
 }
 
 static void SpawnProjectile(GameplaySystem *game, Vector3 origin, float speed, float spread) {
@@ -587,6 +614,7 @@ static void UpdateBoss(GameplaySystem *game, float dt, double virtualPlayerZ,
     if (TimerOnGrid(game, boss->reinforcementTimer, MUSIC_BEAT)) {
         int reinforcements = boss->phase == BOSS_SINGULARITY ? 3
                            : (boss->phase == BOSS_ENRAGED || boss->leviathan ? 2 : 1);
+        BeginGroup(game, false);
         for (int add = 0; add < reinforcements; add++) {
             uint32_t addSeed = game->runSeed ^ (uint32_t)game->spawnSerial * 0x85ebca6bu ^
                                (uint32_t)boss->encounterIndex * 97u;
@@ -598,6 +626,7 @@ static void UpdateBoss(GameplaySystem *game, float dt, double virtualPlayerZ,
                                     boss->position.z - 24.0f - (float)add * 5.0f },
                          0, addSeed);
         }
+        EndGroup(game);
         boss->reinforcementTimer = boss->phase == BOSS_SINGULARITY ? 2.25f
                                    : boss->phase == BOSS_ENRAGED ? 2.7f
                                    : boss->leviathan ? 3.1f : 3.8f;
@@ -685,11 +714,100 @@ static void SpawnBurst(GameplaySystem *game, Vector3 position, Color color, int 
     }
 }
 
+
+// ---------------------------------------------------------------------------
+// Pickup weapons: capsules
+
+#define CAPSULE_SPEED 16.0f         // arena units/s toward the player's plane
+#define CAPSULE_PICK_RADIUS 2.2f
+#define CAPSULE_DROP_CHANCE 0.25f   // an ordinary wiped group of 2+; role groups always drop
+#define CAPSULE_COOLDOWN 12.0f      // seconds after a drop before the next can come
+
+int GetWeaponAmmoFull(PickupWeapon weapon) {
+    switch (weapon) {
+        case WEAPON_ARC: return 10;
+        case WEAPON_DRILL: return 5;
+        case WEAPON_MIRROR: return 4;
+        default: return 0;
+    }
+}
+
+const char *GetWeaponName(PickupWeapon weapon) {
+    switch (weapon) {
+        case WEAPON_ARC: return "ARC";
+        case WEAPON_DRILL: return "DRILL";
+        case WEAPON_MIRROR: return "MIRROR";
+        default: return "";
+    }
+}
+
+static void DropCapsule(GameplaySystem *game, Vector3 position, GameplayEvents *events) {
+    int slot = -1;
+    for (int i = 0; i < MAX_CAPSULES; i++) if (!game->capsules[i].active) { slot = i; break; }
+    if (slot < 0) return;
+    uint32_t h = MixBits(game->runSeed ^ (uint32_t)(game->dropSerial + 1) * 0x27d4eb2du);
+    game->dropSerial++;
+    WeaponCapsule *c = &game->capsules[slot];
+    c->active = true;
+    c->age = 0.0f;
+    c->type = (PickupWeapon)(WEAPON_ARC + (int)(h % 3u));
+    c->position = position;
+    c->position.x = ClampFloat(position.x, PLAYER_MIN_X + 1.0f, PLAYER_MAX_X - 1.0f);
+    c->position.y = ClampFloat(position.y, PLAYER_MIN_Y + 0.5f, PLAYER_MAX_Y - 0.5f);
+    game->capsuleCooldown = CAPSULE_COOLDOWN;
+    events->capsulesDropped++;
+}
+
+// A member of `group` was killed. Kills by specials (beam, bomb) never drop.
+static void GroupKilled(GameplaySystem *game, int group, Vector3 position, GameplayEvents *events) {
+    EnemyGroup *g = &game->groups[group % GROUP_RING];
+    if (g->id != group) return;
+    g->killed++;
+    if (g->killed < g->spawned) return;
+    for (int i = 0; i < MAX_ENEMIES; i++)
+        if (game->enemies[i].active && game->enemies[i].group == group) return;
+    g->id = 0;   // wiped: count it once
+    if (game->suppressLinkRewards) return;
+    if (game->capsuleCooldown > 0.0f) return;
+    bool drop = g->role || (g->spawned >= 2 &&
+                Hash01(game->runSeed ^ (uint32_t)group * 0x9e3779b9u ^ 0xca95u) < CAPSULE_DROP_CHANCE);
+    if (drop) DropCapsule(game, position, events);
+}
+
+static void UpdateCapsules(GameplaySystem *game, float dt, GameplayEvents *events) {
+    game->capsuleCooldown = fmaxf(0.0f, game->capsuleCooldown - dt);
+    for (int i = 0; i < MAX_CAPSULES; i++) {
+        WeaponCapsule *c = &game->capsules[i];
+        if (!c->active) continue;
+        c->age += dt;
+        c->position.z += CAPSULE_SPEED * dt;
+        float dx = c->position.x - game->player.position.x;
+        float dy = c->position.y - game->player.position.y;
+        float dz = c->position.z - game->player.position.z;
+        if (dz > -1.6f && dz < 1.6f && LengthSquared2D(dx, dy) < CAPSULE_PICK_RADIUS * CAPSULE_PICK_RADIUS) {
+            int full = GetWeaponAmmoFull(c->type);
+            if (game->weapon == c->type) {
+                game->ammo = game->ammo + full > 2 * full ? 2 * full : game->ammo + full;
+            } else {
+                game->weapon = c->type;   // a different weapon replaces the slot and its ammo
+                game->ammo = full;
+                game->weaponQueued = false;
+            }
+            game->weaponFlash = 1.0f;
+            events->weaponCollected = true;
+            c->active = false;
+        } else if (c->position.z > 4.0f) {
+            c->active = false;
+        }
+    }
+}
+
 static void RegisterKill(GameplaySystem *game, Enemy *enemy, bool charged,
                          GameplayEvents *events) {
     Vector3 deathPosition = enemy->position;
     EnemyType deadType = enemy->type;
     int generation = enemy->generation;
+    int group = enemy->group;
     enemy->active = false;
     enemy->locked = false;
 
@@ -775,9 +893,12 @@ static void RegisterKill(GameplaySystem *game, Enemy *enemy, bool charged,
                 child->phase = ENEMY_HOVER;
                 child->phaseTime = 0.0f;
                 child->basePosition = childPosition;
+                JoinGroup(game, child, group);
             }
         }
     }
+    // After the splitter's children joined, so splitting is not a wipe.
+    if (group > 0) GroupKilled(game, group, deathPosition, events);
 }
 
 // Impact sparks for a hit that does not kill: a few short white streaks, no shockwave.
@@ -817,14 +938,295 @@ int GetEnemySupport(const GameplaySystem *game, const Enemy *enemy) {
     return -1;
 }
 
-static void DamageEnemy(GameplaySystem *game, Enemy *enemy, float damage, bool charged,
-                        GameplayEvents *events) {
+static void ApplyDamage(GameplaySystem *game, Enemy *enemy, float damage, bool charged,
+                        bool shielded, GameplayEvents *events) {
     if (!enemy->active) return;
-    if (GetEnemySupport(game, enemy) >= 0) damage *= 0.5f;
+    if (shielded && GetEnemySupport(game, enemy) >= 0) damage *= 0.5f;
     enemy->health -= damage;
     game->cameraKick = fmaxf(game->cameraKick, 0.12f);
     if (enemy->health <= 0.0f) RegisterKill(game, enemy, charged, events);
     else { enemy->hurt = 1.0f; SpawnSparks(game, enemy); }
+}
+
+static void DamageEnemy(GameplaySystem *game, Enemy *enemy, float damage, bool charged,
+                        GameplayEvents *events) {
+    ApplyDamage(game, enemy, damage, charged, true, events);
+}
+
+
+// ---------------------------------------------------------------------------
+// Pickup weapons: ARC, DRILL, MIRROR. Everything lands on the 16th grid; with
+// no music clock (tests) a 16th is a plain 0.125 s.
+
+#define ARC_DAMAGE 2.0f
+#define ARC_COOLDOWN 0.3f
+#define ARC_FADE 0.35f
+#define DRILL_SPEED 42.0f
+#define DRILL_TICK_DAMAGE 0.3f
+#define DRILL_BLAST_DAMAGE 4.0f
+#define DRILL_SPLASH_DAMAGE 1.5f
+#define DRILL_SPLASH_RADIUS 5.0f
+#define DRILL_MIN_STUCK 0.4f        // at least this long ticking before the bar line counts
+#define DRILL_MAX_STUCK 2.4f        // detonates by then whatever the clock does
+#define DRILL_COOLDOWN 0.45f
+#define MIRROR_SHOT_SPEED 75.0f
+#define MIRROR_SHOT_DAMAGE 2.5f
+
+static float StepSeconds(const GameplaySystem *game) {
+    return game->music.valid && game->music.stepsPerSecond > 0.0f ? 1.0f / game->music.stepsPerSecond : 0.125f;
+}
+
+static void AddWeaponNote(GameplayEvents *events, PickupWeapon kind, int degree) {
+    if (events->weaponNotes >= 8) return;
+    events->weaponNoteDegree[events->weaponNotes] = (signed char)degree;
+    events->weaponNoteKind[events->weaponNotes] = (unsigned char)kind;
+    events->weaponNotes++;
+}
+
+// The first target ahead of the ship: the lock-on's choice (closest to the
+// ship's line, then nearest), in a wider cone.
+static int TargetAhead(const GameplaySystem *game) {
+    int best = -1;
+    float bestScore = 1e9f;
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        const Enemy *e = &game->enemies[i];
+        if (!IsEnemyTargetable(game, e) || e->position.z >= game->player.position.z - 1.0f) continue;
+        float depth = game->player.position.z - e->position.z;
+        if (depth > 100.0f) continue;
+        float cone = 5.0f + depth * 0.06f + e->size.x * 0.3f;
+        float dx = e->position.x - game->player.position.x, dy = e->position.y - game->player.position.y;
+        float lateral = LengthSquared2D(dx, dy);
+        if (lateral > cone * cone) continue;
+        float score = lateral * 5.0f + depth * 0.08f;
+        if (score < bestScore) { best = i; bestScore = score; }
+    }
+    return best;
+}
+
+static int ArcNextTarget(const GameplaySystem *game, const ArcBolt *arc) {
+    if (arc->hits == 0) return TargetAhead(game);
+    Vector3 from = arc->points[arc->hits];
+    int best = -1;
+    float bestD = ARC_JUMP_RADIUS * ARC_JUMP_RADIUS;
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        const Enemy *e = &game->enemies[i];
+        if (!IsEnemyTargetable(game, e) || e->position.z >= game->player.position.z) continue;
+        bool visited = false;
+        for (int k = 0; k < arc->hits; k++) visited |= arc->slots[k] == i;
+        if (visited) continue;
+        float dx = e->position.x - from.x, dy = e->position.y - from.y, dz = e->position.z - from.z;
+        float d = dx * dx + dy * dy + dz * dz;
+        if (d < bestD) { best = i; bestD = d; }
+    }
+    return best;
+}
+
+// Chord tones up the seed's scale: each jump is the next arpeggio note.
+static const signed char ARC_DEGREES[ARC_MAX_HITS] = { 0, 2, 4, 7, 9, 11 };
+
+static void ArcLand(GameplaySystem *game, ArcBolt *arc, int slot, GameplayEvents *events) {
+    Enemy *e = &game->enemies[slot];
+    arc->slots[arc->hits] = slot;
+    arc->points[arc->hits + 1] = e->position;
+    AddWeaponNote(events, WEAPON_ARC, ARC_DEGREES[arc->hits]);
+    arc->hits++;
+    ApplyDamage(game, e, ARC_DAMAGE, false, false, events);   // through the support's shield
+    SpawnBurst(game, arc->points[arc->hits], (Color){ 235, 248, 255, 255 }, 3);
+}
+
+static bool FireArc(GameplaySystem *game, GameplayEvents *events) {
+    int first = TargetAhead(game);
+    if (first < 0) return false;
+    int slot = -1;
+    for (int i = 0; i < MAX_ARCS; i++) if (!game->arcs[i].active) { slot = i; break; }
+    if (slot < 0) return false;
+    ArcBolt *arc = &game->arcs[slot];
+    *arc = (ArcBolt){ 0 };
+    arc->active = true;
+    arc->points[0] = game->player.position;
+    arc->points[0].z -= 1.2f;
+    ArcLand(game, arc, first, events);
+    arc->timer = StepSeconds(game);
+    return true;
+}
+
+static void UpdateArcs(GameplaySystem *game, float dt, GameplayEvents *events) {
+    for (int i = 0; i < MAX_ARCS; i++) {
+        ArcBolt *arc = &game->arcs[i];
+        if (!arc->active) continue;
+        if (arc->done) {
+            arc->fade -= dt;
+            if (arc->fade <= 0.0f) arc->active = false;
+            continue;
+        }
+        arc->timer -= dt;
+        if (!TimerOnGrid(game, arc->timer, MUSIC_STEP)) continue;
+        int next = arc->hits < ARC_MAX_HITS ? ArcNextTarget(game, arc) : -1;
+        if (next < 0) { arc->done = true; arc->fade = ARC_FADE; continue; }
+        ArcLand(game, arc, next, events);
+        arc->timer = StepSeconds(game);
+    }
+}
+
+static bool FireDrill(GameplaySystem *game) {
+    int slot = -1;
+    for (int i = 0; i < MAX_DRILLS; i++) if (!game->drills[i].active) { slot = i; break; }
+    if (slot < 0) return false;
+    DrillRound *d = &game->drills[slot];
+    *d = (DrillRound){ 0 };
+    d->active = true;
+    d->position = game->player.position;
+    d->position.z -= 1.2f;
+    d->target = TargetAhead(game);
+    Vector3 aim = d->target >= 0 ? game->enemies[d->target].position
+                                 : (Vector3){ d->position.x, d->position.y, -110.0f };
+    Vector3 dir = Vector3Normalize((Vector3){ aim.x - d->position.x, aim.y - d->position.y, aim.z - d->position.z });
+    d->velocity = (Vector3){ dir.x * DRILL_SPEED, dir.y * DRILL_SPEED, dir.z * DRILL_SPEED };
+    return true;
+}
+
+static void DetonateDrill(GameplaySystem *game, DrillRound *d, GameplayEvents *events) {
+    d->active = false;
+    Vector3 at = d->position;
+    if (d->target >= 0 && game->enemies[d->target].active)
+        ApplyDamage(game, &game->enemies[d->target], DRILL_BLAST_DAMAGE, true, true, events);
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        Enemy *e = &game->enemies[i];
+        if (i == d->target || !IsEnemyTargetable(game, e)) continue;
+        float dx = e->position.x - at.x, dy = e->position.y - at.y, dz = e->position.z - at.z;
+        if (dx * dx + dy * dy + dz * dz < DRILL_SPLASH_RADIUS * DRILL_SPLASH_RADIUS)
+            ApplyDamage(game, e, DRILL_SPLASH_DAMAGE, true, true, events);
+    }
+    SpawnBurst(game, at, game->hotColor, 12);
+    game->cameraKick = fmaxf(game->cameraKick, 0.5f);
+    events->drillDetonations++;
+}
+
+static void UpdateDrills(GameplaySystem *game, float dt, GameplayEvents *events) {
+    bool ticked = false;   // one tick note per frame, however many drills tick
+    for (int i = 0; i < MAX_DRILLS; i++) {
+        DrillRound *d = &game->drills[i];
+        if (!d->active) continue;
+        d->age += dt;
+        Enemy *target = d->target >= 0 ? &game->enemies[d->target] : NULL;
+        if (d->stuck > 0.0f) {
+            if (target == NULL || !target->active) { DetonateDrill(game, d, events); continue; }
+            d->stuck += dt;
+            d->position = Vector3Add(target->position, d->offset);
+            d->tickTimer -= dt;
+            if (TimerOnGrid(game, d->tickTimer, MUSIC_STEP)) {
+                d->tickTimer = StepSeconds(game);
+                if (!ticked) AddWeaponNote(events, WEAPON_DRILL, 0);
+                ticked = true;
+                ApplyDamage(game, target, DRILL_TICK_DAMAGE, false, true, events);
+                if (!target->active) { DetonateDrill(game, d, events); continue; }
+            }
+            bool bar = game->music.valid ? music_clock_crossed(&game->music, MUSIC_BAR) : d->stuck >= 1.6f;
+            if ((d->stuck >= DRILL_MIN_STUCK && bar) || d->stuck >= DRILL_MAX_STUCK) DetonateDrill(game, d, events);
+            continue;
+        }
+        // In flight: home like a charged shot, stick to the first enemy it meets.
+        if (target != NULL && !target->active) { d->target = -1; target = NULL; }
+        if (target != NULL) {
+            Vector3 to = Vector3Subtract(target->position, d->position);
+            float len = Vector3Length(to);
+            if (len > 0.001f) {
+                Vector3 desired = Vector3Scale(to, DRILL_SPEED / len);
+                float turn = 1.0f - expf(-PLAYER_HOMING_TURN_RATE * dt);
+                d->velocity = Vector3Add(d->velocity, Vector3Scale(Vector3Subtract(desired, d->velocity), turn));
+            }
+        }
+        Vector3 prev = d->position;
+        d->position = Vector3Add(d->position, Vector3Scale(d->velocity, dt));
+        int hit = -1;
+        float first = 2.0f;
+        for (int k = 0; k < MAX_ENEMIES; k++) {
+            Enemy *e = &game->enemies[k];
+            if (!IsEnemyTargetable(game, e)) continue;
+            float t = SegmentSphereHit(prev, d->position, e->position, 0.55f + e->size.x * 0.28f);
+            if (t >= 0.0f && t < first) { first = t; hit = k; }
+        }
+        if (hit >= 0) {
+            Enemy *e = &game->enemies[hit];
+            d->target = hit;
+            d->position = Vector3Lerp(prev, d->position, first);
+            d->offset = Vector3Subtract(d->position, e->position);
+            d->stuck = 0.0001f;
+            d->tickTimer = StepSeconds(game);
+            SpawnBurst(game, d->position, game->hotColor, 4);
+        } else if (d->age > 3.0f || d->position.z < -200.0f) {
+            d->active = false;
+        }
+    }
+}
+
+// Mirror: the enemy that fired a shot, found by running the shot's path
+// backwards (aimed shots point straight back at the shooter; fans at the boss).
+static int MirrorTarget(const GameplaySystem *game, const EnemyProjectile *p) {
+    Vector3 back = Vector3Normalize(Vector3Negate(p->velocity));
+    int best = -1;
+    float bestScore = 1e9f;
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        const Enemy *e = &game->enemies[i];
+        if (!IsEnemyTargetable(game, e) || e->position.z >= game->player.position.z - 1.0f) continue;
+        Vector3 v = Vector3Subtract(e->position, p->position);
+        float along = Vector3DotProduct(v, back);
+        if (along <= 0.0f) continue;
+        float off = Vector3LengthSqr(v) - along * along;
+        float score = off - e->size.x * e->size.x * 0.25f;
+        if (score < bestScore) { best = i; bestScore = score; }
+    }
+    return best >= 0 ? best : TargetAhead(game);
+}
+
+static void MirrorCatch(GameplaySystem *game, EnemyProjectile *p, GameplayEvents *events, bool *noted) {
+    p->active = false;
+    if (!game->mirrorRollCaught) {
+        game->mirrorRollCaught = true;
+        game->ammo--;
+        events->weaponFired = true;
+    }
+    game->mirrorFlash = 1.0f;
+    if (!*noted) AddWeaponNote(events, WEAPON_MIRROR, 14);
+    *noted = true;
+    int target = MirrorTarget(game, p);
+    Vector3 aim = target >= 0 ? game->enemies[target].position
+                              : (Vector3){ p->position.x, p->position.y, -110.0f };
+    SpawnPlayerProjectile(game, p->position, aim, target, MIRROR_SHOT_SPEED, MIRROR_SHOT_DAMAGE, true);
+}
+
+static bool MirrorArmed(const GameplaySystem *game) {
+    return game->player.dodging && game->weapon == WEAPON_MIRROR &&
+           (game->ammo > 0 || game->mirrorRollCaught);
+}
+
+static void UpdatePickupWeapon(GameplaySystem *game, float dt, const GameplayInput *input,
+                               GameplayEvents *events) {
+    game->weaponCooldown = fmaxf(0.0f, game->weaponCooldown - dt);
+    game->mirrorFlash = fmaxf(0.0f, game->mirrorFlash - dt * 3.0f);
+    if (input->weaponPressed) {
+        if ((game->weapon == WEAPON_ARC || game->weapon == WEAPON_DRILL) && game->ammo > 0)
+            game->weaponQueued = true;
+        else if (game->weapon == WEAPON_NONE)
+            events->weaponEmpty = true;
+    }
+    if (game->weaponQueued && game->weaponCooldown <= 0.0f && TimerOnGrid(game, 0.0f, MUSIC_STEP)) {
+        game->weaponQueued = false;
+        bool fired = game->weapon == WEAPON_ARC ? FireArc(game, events)
+                   : game->weapon == WEAPON_DRILL ? FireDrill(game) : false;
+        if (fired) {
+            game->ammo--;
+            game->weaponCooldown = game->weapon == WEAPON_ARC ? ARC_COOLDOWN : DRILL_COOLDOWN;
+            events->weaponFired = true;
+        } else {
+            events->weaponEmpty = true;   // nothing in range: no ammo spent
+        }
+    }
+    if (game->ammo <= 0 && game->weapon != WEAPON_NONE && !MirrorArmed(game)) {
+        game->ammo = 0;
+        game->weapon = WEAPON_NONE;
+        game->weaponQueued = false;
+    }
 }
 
 static void FireTap(GameplaySystem *game, GameplayEvents *events) {
@@ -955,6 +1357,7 @@ static void UpdatePlayer(GameplaySystem *game, float dt, bool boosting,
     game->player.position.y = ClampFloat(input->playerY, PLAYER_MIN_Y, PLAYER_MAX_Y);
     game->player.velocity.x = input->velocityX;
     game->player.velocity.y = input->velocityY;
+    if (input->dodging && !game->player.dodging) game->mirrorRollCaught = false;   // a new roll
     game->player.dodging = input->dodging;
 
     // Fractal Leviathan gravity: reported for the flight model to apply.
@@ -974,6 +1377,7 @@ static void UpdatePlayer(GameplaySystem *game, float dt, bool boosting,
 
     if (input->beamPressed) FireLinkBeam(game, events);
     if (input->bombPressed) FireLinkBomb(game, events);
+    UpdatePickupWeapon(game, dt, input, events);
 
     if (boosting) game->player.energy = fmaxf(0.0f, game->player.energy - BOOST_ENERGY_DRAIN * dt);
     else game->player.energy = fminf(100.0f, game->player.energy + 1.6f * dt);
@@ -1193,9 +1597,20 @@ static void UpdateEnemy(GameplaySystem *game, Enemy *enemy, float dt, bool overd
 }
 
 static void UpdateProjectiles(GameplaySystem *game, float dt, GameplayEvents *events) {
+    bool mirrorNoted = false;
     for (int i = 0; i < MAX_ENEMY_PROJECTILES; i++) {
         EnemyProjectile *projectile = &game->projectiles[i];
         if (!projectile->active) continue;
+        if (MirrorArmed(game)) {
+            float mz = projectile->position.z - game->player.position.z;
+            float mx = projectile->position.x - game->player.position.x;
+            float my = projectile->position.y - game->player.position.y;
+            if (mz > -3.0f && mz < 1.5f &&
+                LengthSquared2D(mx, my) < MIRROR_CATCH_RADIUS * MIRROR_CATCH_RADIUS) {
+                MirrorCatch(game, projectile, events, &mirrorNoted);
+                continue;
+            }
+        }
         if (game->overdriveActive) projectile->homing = true;
         // Lead the ship while there is room to turn, but commit to the final
         // trajectory near the player. A sharp late lateral reversal can evade
@@ -1362,7 +1777,10 @@ void AdvanceGameplayLoop(GameplaySystem *game, uint32_t runSeed, double virtualP
     for (int i = 0; i < MAX_ENEMIES; i++) game->enemies[i].active = false;
     for (int i = 0; i < MAX_ENEMY_PROJECTILES; i++) game->projectiles[i].active = false;
     for (int i = 0; i < MAX_PLAYER_PROJECTILES; i++) game->playerProjectiles[i].active = false;
-    ClearLocks(game);
+    for (int i = 0; i < MAX_CAPSULES; i++) game->capsules[i].active = false;
+    for (int i = 0; i < MAX_ARCS; i++) game->arcs[i].active = false;
+    for (int i = 0; i < MAX_DRILLS; i++) game->drills[i].active = false;
+    ClearLocks(game);   // the pickup weapon and its ammo carry over
 
     game->boss.coreSlot = -1;
     for (int node = 0; node < 4; node++) game->boss.nodeSlots[node] = -1;
@@ -1683,6 +2101,9 @@ GameplayEvents UpdateGameplay(GameplaySystem *game, float dt, double virtualPlay
     }
     UpdateProjectiles(game, dt, &events);
     UpdatePlayerProjectiles(game, dt, &events);
+    UpdateArcs(game, dt, &events);
+    UpdateDrills(game, dt, &events);
+    UpdateCapsules(game, dt, &events);
     return events;
 }
 

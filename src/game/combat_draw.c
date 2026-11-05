@@ -580,6 +580,111 @@ static void draw_focus_dim(const CombatDraw *d, CtTunnel *ct, const ArenaMap *m,
     rlEnableDepthTest();
 }
 
+// ---------------------------------------------------------------------------
+// Pickup weapons (player colours: they are ours)
+
+static uint32_t draw_hash(uint32_t v)
+{
+    v ^= v >> 16; v *= 0x7feb352du; v ^= v >> 15; v *= 0x846ca68bu; v ^= v >> 16;
+    return v;
+}
+
+// Capsule: a spinning cube cage around the weapon's glyph, ringed on the beat.
+// ARC = a zigzag bolt, DRILL = a three-blade spike, MIRROR = a hexagon.
+static void draw_capsule(const CtTunnel *ct, const ArenaMap *m, const double *o, const GameplaySystem *g,
+                         const WeaponCapsule *c, float time, bool emissive)
+{
+    Frame f = frame_at(ct, m, o, c->position);
+    float spin = time * 1.6f + c->position.x;
+    Xform cage = { 1.0f, spin, 0.6f };
+    if (!emissive) { shape_body(&f, &SHAPE_CUBE, (Xform){ 0.9f, spin, 0.6f }, (Color){ 6, 10, 16, 255 }); return; }
+    float beat = music_flash(g, MUSIC_BEAT, 6.0f);
+    shape_edges(&f, &SHAPE_CUBE, cage, PLAYER_FIRE, 3.2f + 2.0f * beat, 0.05f);
+    ring(&f, 1.9f + 0.3f * beat, 4, -spin * 0.5f, 0.05f, PLAYER_CORE, 3.0f + 3.0f * beat, 0.55f);
+    // The glyph sits on the cage's near face, large enough to read the type at a glance.
+    const float G = 1.5f, Z = 1.2f;
+    Color gc = mix_color(PLAYER_FIRE, PLAYER_CORE, 0.5f);
+    if (c->type == WEAPON_ARC) {
+        Vector3 pts[4] = { fp(&f, -0.45f * G, 0.6f * G, Z), fp(&f, 0.15f * G, 0.12f * G, Z),
+                           fp(&f, -0.15f * G, -0.1f * G, Z), fp(&f, 0.45f * G, -0.6f * G, Z) };
+        for (int k = 0; k < 3; k++) ribbon(pts[k], pts[k + 1], 0.13f, gc, 6.0f);
+    } else if (c->type == WEAPON_DRILL) {
+        for (int k = 0; k < 3; k++) {
+            float a = spin * 2.0f + k * 2.0943951f;
+            ribbon(fp(&f, 0, 0, Z), fp(&f, cosf(a) * 0.6f * G, sinf(a) * 0.6f * G, Z), 0.13f, gc, 6.0f);
+        }
+    } else {
+        Frame front = f;
+        front.c = fp(&f, 0, 0, Z);
+        ring(&front, 0.55f * G, 6, spin, 0.12f, gc, 6.0f, 0.0f);
+    }
+}
+
+// Arc: a jagged bolt along the landed hits; the jaggies re-roll on every 16th.
+static void draw_arc(const CtTunnel *ct, const ArenaMap *m, const double *o, const GameplaySystem *g,
+                     const ArcBolt *a, int index)
+{
+    float alpha = a->done ? fmaxf(a->fade / 0.35f, 0.0f) : 1.0f;
+    uint32_t tick = (uint32_t)(g->music.valid ? g->music.step : g->runTime * 8.0f);
+    for (int k = 0; k < a->hits; k++) {
+        Vector3 p0 = a->points[k], p1 = a->points[k + 1];
+        Vector3 prev = frame_at(ct, m, o, p0).c;
+        const int SEG = 7;
+        for (int s = 1; s <= SEG; s++) {
+            float t = (float)s / SEG;
+            Vector3 p = Vector3Lerp(p0, p1, t);
+            if (s < SEG) {
+                uint32_t h = draw_hash(tick * 131u + (uint32_t)(index * 17 + k * 7 + s));
+                float j = 0.9f * sinf(t * PI);
+                p.x += ((float)(h & 255u) / 127.5f - 1.0f) * j;
+                p.y += ((float)((h >> 8) & 255u) / 127.5f - 1.0f) * j;
+            }
+            Vector3 cur = frame_at(ct, m, o, p).c;
+            ribbon(prev, cur, 0.16f * alpha, PLAYER_FIRE, 3.5f * alpha);
+            ribbon(prev, cur, 0.05f * alpha, PLAYER_CORE, 8.0f * alpha);
+            prev = cur;
+        }
+        Frame hit = frame_at(ct, m, o, p1);
+        ring(&hit, 0.9f, 8, (float)k, 0.05f, PLAYER_CORE, 5.0f * alpha, 0.4f);
+    }
+}
+
+// Drill: a spinning spike in flight; stuck, a closing ring counts down to the bar line.
+static void draw_drill(const CtTunnel *ct, const ArenaMap *m, const double *o, const GameplaySystem *g,
+                       const DrillRound *d, float time)
+{
+    Frame f = frame_at(ct, m, o, d->position);
+    float spin = time * 14.0f + d->age;
+    for (int k = 0; k < 3; k++) {
+        float a = spin + k * 2.0943951f;
+        ribbon(fp(&f, 0, 0, 0), fp(&f, cosf(a) * 0.6f, sinf(a) * 0.6f, 0.4f), 0.07f, PLAYER_CORE, 7.0f);
+    }
+    if (d->stuck > 0.0f) {
+        float sixteenth = music_flash(g, MUSIC_STEP, 18.0f);
+        float bar = g->music.valid ? music_clock_since(&g->music, MUSIC_BAR) * g->music.stepsPerSecond / MUSIC_BAR : fminf(d->stuck / 1.6f, 1.0f);
+        ring(&f, 2.6f - 1.8f * bar, 12, -spin * 0.2f, 0.07f, gPal.hot, 4.0f + 3.0f * sixteenth, 0.3f);
+        ring(&f, 0.5f, 6, spin * 0.3f, 0.06f, PLAYER_CORE, 4.0f + 4.0f * sixteenth, 0.0f);
+    } else {
+        Vector3 back = Vector3Subtract(d->position, Vector3Scale(Vector3Normalize(d->velocity), 1.6f));
+        ribbon(frame_at(ct, m, o, back).c, f.c, 0.12f, PLAYER_FIRE, 4.0f);
+    }
+}
+
+// Mirror: a faint hex around the ship while charged; bright at the catch radius during a roll.
+static void draw_mirror(const CtTunnel *ct, const ArenaMap *m, const double *o, const GameplaySystem *g, float time)
+{
+    if (g->weapon != WEAPON_MIRROR) return;
+    Frame f = frame_at(ct, m, o, g->player.position);
+    if (g->player.dodging) {
+        ring(&f, MIRROR_CATCH_RADIUS, 6, time * 6.0f, 0.045f, PLAYER_CORE, 2.5f + 4.0f * g->mirrorFlash, 0.0f);
+        ring(&f, MIRROR_CATCH_RADIUS * 0.8f, 6, -time * 6.0f, 0.03f, PLAYER_FIRE, 2.0f, 0.3f);
+    } else if (g->ammo > 0) {
+        ring(&f, MIRROR_CATCH_RADIUS, 6, time * 0.8f, 0.03f, PLAYER_FIRE, 1.6f, 0.5f);
+    }
+    if (g->mirrorFlash > 0.0f)
+        ring(&f, MIRROR_CATCH_RADIUS + (1.0f - g->mirrorFlash) * 3.0f, 6, 0, 0.06f, PLAYER_CORE, 5.0f * g->mirrorFlash, 0.0f);
+}
+
 void combat_draw_scene(CombatDraw *d, CtTunnel *ct, const ArenaMap *m, const GameplaySystem *g,
                        const CtSceneView *view, bool emissive)
 {
@@ -603,6 +708,8 @@ void combat_draw_scene(CombatDraw *d, CtTunnel *ct, const ArenaMap *m, const Gam
         draw_enemy(ct, m, o, g, e, time, emissive);
     }
     draw_boss(ct, m, o, g, time, emissive);
+    for (int i = 0; i < MAX_CAPSULES; i++)
+        if (g->capsules[i].active) draw_capsule(ct, m, o, g, &g->capsules[i], time, emissive);
 
     // Enemy shots, opaque pass: a dark rim disc that cuts the shot out of the bright
     // corridor behind it. Rim + orb ~ the hit radius (0.85 arena units).
@@ -678,6 +785,9 @@ void combat_draw_scene(CombatDraw *d, CtTunnel *ct, const ArenaMap *m, const Gam
                 }
             }
         }
+        for (int i = 0; i < MAX_ARCS; i++) if (g->arcs[i].active) draw_arc(ct, m, o, g, &g->arcs[i], i);
+        for (int i = 0; i < MAX_DRILLS; i++) if (g->drills[i].active) draw_drill(ct, m, o, g, &g->drills[i], time);
+        draw_mirror(ct, m, o, g, time);
         // Chain-link beam: a lance down the player's lane.
         if (g->beamTimer > 0.0f) {
             float a = g->beamTimer / 0.34f;
@@ -789,6 +899,15 @@ void combat_draw_hud(const CombatDraw *d, const GameplaySystem *g, int w, int h)
                         : g->chainLinks >= BEAM_LINK_COST ? "K BEAM READY // L BOMB 100"
                         : "K BEAM 50 // L BOMB 100";
     DrawText(special, x, y + 32, 11, dim);
+    // Pickup weapon: name and ammo (one slot, I to fire; the mirror works on rolls).
+    if (g->weapon != WEAPON_NONE) {
+        int full = GetWeaponAmmoFull(g->weapon);
+        Color wc = g->weaponFlash > 0.0f ? PLAYER_CORE : PLAYER_FIRE;
+        const char *label = g->weapon == WEAPON_MIRROR ? TextFormat("MIRROR // ROLL  x%d", g->ammo)
+                                                       : TextFormat("I %s  x%d", GetWeaponName(g->weapon), g->ammo);
+        DrawText(label, x, y - 72, 13, wc);
+        meter(x, y - 54, bw, 7, (float)g->ammo / (float)(2 * full), 2 * full, wc, off);
+    }
 
     const char *score = TextFormat("SCORE %08d", g->score);
     DrawText(score, w - MeasureText(score, 22) - 24, 48, 22, (Color){ 225, 240, 250, 230 });

@@ -13,6 +13,9 @@
 // leads the wall by about a second.
 // Plus the 886ba1b roles: snipers come as a mirrored pair at their own depth
 // and commit their aim, carriers launch chasers, supports halve damage nearby.
+// Plus the pickup weapons: arc jumps on 16ths up the arpeggio and through
+// shields, drill ticks and detonates on a bar line, mirror returns shots for one
+// charge per roll, capsules top up / replace, carry over, reset, and drop.
 #include "gameplay.h"
 #include "music_clock.h"
 #include "story.h"
@@ -418,6 +421,189 @@ static bool check_roles(void)
     return ok;
 }
 
+// ---------------------------------------------------------------------------
+// Pickup weapons
+
+static void weapon_world(GameplaySystem *g)
+{
+    InitGameplay(g, 94u);
+    g->bossesEnabled = false;
+    g->spawnTimer = 1e9f;   // no formations: the test places its own enemies
+}
+
+static Enemy *place(GameplaySystem *g, int slot, EnemyType type, float health, Vector3 p)
+{
+    Enemy *e = &g->enemies[slot];
+    *e = (Enemy){ 0 };
+    e->active = true; e->type = type; e->health = health;
+    e->size = type == ENEMY_CARRIER ? (Vector3){ 4.4f, 1.8f, 4.4f } : (Vector3){ 1.8f, 1.8f, 1.8f };
+    e->position = p; e->basePosition = p;
+    e->phase = ENEMY_HOVER;
+    e->fireTimer = 1e9f;    // keep the test field quiet
+    return e;
+}
+
+// Steps the game; `press` taps I on the first frame. Calls back per frame via counters.
+typedef struct { int notes, noteFrame[32], degree[32], kind[32], detonations, detonationFrame, empty, fired, collected; } WeaponLog;
+
+static void step(GameplaySystem *g, GameplayInput *in, MusicClock *clock, int frames, bool press, WeaponLog *log, int *frame)
+{
+    const float dt = 1.0f / 60.0f;
+    for (int f = 0; f < frames; f++, (*frame)++) {
+        g->player.energy = 100.0f;
+        g->player.invulnerability = 1.0f;
+        for (int i = 0; i < MAX_ENEMIES; i++) if (g->enemies[i].active) g->enemies[i].fireTimer = 1e9f;
+        if (clock) { music_clock_advance(clock, dt); SetGameplayMusicClock(g, clock); }
+        in->weaponPressed = press && f == 0;
+        GameplayEvents e = UpdateGameplay(g, dt, 1000.0, false, in);
+        for (int k = 0; k < e.weaponNotes && log->notes < 32; k++, log->notes++) {
+            log->noteFrame[log->notes] = *frame;
+            log->degree[log->notes] = e.weaponNoteDegree[k];
+            log->kind[log->notes] = e.weaponNoteKind[k];
+        }
+        if (e.drillDetonations) { log->detonations += e.drillDetonations; log->detonationFrame = *frame; }
+        log->empty += e.weaponEmpty;
+        log->fired += e.weaponFired;
+        log->collected += e.weaponCollected;
+    }
+}
+
+static bool check_weapons(void)
+{
+    static GameplaySystem g;
+    GameplayInput in = { 0 };
+    in.playerY = 2.4f;
+    int frame = 0;
+
+    // ARC: five drifters in a loose chain; one cast kills them all, one jump per
+    // 16th (no clock: 0.125 s = 7-8 frames), climbing the arpeggio.
+    weapon_world(&g);
+    g.weapon = WEAPON_ARC; g.ammo = 10;
+    for (int i = 0; i < 5; i++) place(&g, i, ENEMY_DRIFTER, 1.0f, (Vector3){ -2.0f + i * 5.0f, 2.4f, -30.0f - i * 3.0f });
+    WeaponLog arc = { 0 };
+    step(&g, &in, NULL, 90, true, &arc, &frame);
+    int alive = 0;
+    for (int i = 0; i < 5; i++) alive += g.enemies[i].active;
+    bool arcKills = alive == 0 && g.ammo == 9 && arc.notes == 5;
+    bool arcClimbs = arc.notes == 5 && arc.degree[0] == 0 && arc.degree[1] == 2 && arc.degree[2] == 4 && arc.degree[3] == 7;
+    bool arcGrid = true;
+    for (int k = 1; k < arc.notes; k++) { int gap = arc.noteFrame[k] - arc.noteFrame[k - 1]; arcGrid &= gap >= 7 && gap <= 8; }
+
+    // ARC ignores the support's shield: a 3-health drifter guarded by a support
+    // takes the full 2 (a tap would do half).
+    weapon_world(&g);
+    g.weapon = WEAPON_ARC; g.ammo = 10;
+    Enemy *guarded = place(&g, 0, ENEMY_DRIFTER, 3.0f, (Vector3){ 0.0f, 2.4f, -25.0f });
+    place(&g, 1, ENEMY_SUPPORT, 30.0f, (Vector3){ 4.0f, 3.0f, -30.0f });
+    WeaponLog sh = { 0 };
+    step(&g, &in, NULL, 3, true, &sh, &frame);
+    bool shieldIgnored = guarded->active && fabsf(guarded->health - 1.0f) < 1e-3f;
+
+    // Nothing in range: no ammo spent.
+    weapon_world(&g);
+    g.weapon = WEAPON_ARC; g.ammo = 10;
+    WeaponLog dud = { 0 };
+    step(&g, &in, NULL, 5, true, &dud, &frame);
+    bool dudFree = g.ammo == 10 && dud.empty == 1;
+
+    // DRILL with the music clock: sticks to a carrier, ticks on 16ths and
+    // detonates on a bar line at least DRILL_MIN_STUCK after sticking.
+    weapon_world(&g);
+    MusicClock clock;
+    music_clock_reset(&clock, 129.0f);
+    g.weapon = WEAPON_DRILL; g.ammo = 5;
+    Enemy *carrier = place(&g, 0, ENEMY_CARRIER, 40.0f, (Vector3){ 1.0f, 2.4f, -30.0f });
+    WeaponLog dr = { 0 };
+    int startFrame = frame;
+    // Count bar crossings frame by frame alongside.
+    step(&g, &in, &clock, 1, true, &dr, &frame);
+    int detonatedOnBar = -1;
+    for (int f = 0; f < 240 && dr.detonations == 0; f++) {
+        step(&g, &in, &clock, 1, false, &dr, &frame);
+        if (dr.detonations) detonatedOnBar = music_clock_crossed(&clock, MUSIC_BAR);
+    }
+    int ticks = 0;
+    for (int k = 0; k < dr.notes; k++) ticks += dr.kind[k] == WEAPON_DRILL;
+    float dealt = 40.0f - carrier->health;
+    bool drillOk = dr.detonations == 1 && detonatedOnBar == 1 && g.ammo == 4 && ticks >= 3 &&
+                   fabsf(dealt - (ticks * 0.3f + 4.0f)) < 0.05f;
+    (void)startFrame;
+
+    // MIRROR: a sniper's shot caught by a rolling ship goes back to the sniper;
+    // one charge per roll, however many shots it catches.
+    weapon_world(&g);
+    g.weapon = WEAPON_MIRROR; g.ammo = 4;
+    Enemy *sniper = place(&g, 0, ENEMY_SNIPER, 2.0f, (Vector3){ 6.0f, 5.0f, -45.0f });
+    sniper->size = (Vector3){ 1.0f, 1.0f, 3.2f };
+    for (int k = 0; k < 2; k++) {
+        EnemyProjectile *p = &g.projectiles[k];
+        p->active = true; p->life = 6.0f;
+        p->position = (Vector3){ 6.0f, 5.0f, -43.0f - k * 4.0f };
+        Vector3 d = { 0.0f - 6.0f, 2.4f - 5.0f, 0.0f + 43.0f + k * 4.0f };
+        float l = sqrtf(d.x * d.x + d.y * d.y + d.z * d.z);
+        p->velocity = (Vector3){ d.x / l * 46.0f, d.y / l * 46.0f, d.z / l * 46.0f };
+    }
+    in.dodging = true;
+    WeaponLog mi = { 0 };
+    step(&g, &in, NULL, 75, false, &mi, &frame);
+    in.dodging = false;
+    bool caughtBoth = !g.projectiles[0].active && !g.projectiles[1].active;
+    bool oneCharge = g.ammo == 3;
+    step(&g, &in, NULL, 60, false, &mi, &frame);
+    bool sniperDown = !sniper->active;
+
+    // Capsules: same type tops up (to twice a magazine), another type replaces.
+    weapon_world(&g);
+    WeaponLog cap = { 0 };
+    PickupWeapon order[4] = { WEAPON_ARC, WEAPON_ARC, WEAPON_ARC, WEAPON_DRILL };
+    int ammoAfter[4];
+    for (int k = 0; k < 4; k++) {
+        g.capsules[0] = (WeaponCapsule){ .position = { 0.0f, 2.4f, -12.0f }, .type = order[k], .active = true };
+        step(&g, &in, NULL, 60, false, &cap, &frame);
+        ammoAfter[k] = g.ammo;
+    }
+    bool pickups = cap.collected == 4 && ammoAfter[0] == 10 && ammoAfter[1] == 20 && ammoAfter[2] == 20 &&
+                   g.weapon == WEAPON_DRILL && ammoAfter[3] == 5;
+    AdvanceGameplayLoop(&g, 95u, 3000.0);
+    bool carried = g.weapon == WEAPON_DRILL && g.ammo == 5;
+    InitGameplay(&g, 94u);
+    bool resetOnDeath = g.weapon == WEAPON_NONE && g.ammo == 0;
+
+    // Drops in play: a pilot that hunts the nearest enemy and taps; capsules
+    // come from wiped groups, deterministic per seed, all three types.
+    int drops[2] = { 0, 0 }, types[WEAPON_COUNT] = { 0 };
+    for (int run = 0; run < 2; run++) {
+        InitGameplay(&g, 94u);
+        g.bossesEnabled = false;
+        GameplayInput hunt = { 0 };
+        hunt.playerY = 2.4f;
+        for (int f = 0; f < 60 * 240; f++) {
+            g.player.energy = 100.0f;
+            g.player.invulnerability = 1.0f;
+            int best = -1; float bz = -1e9f;
+            for (int i = 0; i < MAX_ENEMIES; i++)
+                if (g.enemies[i].active && g.enemies[i].position.z < -8.0f && g.enemies[i].position.z > bz) { best = i; bz = g.enemies[i].position.z; }
+            if (best >= 0) { hunt.playerX = g.enemies[best].position.x; hunt.playerY = g.enemies[best].position.y; }
+            hunt.fireHeld = (f % 6) < 2;
+            GameplayEvents e = UpdateGameplay(&g, 1.0f / 60.0f, 300.0 + f * 0.9, false, &hunt);
+            drops[run] += e.capsulesDropped;
+            if (run == 0 && e.capsulesDropped)
+                for (int c = 0; c < MAX_CAPSULES; c++) if (g.capsules[c].active && g.capsules[c].age <= 1.5f / 60.0f) types[g.capsules[c].type]++;
+        }
+    }
+    bool dropsOk = drops[0] >= 6 && drops[0] <= 240 / 12 + 1 && drops[0] == drops[1] && types[WEAPON_ARC] && types[WEAPON_DRILL] && types[WEAPON_MIRROR];
+
+    bool ok = arcKills && arcClimbs && arcGrid && shieldIgnored && dudFree && drillOk && caughtBoth &&
+              oneCharge && sniperDown && pickups && carried && resetOnDeath && dropsOk;
+    printf("WEAPONS: %s (arc kills %d/5 notes %d grid %s shield-ignored %s dud-free %s; drill ticks %d dealt %.2f on-bar %d; "
+           "mirror caught %s one-charge %s sniper-down %s; pickups %s carried %s reset %s; drops %d/%d types %d/%d/%d)\n",
+           ok ? "yes" : "no", 5 - alive, arc.notes, arcGrid ? "yes" : "no", shieldIgnored ? "yes" : "no",
+           dudFree ? "yes" : "no", ticks, dealt, detonatedOnBar, caughtBoth ? "yes" : "no", oneCharge ? "yes" : "no",
+           sniperDown ? "yes" : "no", pickups ? "yes" : "no", carried ? "yes" : "no", resetOnDeath ? "yes" : "no",
+           drops[0], drops[1], types[WEAPON_ARC], types[WEAPON_DRILL], types[WEAPON_MIRROR]);
+    return ok;
+}
+
 int main(void)
 {
     SetTraceLogLevel(LOG_INFO);
@@ -445,5 +631,7 @@ int main(void)
     bool arrival = check_boss_arrival();
     bool lattice = check_lattice();
     bool roles = check_roles();
-    return specials && onGrid && rateKept && follow && bossOk && timeline && story && arrival && lattice && roles ? 0 : 1;
+    bool weapons = check_weapons();
+    return specials && onGrid && rateKept && follow && bossOk && timeline && story && arrival && lattice && roles &&
+           weapons ? 0 : 1;
 }

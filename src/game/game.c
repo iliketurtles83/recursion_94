@@ -157,7 +157,7 @@ static void start_run(Game *g, uint32_t seed, bool withAudio)
     g->state = STATE_RUN;
 }
 
-typedef struct Controls { CtInput flight; bool fire, beam, bomb; } Controls;
+typedef struct Controls { CtInput flight; bool fire, beam, bomb, weapon; } Controls;
 
 static Controls read_controls(void)
 {
@@ -170,6 +170,7 @@ static Controls read_controls(void)
     c.fire = IsKeyDown(KEY_J) || IsMouseButtonDown(MOUSE_BUTTON_LEFT);
     c.beam = IsKeyPressed(KEY_K);
     c.bomb = IsKeyPressed(KEY_L);
+    c.weapon = IsKeyPressed(KEY_I);
     return c;
 }
 
@@ -206,6 +207,16 @@ static void play_events(Game *g, const GameplayEvents *e)
     if (e->playerHit) TriggerSynthSFX(&g->synth, SFX_GLITCH_HIT);
     if (e->bossStarted) TriggerSynthSFX(&g->synth, SFX_BOSS_RISER);
     if (e->bossDefeated) TriggerSynthSFX(&g->synth, SFX_CORE_COLLAPSE);
+    // Pickup weapons: arc jumps climb the seed's arpeggio, drill ticks click on the root.
+    float shipPan = 0.35f * (g->play.player.position.x - mid) / half;
+    for (int i = 0; i < e->weaponNotes; i++) {
+        PickupWeapon kind = (PickupWeapon)e->weaponNoteKind[i];
+        SFXType type = kind == WEAPON_ARC ? SFX_ARC_NOTE : kind == WEAPON_DRILL ? SFX_DRILL_TICK : SFX_MIRROR;
+        TriggerSynthSFXNote(&g->synth, type, shipPan, e->weaponNoteDegree[i]);
+    }
+    for (int i = 0; i < e->drillDetonations; i++) TriggerSynthSFX(&g->synth, SFX_EXPLOSION);
+    if (e->weaponCollected) TriggerSynthSFX(&g->synth, SFX_POWER_UP);
+    if (e->weaponFired && g->play.weapon == WEAPON_DRILL) TriggerSynthSFX(&g->synth, SFX_LASER_CHARGE);
 }
 
 #define BOSS_HUSH_WINDOW 350.0
@@ -314,7 +325,7 @@ static void update_run(Game *g, float dt, const Controls *c)
     float factor = GetGameplayTravelSpeed(&g->play, g->virtualZ, false) / GetGameplayCruiseSpeed(&g->play, g->virtualZ);
     ct_param_set(g->ct, "baseSpeed", g->baseSpeed * factor);
     GameplayInput in = { px, py, vx, vy, c->fire && !g->play.gameOver, c->beam, c->bomb,
-                         ct_ship_roll_progress(g->ct) >= 0.0f };
+                         ct_ship_roll_progress(g->ct) >= 0.0f, c->weapon && !g->play.gameOver };
     GameplayEvents events = UpdateGameplay(&g->play, dt, g->virtualZ, boosting, &in);
     play_events(g, &events);
     story_update(&g->story, &g->play, &events, &g->music);

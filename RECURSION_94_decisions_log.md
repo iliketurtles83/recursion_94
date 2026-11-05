@@ -2,6 +2,53 @@
 
 This log is the source of truth for architectural choices, visual uplift milestones, feature statuses (Confirmed, Provisional, Rejected), and binary size tracking. The 1.44MB (1,474,560 bytes) contest limit applied to entries before 2026-11-03.
 
+## [Combat] Weapon set: pickup weapons and link specials
+
+- Date: 2026-11-05. Status: CONFIRMED design (user). Pickups built
+  (PROVISIONAL: tests and shots; hand-play); specials rework not started.
+- Pickups as built: capsules drop where a group is wiped (every member
+  killed; one that escapes spoils it; splitter children join the group).
+  Role groups always drop, ordinary groups of 2+ at 25%, at most one drop
+  per 12 s, up to 3 on the field; kills by beam/bomb never drop. Capsules
+  fly at the player's plane (16 u/s); fly through to take. Magazines: ARC
+  10, DRILL 5, MIRROR 4; a top-up adds a magazine, up to two.
+  I queues the shot for the next 16th; no target in range = no ammo spent.
+  ARC: 2 damage per hit, up to 6 hits, 13-unit jumps, notes on degrees
+  0 2 4 7 9 11 two octaves above the root. DRILL: 42 u/s homing round,
+  0.3 per 16th tick (a click on the root), 4 on the bar-line blast (at
+  least 0.4 s after sticking) plus 1.5 splash within 5 units. MIRROR:
+  catch radius 2.0 during a roll; returned shots home on the shooter
+  (found by running the shot's path backwards) for 2.5; a bell note.
+- Three layers, one job each. Base (always): J tap shot / hold-to-charge
+  lock-on, for ordinary enemies and chains. Pickups (ammo-limited): answer a
+  specific threat. Specials (chain links): attack and panic.
+- Pickup weapons, one slot, fired with I. A capsule's type is random (drawn
+  from the seed, so runs stay reproducible). Same type tops up; a different
+  type replaces the weapon and its remaining ammo. Unspent ammo carries to
+  the next stage and resets to zero on death. No cards, no stat upgrades
+  (886ba1b's 13 cards were mostly invisible stat bonuses).
+  - ARC: hits a target, then jumps to the nearest enemy, one jump per 16th;
+    each jump plays the next note of the seed's arpeggio. Ignores the
+    support's half-damage shield. For clusters, splitters, support groups.
+  - DRILL: slow round that sticks, ticks damage on every 16th and detonates
+    on a bar line. For armour: carriers, boss nodes and cores.
+  - MIRROR: passive. A barrel roll with charges catches enemy shots and
+    sends them back at whoever fired them; one charge per roll that catches.
+    For snipers and the Core lattice.
+- Specials: beam and bomb cost the same (50 links, the pool holds 2), so the
+  choice is which job, not which is bigger. Kills made by specials give score
+  but no chain links. Both slow enemies and their shots to half tempo (with
+  the music in half time); the player is not slowed; stretches extend, not
+  stack.
+  - Beam (attack): stronger, direct damage, epic look; the ship is locked in
+    position while it fires (one bar, ticks on 16ths); time stretch during.
+    Cyberspace identity: a data stream / overflow.
+  - Bomb (defence): code injection. A spherical wave expands from the ship
+    and deletes every enemy program and enemy shot; chip damage only to the
+    boss (a root process it cannot delete). Coded demoscene visuals (moire
+    shell, screen-space ripple as it passes the camera, enemies unravel into
+    dots on 16ths). Time stretch after (one bar).
+
 ## [Combat] Sniper, carrier and support roles
 
 - Date: 2026-11-05. Status: PROVISIONAL: checked in tests and shots; hand-play.

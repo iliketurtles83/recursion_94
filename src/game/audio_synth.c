@@ -37,7 +37,7 @@ static int SFXPriority(SFXType type) {
     if (type == SFX_CORE_COLLAPSE) return 4;
     if (type == SFX_BOSS_RISER || type == SFX_POWER_UP) return 3;
     if (type == SFX_GLITCH_HIT || type == SFX_EXPLOSION || type == SFX_ENEMY_FIRE) return 2;
-    if (type == SFX_LASER_CHARGE) return 1;
+    if (type == SFX_LASER_CHARGE || type == SFX_ARC_NOTE || type == SFX_MIRROR) return 1;
     return 0;
 }
 
@@ -811,6 +811,32 @@ static void RenderAudioFrames(SynthSystem *synth, short *output, unsigned int fr
                 float debris = NextNoise(synth) * debrisEnvelope * 0.18f;
                 sfx += SoftClip((rumble * 0.78f + sub * 0.62f) * bodyEnvelope +
                                 snap + debris) * sfxVoice->volume;
+            } else if (sfxVoice->type == SFX_ARC_NOTE || sfxVoice->type == SFX_DRILL_TICK ||
+                       sfxVoice->type == SFX_MIRROR) {
+                // Pitched weapon notes: fixed frequency (the scale degree), own timbres.
+                float f = sfxVoice->freqStart;
+                sfxVoice->phase += f * dt;
+                sfxVoice->phase2 += f * (sfxVoice->type == SFX_MIRROR ? 2.756f : 2.0f) * dt;
+                sfxVoice->phase -= floorf(sfxVoice->phase);
+                sfxVoice->phase2 -= floorf(sfxVoice->phase2);
+                float attack = fminf(sfxVoice->time / 0.002f, 1.0f);
+                if (sfxVoice->type == SFX_ARC_NOTE) {
+                    // Pluck: a saw softened by its decay, an octave above, a zap of noise.
+                    float saw = 2.0f * sfxVoice->phase - 1.0f;
+                    float env = attack * expf(-sfxVoice->time * 22.0f);
+                    float zap = NextNoise(synth) * expf(-sfxVoice->time * 260.0f) * 0.35f;
+                    sfx += SoftClip((saw * 0.55f * (0.4f + 0.6f * expf(-sfxVoice->time * 40.0f)) +
+                                     sinf(2.0f * PI * sfxVoice->phase2) * 0.35f) * env + zap) * sfxVoice->volume;
+                } else if (sfxVoice->type == SFX_DRILL_TICK) {
+                    float sq = sfxVoice->phase < 0.5f ? 1.0f : -1.0f;
+                    float env = attack * expf(-sfxVoice->time * 70.0f);
+                    sfx += SoftClip(sq * 0.6f * env) * sfxVoice->volume;
+                } else {
+                    float env = attack * expf(-sfxVoice->time * 7.0f);
+                    sfx += (sinf(2.0f * PI * sfxVoice->phase) * 0.7f +
+                            sinf(2.0f * PI * sfxVoice->phase2) * 0.3f * expf(-sfxVoice->time * 14.0f)) *
+                           env * sfxVoice->volume;
+                }
             } else if (sfxVoice->type == SFX_CORE_COLLAPSE) {
                 float implosion = 1.0f - progress;
                 float frequency = sfxVoice->freqEnd +
@@ -1269,6 +1295,14 @@ static void StartSynthSFX(SynthSystem *synth, SFXCommand command) {
             voice->duration = 3.25f; voice->freqStart = 92.0f;
             voice->freqEnd = 23.0f; voice->volume = 1.0f;
             voice->noiseFilter = (LadderFilter){ 0 };
+        } else if (type == SFX_ARC_NOTE || type == SFX_DRILL_TICK || type == SFX_MIRROR) {
+            // Arc notes sit two octaves above the root, drill ticks one, the mirror three.
+            int octave = type == SFX_DRILL_TICK ? 12 : (type == SFX_MIRROR ? 36 : 24);
+            voice->freqStart = MidiFrequency(synth->rootMidi + octave +
+                                             ModeInterval(synth->musicConfig.mode, command.degree));
+            voice->freqEnd = voice->freqStart;
+            voice->duration = type == SFX_ARC_NOTE ? 0.22f : (type == SFX_DRILL_TICK ? 0.06f : 0.55f);
+            voice->volume = type == SFX_ARC_NOTE ? 0.55f : (type == SFX_DRILL_TICK ? 0.35f : 0.40f);
         } else {
             return;
         }
@@ -1281,6 +1315,10 @@ void TriggerSynthSFX(SynthSystem *synth, SFXType type) {
 }
 
 void TriggerSynthSFXAt(SynthSystem *synth, SFXType type, float pan) {
+    TriggerSynthSFXNote(synth, type, pan, 0);
+}
+
+void TriggerSynthSFXNote(SynthSystem *synth, SFXType type, float pan, int degree) {
     if (!atomic_load_explicit(&synth->initialized, memory_order_acquire) ||
         type <= SFX_NONE || type >= SFX_COUNT) return;
     pan = pan < -0.8f ? -0.8f : (pan > 0.8f ? 0.8f : pan);
@@ -1295,7 +1333,7 @@ void TriggerSynthSFXAt(SynthSystem *synth, SFXType type, float pan) {
         return;
     }
 
-    synth->sfxCommands[commandWrite] = (SFXCommand){ type, pan };
+    synth->sfxCommands[commandWrite] = (SFXCommand){ type, pan, degree };
     atomic_store_explicit(&synth->sfxCommandWrite, nextWrite, memory_order_release);
 }
 

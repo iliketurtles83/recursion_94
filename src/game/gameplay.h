@@ -22,6 +22,24 @@
 #define CARRIER_BAY_SECONDS 0.8f    // carrier: bays open, then two chasers launch
 #define SUPPORT_RADIUS 10.0f        // arena units: ordinary enemies this close to a support take half damage
 
+// Pickup weapons (decisions 2026-11-05): one slot, fired with I, ammo-limited.
+// Capsules drop from a wiped group or a role group; the type is drawn from the
+// seed. Ammo carries between stages and resets on death (a new run).
+#define MAX_CAPSULES 3
+#define MAX_ARCS 4
+#define ARC_MAX_HITS 6              // first target + 5 jumps, one per 16th
+#define ARC_JUMP_RADIUS 13.0f       // arena units from the last target
+#define MAX_DRILLS 6
+#define MIRROR_CATCH_RADIUS 2.0f    // a rolling ship catches shots this close (hit radius is 0.85)
+
+typedef enum {
+    WEAPON_NONE = 0,
+    WEAPON_ARC,     // chain lightning: jumps target to target on 16ths, ignores support shields
+    WEAPON_DRILL,   // sticks, ticks on 16ths, detonates on a bar line: armour and bosses
+    WEAPON_MIRROR,  // passive: a barrel roll catches enemy shots and returns them to the shooter
+    WEAPON_COUNT
+} PickupWeapon;
+
 typedef enum {
     ENEMY_DRIFTER = 0,
     ENEMY_CHASER,
@@ -58,6 +76,7 @@ typedef struct {
     float hurt;     // 1 on a hit that does not kill, decays fast: the white hit flash
     int identity;
     int generation;
+    int group;      // formation / role group id (0 = none: bosses); wiping a group can drop a capsule
     bool active;
     bool locked;
 } Enemy;
@@ -82,6 +101,44 @@ typedef struct {
     bool charged;
     bool active;
 } PlayerProjectile;
+
+typedef struct {
+    Vector3 position;
+    float age;
+    PickupWeapon type;
+    bool active;
+} WeaponCapsule;
+
+// Ring of recent groups: a group is wiped when every member spawned into it
+// was killed (one that escapes, expires or is absorbed spoils it).
+#define GROUP_RING 64
+typedef struct {
+    int id;
+    short spawned, killed;
+    bool role;       // sniper pair, carrier, support group: always drops when wiped
+} EnemyGroup;
+
+// One arc: points[0] is the muzzle, points[k + 1] where hit k landed.
+typedef struct {
+    Vector3 points[ARC_MAX_HITS + 1];
+    int slots[ARC_MAX_HITS];
+    int hits;
+    float timer;   // to the next jump
+    float fade;    // after the last jump: the bolt fades out
+    bool done;
+    bool active;
+} ArcBolt;
+
+typedef struct {
+    Vector3 position;
+    Vector3 velocity;
+    Vector3 offset;    // from the target's centre once stuck
+    int target;
+    float age;
+    float stuck;       // seconds since it stuck (0 = in flight)
+    float tickTimer;
+    bool active;
+} DrillRound;
 
 typedef struct {
     Vector3 position;
@@ -115,6 +172,7 @@ typedef struct {
     bool beamPressed;
     bool bombPressed;
     bool dodging;          // barrel roll in progress: hits pass through
+    bool weaponPressed;    // I: fire the pickup weapon
 } GameplayInput;
 
 typedef struct {
@@ -133,6 +191,16 @@ typedef struct {
     bool bossStarted;
     bool bossDefeated;
     bool recursionCompleted;
+    // Pickup weapons. Notes are scale degrees for the synth (arc jumps climb the
+    // arpeggio; drill ticks and mirror catches have their own registers).
+    int weaponNotes;
+    signed char weaponNoteDegree[8];
+    unsigned char weaponNoteKind[8];   // PickupWeapon of the note
+    bool weaponCollected;
+    bool weaponFired;
+    bool weaponEmpty;      // I pressed with nothing to fire
+    int drillDetonations;
+    int capsulesDropped;
     int enemyVolleys;      // enemy and boss volleys fired this step (one sound each)
     float enemyVolleyX;    // arena x of the last volley, for stereo placement
 } GameplayEvents;
@@ -185,6 +253,20 @@ typedef struct {
     EnemyProjectile projectiles[MAX_ENEMY_PROJECTILES];
     PlayerProjectile playerProjectiles[MAX_PLAYER_PROJECTILES];
     CombatParticle particles[MAX_COMBAT_PARTICLES];
+    WeaponCapsule capsules[MAX_CAPSULES];
+    ArcBolt arcs[MAX_ARCS];
+    DrillRound drills[MAX_DRILLS];
+    PickupWeapon weapon;
+    int ammo;
+    float weaponCooldown;
+    bool weaponQueued;     // pressed: fires on the next 16th
+    bool mirrorRollCaught; // this roll already spent a mirror charge
+    float mirrorFlash;
+    float capsuleCooldown;
+    int groupSerial;
+    int spawnGroup;        // group new enemies join (0 = none)
+    int dropSerial;
+    EnemyGroup groups[GROUP_RING];
 
     int score;
     int combo;
@@ -227,5 +309,8 @@ void SetGameplayMusicClock(GameplaySystem *game, const MusicClock *clock);
 GameplayEvents UpdateGameplay(GameplaySystem *game, float dt, double virtualPlayerZ,
                               bool boosting, const GameplayInput *input);
 bool ValidateGameplaySpecials(void);
+// Full magazine of a pickup weapon; a top-up adds this, up to twice it.
+int GetWeaponAmmoFull(PickupWeapon weapon);
+const char *GetWeaponName(PickupWeapon weapon);
 
 #endif // GAMEPLAY_H

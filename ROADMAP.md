@@ -100,6 +100,15 @@ RECURSION_94.
         wiped group or a harder enemy; limited shots, carried between
         stages, reset on death; no salvage cards), minimal HUD (energy,
         specials ready, ammo, boss).
+  - [x] Pickup weapons ARC, DRILL, MIRROR (decisions 2026-11-05): one
+        slot, I key, random capsule type from the seed, carried between
+        stages, reset on death; capsules from wiped groups (role groups
+        always, others 25%, 12 s apart); notes in the seed's scale.
+        Placeholder looks. Hand-play: drop rate, ammo, damage, sounds.
+  - [ ] Specials rework (decisions 2026-11-05): beam and bomb at equal
+        cost (50, pool of 2), no links from special kills, half-tempo time
+        stretch (beam during, with position lock; bomb after), bomb as a
+        code-injection wave with demoscene visuals.
   - [ ] Variety: procedural formation grammar (lines, V, rings, snakes,
         mirrored pairs) spawned on phrase lines from the seed; 3-4 new enemy
         roles (weaver, mine, shielded = charge only, wall turret); corridor
