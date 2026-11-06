@@ -350,6 +350,7 @@ static EnemyProjectile *SpawnProjectile(GameplaySystem *game, Vector3 origin, fl
 
     EnemyProjectile *projectile = &game->projectiles[slot];
     projectile->active = true;
+    projectile->grazed = false;
     projectile->position = origin;
     projectile->velocity = (Vector3){ dx / length * speed, dy / length * speed, dz / length * speed };
     projectile->life = 6.0f;
@@ -368,6 +369,7 @@ static EnemyProjectile *SpawnAimedProjectile(GameplaySystem *game, Vector3 origi
     if (length < 0.001f) length = 1.0f;
     EnemyProjectile *projectile = &game->projectiles[slot];
     projectile->active = true;
+    projectile->grazed = false;
     projectile->position = origin;
     projectile->velocity = (Vector3){ dx / length * speed, dy / length * speed, dz / length * speed };
     projectile->life = 6.0f;
@@ -1207,7 +1209,7 @@ static void MirrorCatch(GameplaySystem *game, EnemyProjectile *p, GameplayEvents
 }
 
 static bool MirrorArmed(const GameplaySystem *game) {
-    return game->player.dodging && game->weapon == WEAPON_MIRROR &&
+    return game->player.rolling && game->weapon == WEAPON_MIRROR &&
            (game->ammo > 0 || game->mirrorRollCaught);
 }
 
@@ -1448,8 +1450,9 @@ static void UpdateLocks(GameplaySystem *game) {
     }
 }
 
-static void HitPlayer(GameplaySystem *game, Vector3 hitPosition, GameplayEvents *events) {
-    if (game->player.invulnerability > 0.0f || game->player.dodging || game->gameOver) return;
+// Returns whether the hit landed (not during i-frames or post-hit invulnerability).
+static bool HitPlayer(GameplaySystem *game, Vector3 hitPosition, GameplayEvents *events) {
+    if (game->player.invulnerability > 0.0f || game->player.dodging || game->gameOver) return false;
     float hitDamage = PLAYER_HIT_DAMAGE *
                       (game->overdriveActive ? BOOST_HIT_MULTIPLIER : 1.0f);
     game->player.energy = fmaxf(0.0f, game->player.energy - hitDamage);
@@ -1462,6 +1465,27 @@ static void HitPlayer(GameplaySystem *game, Vector3 hitPosition, GameplayEvents 
     events->playerHit = true;
     SpawnBurst(game, hitPosition, (Color){ 255, 35, 115, 255 }, 16);
     if (game->player.energy <= 0.0f) game->gameOver = true;
+    return true;
+}
+
+// A near miss: a shot or rail crossed the ship's plane within GRAZE_RADIUS and
+// did not hurt it (outside the hit radius, or through the roll's i-frames).
+// Pays chain links at most every GRAZE_COOLDOWN; a quick run of grazes climbs
+// the seed's scale. Nothing during post-hit invulnerability.
+static void Graze(GameplaySystem *game, Vector3 at, GameplayEvents *events) {
+    if (game->player.invulnerability > 0.0f || game->gameOver || game->grazeCooldown > 0.0f) return;
+    game->grazeCooldown = GRAZE_COOLDOWN;
+    game->grazeStreak = game->grazeStreakTimer > 0.0f ? game->grazeStreak + 1 : 0;
+    game->grazeStreakTimer = GRAZE_STREAK_SECONDS;
+    game->chainLinks = game->chainLinks + GRAZE_LINKS > MAX_CHAIN_LINKS
+        ? MAX_CHAIN_LINKS : game->chainLinks + GRAZE_LINKS;
+    game->score += GRAZE_SCORE;
+    events->grazes++;
+    events->grazeDegree = (signed char)(game->grazeStreak % 8);
+    // A small white spark between the shot and the ship.
+    Vector3 mid = { (at.x + game->player.position.x) * 0.5f, (at.y + game->player.position.y) * 0.5f,
+                    game->player.position.z };
+    SpawnBurst(game, mid, (Color){ 235, 248, 255, 255 }, 5);
 }
 
 // The ship's position comes from the engine's flight model (GameplayInput, in
@@ -1474,8 +1498,11 @@ static void UpdatePlayer(GameplaySystem *game, float dt, bool boosting,
     game->player.position.y = ClampFloat(input->playerY, PLAYER_MIN_Y, PLAYER_MAX_Y);
     game->player.velocity.x = input->velocityX;
     game->player.velocity.y = input->velocityY;
-    if (input->dodging && !game->player.dodging) game->mirrorRollCaught = false;   // a new roll
-    game->player.dodging = input->dodging;
+    bool rolling = input->rolling;
+    if (rolling && !game->player.rolling) game->mirrorRollCaught = false;   // a new roll
+    game->player.rolling = rolling;
+    game->player.dodging = rolling && input->rollProgress >= ROLL_IFRAME_START &&
+                           input->rollProgress < ROLL_IFRAME_END;
 
     // Fractal Leviathan gravity: reported for the flight model to apply.
     game->player.pull = (Vector2){ 0.0f, 0.0f };
@@ -1552,7 +1579,7 @@ float GetSniperMarkSeconds(const GameplaySystem *game) {
 
 // Railgun: instant along the line from the sniper through its committed aim
 // point. It hits a ship within RAIL_HIT_RADIUS of that point (a roll's
-// i-frames pass through); a rolling ship with mirror charges returns it.
+// i-frames pass through: a graze); a rolling ship with mirror charges returns it.
 static void FireRail(GameplaySystem *game, Enemy *sniper, GameplayEvents *events) {
     int slot = 0;
     for (int i = 0; i < MAX_RAILS; i++) if (!game->rails[i].active) { slot = i; break; }
@@ -1569,7 +1596,11 @@ static void FireRail(GameplaySystem *game, Enemy *sniper, GameplayEvents *events
         ApplyDamage(game, sniper, MIRROR_SHOT_DAMAGE, true, true, events);
         return;
     }
-    if (d2 < RAIL_HIT_RADIUS * RAIL_HIT_RADIUS) HitPlayer(game, sniper->aim, events);
+    if (d2 < RAIL_HIT_RADIUS * RAIL_HIT_RADIUS) {
+        if (!HitPlayer(game, sniper->aim, events) && game->player.dodging) Graze(game, sniper->aim, events);
+    } else if (d2 < GRAZE_RADIUS * GRAZE_RADIUS) {
+        Graze(game, sniper->aim, events);
+    }
 }
 
 static void UpdateRoleEnemy(GameplaySystem *game, Enemy *enemy, float dt, bool overdrive,
@@ -1798,9 +1829,14 @@ static void UpdateProjectiles(GameplaySystem *game, float dt, GameplayEvents *ev
         bool crossing = previous.z <= game->player.position.z + 1.0f &&
                         projectile->position.z >= game->player.position.z - 1.0f;
         float hitRadiusSquared=ENEMY_SHOT_HIT_RADIUS*ENEMY_SHOT_HIT_RADIUS;
-        if (crossing && LengthSquared2D(dx, dy) < hitRadiusSquared) {
-            HitPlayer(game, projectile->position, events);
+        float d2 = LengthSquared2D(dx, dy);
+        if (crossing && d2 < hitRadiusSquared) {
+            Vector3 at = { hitX, hitY, game->player.position.z };
+            if (!HitPlayer(game, at, events) && game->player.dodging) Graze(game, at, events);
             projectile->active = false;
+        } else if (crossing && !projectile->grazed && d2 < GRAZE_RADIUS * GRAZE_RADIUS) {
+            projectile->grazed = true;   // once per shot; it flies on past the ship
+            Graze(game, (Vector3){ hitX, hitY, game->player.position.z }, events);
         } else if (projectile->life <= 0.0f || projectile->position.z > 9.0f) {
             projectile->active = false;
         }
@@ -2197,13 +2233,62 @@ bool ValidateGameplaySpecials(void) {
     bool sweepValid=events.playerHit && !sweepGame.projectiles[0].active &&
         fabsf(sweepGame.player.energy-82.0f)<0.001f;
 
+    // Barrel roll i-frames only in the middle of the roll; the mirror is armed for all of it.
+    GameplaySystem rollGame;
+    InitGameplay(&rollGame, 94u);
+    GameplayInput rollIn = { .playerX = 0.0f, .playerY = 2.4f, .rolling = true, .rollProgress = 0.1f };
+    events = (GameplayEvents){ 0 };
+    UpdatePlayer(&rollGame, 0.01f, false, &rollIn, &events);
+    bool iframeValid = rollGame.player.rolling && !rollGame.player.dodging;
+    rollIn.rollProgress = 0.45f;
+    UpdatePlayer(&rollGame, 0.01f, false, &rollIn, &events);
+    iframeValid = iframeValid && rollGame.player.dodging;
+    rollIn.rollProgress = 0.85f;
+    UpdatePlayer(&rollGame, 0.01f, false, &rollIn, &events);
+    iframeValid = iframeValid && rollGame.player.rolling && !rollGame.player.dodging;
+    rollIn.rolling = false;
+    UpdatePlayer(&rollGame, 0.01f, false, &rollIn, &events);
+    iframeValid = iframeValid && !rollGame.player.rolling && !rollGame.player.dodging;
+
+    // Graze: a shot crossing 1 unit off pays a link once, flies on, and the
+    // cooldown holds the next; a shot through the i-frames grazes too; nothing
+    // while the post-hit invulnerability runs.
+    GameplaySystem grazeGame;
+    InitGameplay(&grazeGame, 94u);
+    grazeGame.chainLinks = 10;
+    EnemyProjectile nearShot = { .position = { 1.0f, 2.4f, -1.4f }, .velocity = { 0.0f, 0.0f, 60.0f },
+                                 .life = 1.0f, .active = true };
+    grazeGame.projectiles[0] = nearShot;
+    events = (GameplayEvents){ 0 };
+    UpdateProjectiles(&grazeGame, 0.05f, &events);
+    UpdateProjectiles(&grazeGame, 0.01f, &events);
+    bool grazeValid = !events.playerHit && events.grazes == 1 && grazeGame.chainLinks == 10 + GRAZE_LINKS &&
+                      grazeGame.projectiles[0].active && grazeGame.player.energy == 100.0f;
+    grazeGame.projectiles[1] = nearShot;
+    UpdateProjectiles(&grazeGame, 0.05f, &events);
+    grazeValid = grazeValid && events.grazes == 1;                     // cooldown
+    grazeGame.grazeCooldown = 0.0f;
+    grazeGame.player.dodging = true;
+    grazeGame.projectiles[2] = (EnemyProjectile){ .position = { 0.0f, 2.4f, -1.4f },
+        .velocity = { 0.0f, 0.0f, 60.0f }, .life = 1.0f, .active = true };
+    UpdateProjectiles(&grazeGame, 0.05f, &events);
+    grazeValid = grazeValid && !events.playerHit && events.grazes == 2 &&
+                 grazeGame.chainLinks == 10 + 2 * GRAZE_LINKS;
+    grazeGame.player.dodging = false;
+    grazeGame.grazeCooldown = 0.0f;
+    grazeGame.player.invulnerability = 0.5f;
+    grazeGame.projectiles[3] = nearShot;
+    UpdateProjectiles(&grazeGame, 0.05f, &events);
+    grazeValid = grazeValid && events.grazes == 2;
+
     bool valid = insufficientFunds && beamValid && loopPersistence && hitPersistence &&
                  bombValid && bossCapValid && capValid && speedValid && roundAdvanceValid &&
                  leviathanSpawnValid && singularityValid && recursionAdvanceValid &&
                  ordinaryDamageValid && boostDamageValid && homingValid &&
-                 evadeWindowValid && fireRateValid && sweepValid && dodgeValid;
+                 evadeWindowValid && fireRateValid && sweepValid && dodgeValid &&
+                 iframeValid && grazeValid;
     TraceLog(valid ? LOG_INFO : LOG_ERROR,
-             "GAMEPLAY: funds=%s beam=%s loop=%s hit=%s bomb=%s boss-cap=%s link-cap=%s speed=%s round=%s leviathan=%s singularity=%s recurse=%s normal-hit=%s boost-hit=%s homing=%s evade=%s fire-rate=%s sweep=%s dodge=%s",
+             "GAMEPLAY: funds=%s beam=%s loop=%s hit=%s bomb=%s boss-cap=%s link-cap=%s speed=%s round=%s leviathan=%s singularity=%s recurse=%s normal-hit=%s boost-hit=%s homing=%s evade=%s fire-rate=%s sweep=%s dodge=%s iframes=%s graze=%s",
              insufficientFunds ? "yes" : "no", beamValid ? "yes" : "no",
              loopPersistence ? "yes" : "no", hitPersistence ? "yes" : "no",
              bombValid ? "yes" : "no", bossCapValid ? "yes" : "no",
@@ -2212,7 +2297,8 @@ bool ValidateGameplaySpecials(void) {
              singularityValid ? "yes" : "no", recursionAdvanceValid ? "yes" : "no",
              ordinaryDamageValid ? "yes" : "no",boostDamageValid ? "yes" : "no",
              homingValid ? "yes" : "no",evadeWindowValid ? "yes" : "no",
-             fireRateValid ? "yes" : "no",sweepValid ? "yes" : "no",dodgeValid ? "yes" : "no");
+             fireRateValid ? "yes" : "no",sweepValid ? "yes" : "no",dodgeValid ? "yes" : "no",
+             iframeValid ? "yes" : "no", grazeValid ? "yes" : "no");
     return valid;
 }
 
@@ -2249,6 +2335,8 @@ GameplayEvents UpdateGameplay(GameplaySystem *game, float dt, double virtualPlay
     if (game->player.invulnerability > 0.0f) {
         game->player.invulnerability = fmaxf(0.0f, game->player.invulnerability - dt);
     }
+    game->grazeCooldown = fmaxf(0.0f, game->grazeCooldown - dt);
+    game->grazeStreakTimer = fmaxf(0.0f, game->grazeStreakTimer - dt);
     if (game->comboTimer > 0.0f) {
         game->comboTimer -= dt;
         if (game->comboTimer <= 0.0f) {

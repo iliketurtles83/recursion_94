@@ -43,6 +43,19 @@
 #define MAX_DRILLS 6
 #define MIRROR_CATCH_RADIUS 2.0f    // a rolling ship catches shots this close (hit radius is 0.6)
 
+// Barrel roll (roadmap step 7): i-frames only in the middle of the roll, so
+// spamming rolls (0.7 s + 0.35 s cooldown) covers about a third of the time,
+// not two thirds. A near miss (graze) pays chain links: a shot or rail that
+// crosses the ship's plane inside GRAZE_RADIUS without hurting it, including
+// one the roll's i-frames let through. Not during post-hit invulnerability.
+#define ROLL_IFRAME_START 0.2f      // roll progress (0..1) where the i-frames start
+#define ROLL_IFRAME_END 0.7f        // ... and end
+#define GRAZE_RADIUS 1.5f           // arena units (hit radius 0.6)
+#define GRAZE_LINKS 1
+#define GRAZE_SCORE 50
+#define GRAZE_COOLDOWN 0.2f         // seconds between paying grazes (a lattice wall pays a few, not dozens)
+#define GRAZE_STREAK_SECONDS 1.5f   // grazes this close together climb the scale
+
 typedef enum {
     WEAPON_NONE = 0,
     WEAPON_ARC,     // chain lightning: jumps target to target on 16ths, ignores support shields
@@ -107,6 +120,7 @@ typedef struct {
     float life;
     unsigned char kind;   // EnemyShotKind
     bool homing; // Mild boost guidance; retains lock until the shot expires.
+    bool grazed; // already counted as a near miss
     bool active;
 } EnemyProjectile;
 
@@ -184,7 +198,8 @@ typedef struct {
     Vector3 velocity;
     float energy;
     float invulnerability;
-    bool dodging;          // from GameplayInput: no damage while set
+    bool rolling;          // barrel roll in progress (the mirror is armed for all of it)
+    bool dodging;          // the roll's i-frame window: no damage while set
     float chargeTime;
     float bank;
     Vector2 pull;          // Leviathan gravity (arena units/s); game.c hands it to the engine as drift
@@ -199,7 +214,8 @@ typedef struct {
     bool fireHeld;
     bool beamPressed;
     bool bombPressed;
-    bool dodging;          // barrel roll in progress: hits pass through
+    bool rolling;          // barrel roll in progress (zero-initialised input = not rolling)
+    float rollProgress;    // 0..1 through the roll (the engine's ct_ship_roll_progress)
     bool weaponPressed;    // I: fire the pickup weapon
 } GameplayInput;
 
@@ -233,6 +249,8 @@ typedef struct {
     int capsulesDropped;
     int enemyVolleys;      // enemy and boss volleys fired this step (one sound each)
     float enemyVolleyX;    // arena x of the last volley, for stereo placement
+    int grazes;            // paying near misses this step
+    signed char grazeDegree;   // scale degree of the last one (climbs with the streak)
 } GameplayEvents;
 
 typedef enum {
@@ -311,6 +329,9 @@ typedef struct {
     float hitFlash;
     float cameraKick;
     float weaponFlash;
+    float grazeCooldown;   // seconds until a graze pays again
+    float grazeStreakTimer;
+    int grazeStreak;
     float beamTimer;       // seconds since the beam started (visuals)
     float bombTimer;       // seconds since the bomb's wave started (visuals)
     float beamSteps;       // > 0: the beam is firing (16ths left); the ship is held in place

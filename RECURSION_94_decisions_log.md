@@ -2,6 +2,27 @@
 
 This log is the source of truth for architectural choices, visual uplift milestones, feature statuses (Confirmed, Provisional, Rejected), and binary size tracking. The 1.44MB (1,474,560 bytes) contest limit applied to entries before 2026-11-03.
 
+## [Combat] Barrel roll i-frame window and graze
+
+- Date: 2026-11-06. Status: PROVISIONAL: tests; hand-play.
+- Problem: the whole 0.7 s roll was invulnerable and the cooldown is 0.35 s,
+  so spamming Q/E kept the ship untouchable about two thirds of the time.
+- I-frames now run from 20% to 70% of the roll (0.35 s of 0.7;
+  `ROLL_IFRAME_START/END`): spamming covers about a third of the time. The
+  mirror still catches for the whole roll (`PlayerState.rolling` vs
+  `.dodging`). `GameplayInput` carries `rolling` + `rollProgress` from
+  `ct_ship_roll_progress`.
+- Graze: an enemy shot or a rail that crosses the ship's plane within 1.5
+  units (hit radius 0.6) without hurting it pays 1 chain link and 50 score,
+  once per shot, at most every 0.2 s (a lattice wall pays a few, not dozens).
+  A shot taken through the roll's i-frames counts too, so a well-timed roll
+  through fire is rewarded. Nothing during post-hit invulnerability.
+- Feedback: a small white spark between shot and ship; `SFX_GRAZE`, a short
+  glassy ping three octaves up, on the seed's scale, climbing a degree for
+  each graze within 1.5 s of the last.
+- Tests: `iframes` and `graze` in the gameplay validation; the rail and mirror
+  checks in `test_gameplay.c` use the new input.
+
 ## [Combat] Clarity pass after playtest 2026-11-06
 
 - Date: 2026-11-06. Status: PROVISIONAL: tests and shots; hand-play.

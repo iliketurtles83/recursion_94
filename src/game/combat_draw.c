@@ -736,7 +736,7 @@ static void draw_mirror(const CtTunnel *ct, const ArenaMap *m, const double *o, 
 {
     if (g->weapon != WEAPON_MIRROR) return;
     Frame f = frame_at(ct, m, o, g->player.position);
-    if (g->player.dodging) {
+    if (g->player.rolling) {
         ring(&f, MIRROR_CATCH_RADIUS, 6, time * 6.0f, 0.045f, PLAYER_CORE, 2.5f + 4.0f * g->mirrorFlash, 0.0f);
         ring(&f, MIRROR_CATCH_RADIUS * 0.8f, 6, -time * 6.0f, 0.03f, PLAYER_FIRE, 2.0f, 0.3f);
     } else if (g->ammo > 0) {

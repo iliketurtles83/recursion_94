@@ -427,7 +427,8 @@ static bool check_rail(void)
         GameplayInput in = { 0 };
         in.playerY = 2.4f;
         in.playerX = c == 1 ? 1.5f : 0.0f;    // case 1: moved 1.5 units off the mark
-        in.dodging = c == 2;                  // case 2: rolling
+        in.rolling = c == 2;                  // case 2: rolling, inside the i-frame window
+        in.rollProgress = 0.45f;
         UpdateGameplay(&g, 1.0f / 60.0f, 1000.0, false, &in);
         Enemy *e = &g.enemies[0];
         *e = (Enemy){ .active = true, .type = ENEMY_SNIPER, .health = 2.0f, .size = { 1, 1, 3.2f },
@@ -570,10 +571,10 @@ static bool check_weapons(void)
         float l = sqrtf(d.x * d.x + d.y * d.y + d.z * d.z);
         p->velocity = (Vector3){ d.x / l * 46.0f, d.y / l * 46.0f, d.z / l * 46.0f };
     }
-    in.dodging = true;
+    in.rolling = true; in.rollProgress = 0.1f;   // the mirror works for the whole roll, i-frames or not
     WeaponLog mi = { 0 };
     step(&g, &in, NULL, 75, false, &mi, &frame);
-    in.dodging = false;
+    in.rolling = false;
     bool caughtBoth = !g.projectiles[0].active && !g.projectiles[1].active;
     bool oneCharge = g.ammo == 3;
     step(&g, &in, NULL, 60, false, &mi, &frame);

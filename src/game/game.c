@@ -220,6 +220,7 @@ static void play_events(Game *g, const GameplayEvents *e)
     for (int i = 0; i < e->beamTicks; i++) TriggerSynthSFXNote(&g->synth, SFX_DRILL_TICK, 0.0f, (beamPulse++ & 1) ? 4 : 0);
     if (e->weaponCollected) TriggerSynthSFX(&g->synth, SFX_POWER_UP);
     if (e->weaponFired && g->play.weapon == WEAPON_DRILL) TriggerSynthSFX(&g->synth, SFX_LASER_CHARGE);
+    if (e->grazes > 0) TriggerSynthSFXNote(&g->synth, SFX_GRAZE, shipPan, e->grazeDegree);
 }
 
 #define BOSS_HUSH_WINDOW 350.0
@@ -335,7 +336,8 @@ static void update_run(Game *g, float dt, const Controls *c)
     float factor = GetGameplayTravelSpeed(&g->play, g->virtualZ, false) / GetGameplayCruiseSpeed(&g->play, g->virtualZ);
     ct_param_set(g->ct, "baseSpeed", g->baseSpeed * factor);
     GameplayInput in = { px, py, vx, vy, c->fire && !g->play.gameOver, c->beam, c->bomb,
-                         ct_ship_roll_progress(g->ct) >= 0.0f, c->weapon && !g->play.gameOver };
+                         ct_ship_roll_progress(g->ct) >= 0.0f, ct_ship_roll_progress(g->ct),
+                         c->weapon && !g->play.gameOver };
     GameplayEvents events = UpdateGameplay(&g->play, dt, g->virtualZ, boosting, &in);
     play_events(g, &events);
     story_update(&g->story, &g->play, &events, &g->music);

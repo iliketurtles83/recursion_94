@@ -77,9 +77,10 @@ RECURSION_94.
   - [ ] Sound, next: telegraph, hit-tick, lock-on, chain-link, low-energy
         and roll sounds; pitch SFX to the seed's scale (decide by ear);
         check the drumless first ~25 s by ear.
-  - [ ] Barrel roll: i-frames only in the middle of the roll (no
+  - [x] Barrel roll: i-frames only in the middle of the roll (20-70%; no
         near-permanent invulnerability by spamming); reward a near miss
-        (graze) with chain links.
+        (graze, 1.5 units) with chain links, spark and a scale-climbing
+        ping. Hand-play: window, graze radius, link rate, sound.
   - [ ] Boost risk/reward: it speeds up spawns 1.8x; give it a score
         multiplier.
   - [x] Boss arrival window: no formations once the boss is due; the boss

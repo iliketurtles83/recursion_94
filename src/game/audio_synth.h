@@ -50,6 +50,7 @@ typedef enum {
     SFX_ARC_NOTE,       // each arc jump: a bright pluck, the next arpeggio note
     SFX_DRILL_TICK,     // drill ticks: a short low click on the root
     SFX_MIRROR,         // a caught shot: a high bell
+    SFX_GRAZE,          // a near miss: a short airy tick, climbing the scale with the streak
     SFX_COUNT
 } SFXType;
 
