@@ -1045,7 +1045,7 @@ void combat_draw_hud(const CombatDraw *d, const GameplaySystem *g, int w, int h)
     DrawText(score, w - MeasureText(score, 22) - 24, 48, 22, (Color){ 225, 240, 250, 230 });
     static const char *weapons[4] = { "PULSE", "ACCELERATOR", "MULTILOCK-6", "OVERDRIVE" };
     static const int next[3] = { 4, 8, 12 };
-    const char *weapon = TextFormat("WEAPON  %s", weapons[g->weaponTier]);
+    const char *weapon = TextFormat("UPLINK  %s", weapons[g->weaponTier]);   // chain tier (not the pickup weapon)
     Color weaponColor = g->weaponTier == 0 ? dim : (g->weaponTier >= 3 ? g->hotColor : g->secondaryColor);
     DrawText(weapon, w - MeasureText(weapon, 15) - 24, 78, 15, weaponColor);
     if (g->weaponTier < 3) {

@@ -20,6 +20,14 @@ is five levels, each with its own environment, song and boss.
   its neon chassis (`draw_boss` in `combat_draw.c`) and is drawn for every
   round until the other four bosses get theirs; the original chassis code is in
   git history (`git show 1a7c6ca:legacy/src/gameplay.c`, `Draw*Boss`).
+- **Combat kit** (`gameplay.c`, values in `RECURSION_94_decisions_log.md`):
+  tap shot / hold-to-charge lock-on; pickup weapons ARC, DRILL, MIRROR (one
+  slot, capsules from wiped groups, ammo carried between stages, reset on
+  death); link specials beam and bomb (equal cost, half-tempo time stretch:
+  `GetGameplayTimeScale`, the beam holds the ship: `IsGameplayBeamLocked`).
+  Enemy roles sniper (railgun), carrier, support from collaborator commit
+  `886ba1b`, reworked. Enemy shots share one hit radius
+  (`ENEMY_SHOT_HIT_RADIUS`) and have a shape per source (`EnemyShotKind`).
 - **Arena mapping.** Combat runs in arena units: x lateral, y up, z = -distance
   ahead of the ship. 1 arena unit = `ARENA_SCALE` (0.4) world units on all axes,
   riding the path (`ArenaMap`, `arena_to_world` in `combat_draw.c`). The arena
@@ -98,7 +106,10 @@ ctest --test-dir build --output-on-failure         # engine_core/_ship/_vectorin
   `XAUTHORITY=/run/user/1000/xauth_*`. A visible window on `:1` never presents
   and hangs. Without a display, GLFW fails.
 - Runtime keys: F1 param panel, F2 free cam, F3 overlay, T switch environment,
-  1–9 layer toggles, R reseed, F12 screenshot. In the game: F4 steering box overlay, F5 sync test (beat flash; `[` `]` tune the music latency live), Esc/P pause menu, F11 or Alt+Enter fullscreen.
+  1–9 layer toggles, R reseed, F12 screenshot. In the game: arrows/WASD steer,
+  J (or left mouse) tap to fire / hold to charge lock-on, K beam, L bomb,
+  I pickup weapon (the mirror works on rolls), Q/E barrel roll, Space/Left
+  Shift boost; F4 steering box overlay, F5 sync test (beat flash; `[` `]` tune the music latency live), Esc/P pause menu, F11 or Alt+Enter fullscreen.
 - **Movement box.** In open environments the ship's centre is held in a
   rectangle (`steerBoxHalfWidth`, `steerBoxUp`, `steerBoxDown` in world units,
   0 = the old `steerLimit` x radius; floor and ceiling still clip it). The
@@ -156,6 +167,10 @@ ctest --test-dir build --output-on-failure         # engine_core/_ship/_vectorin
   them only for intentional changes. The synth runs in Raylib's audio callback
   thread; the game talks to it through lock-free command queues
   (`UpdateAudioSynth`, `TriggerSynthSFX`) and reads telemetry such as the beat pulse.
+  Pickup-weapon notes are pitched to the seed's scale (`TriggerSynthSFXNote`).
+  `SetAudioSynthTimeStretch` slows the arrangement for the specials (0 slow =
+  every sample unchanged, so the hashes hold); telemetry reports the stretched
+  tempo and the music clock follows it (in shots it is slowed by hand).
 - **Songs** (`SynthSong`, `src/game/songs.c`): one per level, layered on the
   seeded synth. The seed keeps tempo, mode and arp timbre; the song fixes the
   progression, bass lines, lead motif, section plan (cycling after the
