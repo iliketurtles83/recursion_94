@@ -17,8 +17,11 @@
 #define BEAM_LINK_COST 50
 #define BOMB_LINK_COST 100
 #define BOSS_LATTICE_GAP 3.0f       // Core wall: no shot centre within this of the lane
-#define ENEMY_SHOT_HIT_RADIUS 0.85f // sqrt of the player hit test's 0.72
-#define SNIPER_MARK_SECONDS 1.05f   // sniper: aim committed, then one fast shot
+#define ENEMY_SHOT_HIT_RADIUS 0.6f  // enemy shot vs ship (clarity pass 2026-11-06: was 0.85)
+#define SNIPER_MARK_SECONDS 1.05f   // sniper: aim committed, then the rail (level 1; shorter later)
+#define MAX_RAILS 4
+#define RAIL_HIT_RADIUS 0.6f        // the rail hits a ship this close to its line at the ship's plane
+#define RAIL_SHOW_SECONDS 0.22f
 #define CARRIER_BAY_SECONDS 0.8f    // carrier: bays open, then two chasers launch
 #define SUPPORT_RADIUS 10.0f        // arena units: ordinary enemies this close to a support take half damage
 
@@ -81,13 +84,28 @@ typedef struct {
     bool locked;
 } Enemy;
 
+// What fired a shot: each source has its own shape (one hit radius for all).
+typedef enum {
+    SHOT_ORB = 0,   // drifters: a small orb
+    SHOT_NEEDLE,    // splitters: short needles
+    SHOT_BOSS       // bosses: the big orb, their signature
+} EnemyShotKind;
+
 typedef struct {
     Vector3 position;
     Vector3 velocity;
     float life;
+    unsigned char kind;   // EnemyShotKind
     bool homing; // Mild boost guidance; retains lock until the shot expires.
     bool active;
 } EnemyProjectile;
+
+// Sniper railgun: instant along the committed line; shown briefly.
+typedef struct {
+    Vector3 from, aim;
+    float life;
+    bool active;
+} RailShot;
 
 // Charged shots home toward their enemy slot. Tap shots use targetEnemy = -1
 // and continue straight along the reticle lane.
@@ -200,6 +218,7 @@ typedef struct {
     bool weaponFired;
     bool weaponEmpty;      // I pressed with nothing to fire
     int drillDetonations;
+    int railShots;
     int capsulesDropped;
     int enemyVolleys;      // enemy and boss volleys fired this step (one sound each)
     float enemyVolleyX;    // arena x of the last volley, for stereo placement
@@ -253,6 +272,7 @@ typedef struct {
     EnemyProjectile projectiles[MAX_ENEMY_PROJECTILES];
     PlayerProjectile playerProjectiles[MAX_PLAYER_PROJECTILES];
     CombatParticle particles[MAX_COMBAT_PARTICLES];
+    RailShot rails[MAX_RAILS];
     WeaponCapsule capsules[MAX_CAPSULES];
     ArcBolt arcs[MAX_ARCS];
     DrillRound drills[MAX_DRILLS];
@@ -311,6 +331,8 @@ GameplayEvents UpdateGameplay(GameplaySystem *game, float dt, double virtualPlay
 bool ValidateGameplaySpecials(void);
 // Full magazine of a pickup weapon; a top-up adds this, up to twice it.
 int GetWeaponAmmoFull(PickupWeapon weapon);
+// The sniper's mark before the rail: 1.05 s on level 1, shorter on later levels and depths.
+float GetSniperMarkSeconds(const GameplaySystem *game);
 const char *GetWeaponName(PickupWeapon weapon);
 
 #endif // GAMEPLAY_H

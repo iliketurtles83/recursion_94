@@ -2,6 +2,32 @@
 
 This log is the source of truth for architectural choices, visual uplift milestones, feature statuses (Confirmed, Provisional, Rejected), and binary size tracking. The 1.44MB (1,474,560 bytes) contest limit applied to entries before 2026-11-03.
 
+## [Combat] Clarity pass after playtest 2026-11-06
+
+- Date: 2026-11-06. Status: PROVISIONAL: tests and shots; hand-play.
+- Playtest: the screen got crowded and confusing; enemy orbs were big, many,
+  slow and grew as they neared the camera; the sniper shot was easy to dodge
+  and slow; tap fire was hard to aim with no crosshair; telegraphs blinked
+  and drew an outline. The dominant play was weaving and holding lock-on,
+  since every shot is aimed at where the ship is.
+- Sniper railgun: after the mark, an instant rail along the committed line
+  (hits within 0.6 of the mark on the ship's plane; a roll's i-frames pass;
+  a mirror roll returns it to the sniper). Mark 1.05 s on level 1, -0.10 s
+  per level and -0.08 s per recursion depth, at least 0.65 s.
+- Enemy shots: one hit radius 0.6 (was 0.85); a shape per source (drifter
+  small orb, splitter needles, boss big orb); capped on-screen size; fade
+  once past the ship. Drifter shots 22 -> 30 u/s, splitter 21/23 -> 28/30,
+  drifters refire 1.35x less often.
+- Crosshair: corner brackets on the tap-shot line at 18 and 40 units ahead;
+  charging opens the near one to the real lock cone at that depth with one
+  pip per lock (4 or 6), white when the full lock count is reached. The HUD
+  "LOCK n" text was removed.
+- Telegraphs blink only (the enemy-fire ring was removed); the drifters'
+  dashed halo was removed; hit sparks 4 -> 3; lock brackets dimmer.
+- Later (user): some enemy fire that homes in on the ship or aims where it
+  is heading, so weaving is not automatically safe; tap-fire incentive
+  undecided.
+
 ## [Combat] Weapon set: pickup weapons and link specials
 
 - Date: 2026-11-05. Status: CONFIRMED design (user). Pickups built
@@ -88,7 +114,7 @@ This log is the source of truth for architectural choices, visual uplift milesto
   so it opens from a point into a lattice as it arrives. No shot centre
   within 3.0 of the lane (`BOSS_LATTICE_GAP`); the guide marks 3.0 - 0.85
   (shot hit radius), which is always safe. Cell centres are also just
-  passable (1.56 from the nearest shots vs 0.85), and a barrel roll's
+  passable (1.56 from the nearest shots vs 0.85; the hit radius is 0.6 since 2026-11-06), and a barrel roll's
   i-frames carry through. Wall shots never home, even under boost.
 - About 55-90 shots per wall: the enemy shot pool went from 128 to 192.
 - Later: consider moving it to a later boss.

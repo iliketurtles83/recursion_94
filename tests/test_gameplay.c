@@ -369,9 +369,7 @@ static bool check_roles(void)
         int chasersBefore = 0;
         for (int i = 0; i < MAX_ENEMIES; i++)
             chasersBefore += game.enemies[i].active && game.enemies[i].type == ENEMY_CHASER && game.enemies[i].generation > 0;
-        bool shotWas[MAX_ENEMY_PROJECTILES];
-        for (int i = 0; i < MAX_ENEMY_PROJECTILES; i++) shotWas[i] = game.projectiles[i].active;
-        UpdateGameplay(&game, dt, 1000.0, false, &in);
+        GameplayEvents ev = UpdateGameplay(&game, dt, 1000.0, false, &in);
         int chasersAfter = 0, newSnipers = 0;
         for (int i = 0; i < MAX_ENEMIES; i++) {
             Enemy *e = &game.enemies[i];
@@ -392,17 +390,12 @@ static bool check_roles(void)
         }
         if (newSnipers == 2) sniperPairs++;
         if (chasersAfter > chasersBefore) launches++;
-        for (int i = 0; i < MAX_ENEMY_PROJECTILES; i++) {
-            const EnemyProjectile *p = &game.projectiles[i];
-            if (shotWas[i] || !p->active) continue;
-            float speed = sqrtf(p->velocity.x * p->velocity.x + p->velocity.y * p->velocity.y + p->velocity.z * p->velocity.z);
-            if (fabsf(speed - 46.0f) > 0.5f) continue;     // the sniper shot
+        // The rail: fired along a committed aim point, not where the player is now.
+        for (int r = 0; r < MAX_RAILS && ev.railShots; r++) {
+            const RailShot *rail = &game.rails[r];
+            if (!rail->active || rail->life < RAIL_SHOW_SECONDS - 1e-4f) continue;
             sniperShots++;
-            // It must cross the player's plane at an aim point committed earlier,
-            // not where the player is now.
-            float t = (game.player.position.z - p->position.z) / p->velocity.z;
-            float x = p->position.x + p->velocity.x * t;
-            if (fabsf(x - game.player.position.x) < 1e-3f && fabsf(in.playerX) > 0.5f) sniperMisses++;
+            if (fabsf(rail->aim.x - game.player.position.x) < 1e-3f && fabsf(in.playerX) > 0.5f) sniperMisses++;
         }
     }
     // Support: an enemy next to one takes half damage.
@@ -418,6 +411,40 @@ static bool check_roles(void)
     printf("ROLES: %s (sniper pairs %d, marks %d, shots %d, aim moved %d; carriers %d, launches %d; supports %d, shield %s; hold z %.0f/%.0f/%.0f)\n",
            ok ? "yes" : "no", sniperPairs, marks, sniperShots, aimMoved, carriers, launches, supports,
            shielded ? "yes" : "no", holdZ[0], holdZ[1], holdZ[2]);
+    return ok;
+}
+
+// Sniper rail: instant, hits a ship still on the marked point, misses one that
+// moved off it, passes through a roll; the mark is shorter on later levels.
+static bool check_rail(void)
+{
+    static GameplaySystem g;
+    int hits[3] = { 0, 0, 0 };
+    for (int c = 0; c < 3; c++) {
+        InitGameplay(&g, 94u);
+        g.bossesEnabled = false;
+        g.spawnTimer = 1e9f;
+        GameplayInput in = { 0 };
+        in.playerY = 2.4f;
+        in.playerX = c == 1 ? 1.5f : 0.0f;    // case 1: moved 1.5 units off the mark
+        in.dodging = c == 2;                  // case 2: rolling
+        UpdateGameplay(&g, 1.0f / 60.0f, 1000.0, false, &in);
+        Enemy *e = &g.enemies[0];
+        *e = (Enemy){ .active = true, .type = ENEMY_SNIPER, .health = 2.0f, .size = { 1, 1, 3.2f },
+                      .position = { 6, 5, -48 }, .basePosition = { 6, 5, -48 }, .phase = ENEMY_TELEGRAPH,
+                      .aim = { 0.0f, 2.4f, 0.0f }, .fireTimer = 9.0f };
+        for (int f = 0; f < 90; f++) {
+            GameplayEvents ev = UpdateGameplay(&g, 1.0f / 60.0f, 1000.0, false, &in);
+            hits[c] += ev.playerHit;
+        }
+    }
+    g.boss.encounterIndex = 3;   // level 4
+    float later = GetSniperMarkSeconds(&g);
+    g.boss.encounterIndex = 0;
+    float first = GetSniperMarkSeconds(&g);
+    bool ok = hits[0] == 1 && hits[1] == 0 && hits[2] == 0 && first > 1.0f && later < first - 0.2f;
+    printf("RAIL: %s (on the mark %d, moved off %d, rolling %d; mark %.2f s -> %.2f s on level 4)\n",
+           ok ? "yes" : "no", hits[0], hits[1], hits[2], first, later);
     return ok;
 }
 
@@ -632,6 +659,7 @@ int main(void)
     bool lattice = check_lattice();
     bool roles = check_roles();
     bool weapons = check_weapons();
-    return specials && onGrid && rateKept && follow && bossOk && timeline && story && arrival && lattice && roles &&
+    bool rail = check_rail();
+    return rail && specials && onGrid && rateKept && follow && bossOk && timeline && story && arrival && lattice && roles &&
            weapons ? 0 : 1;
 }

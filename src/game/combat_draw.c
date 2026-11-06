@@ -296,8 +296,8 @@ static void lock_brackets(const Frame *f, float s, float time, float w, Color c)
         float ang = a + k * PI * 0.5f;
         Vector2 d0 = { cosf(ang), sinf(ang) }, d1 = { cosf(ang + 0.5f), sinf(ang + 0.5f) }, d2 = { cosf(ang - 0.5f), sinf(ang - 0.5f) };
         Vector3 corner = fp(f, d0.x * s, d0.y * s, 0);
-        ribbon(corner, fp(f, (d0.x * 0.7f + d1.x * 0.3f) * s, (d0.y * 0.7f + d1.y * 0.3f) * s, 0), w, c, 6.0f);
-        ribbon(corner, fp(f, (d0.x * 0.7f + d2.x * 0.3f) * s, (d0.y * 0.7f + d2.y * 0.3f) * s, 0), w, c, 6.0f);
+        ribbon(corner, fp(f, (d0.x * 0.7f + d1.x * 0.3f) * s, (d0.y * 0.7f + d1.y * 0.3f) * s, 0), w, c, 4.0f);
+        ribbon(corner, fp(f, (d0.x * 0.7f + d2.x * 0.3f) * s, (d0.y * 0.7f + d2.y * 0.3f) * s, 0), w, c, 4.0f);
     }
 }
 
@@ -324,7 +324,7 @@ static void draw_role_enemy(const CtTunnel *ct, const ArenaMap *m, const double 
         if (tele) {
             // The mark: a dashed sight line to the committed aim point and a
             // closing reticle there, brightening until the shot.
-            float k = fminf(e->phaseTime / SNIPER_MARK_SECONDS, 1.0f);
+            float k = fminf(e->phaseTime / GetSniperMarkSeconds(g), 1.0f);
             float a = (1.5f + 4.5f * k) * fade;
             Vector3 from = e->position, to = e->aim;
             for (int seg = 0; seg < 24; seg += 2) {
@@ -399,11 +399,8 @@ static void draw_enemy(const CtTunnel *ct, const ArenaMap *m, const double *o, c
     if (e->type == ENEMY_SPLITTER) {
         Xform inner = { r * 0.45f, -e->age * 1.7f, e->age * 1.1f };
         shape_edges(&f, &SHAPE_CUBE, inner, scale_color(c, 1.3f), gain * 1.3f, w * 0.8f);
-    } else if (e->type == ENEMY_DRIFTER) {
-        ring(&f, r * 1.45f, 12, e->age * 1.3f + id, w * 0.8f, c, gain * 0.7f, 0.35f);
     }
-    // About to fire: the warning ring is in the enemy-fire colour.
-    if (telegraph > 0.0f) ring(&f, r * (1.6f + e->phaseTime * 1.5f), 16, 0.0f, w, ENEMY_FIRE, telegraph * 4.0f * fade, 0.2f);
+    // About to fire: the body blinks (gain above); no extra outline (clarity pass).
     if (e->locked) lock_brackets(&f, r * 1.9f, time, w * 1.4f, PLAYER_FIRE);
 }
 
@@ -581,6 +578,70 @@ static void draw_focus_dim(const CombatDraw *d, CtTunnel *ct, const ArenaMap *m,
 }
 
 // ---------------------------------------------------------------------------
+// Enemy shots (clarity pass): one hit radius, a shape per source, a cap on
+// their size on screen, and they fade once past the ship (they can no longer hit).
+
+#define NEEDLE_LENGTH 1.6f
+#define SHOT_MAX_ANGLE 0.022f  // radians: the most an orb may cover on screen
+
+static float shot_radius(int kind) { return kind == SHOT_BOSS ? 0.62f : kind == SHOT_NEEDLE ? 0.3f : 0.42f; }
+
+static float shot_scale(const Frame *f, float radius)
+{
+    float dist = Vector3Length(Vector3Subtract(f->c, gCam));
+    float angle = radius * f->k / fmaxf(dist, 1e-3f);
+    return angle > SHOT_MAX_ANGLE ? SHOT_MAX_ANGLE / angle : 1.0f;
+}
+
+static float shot_alpha(const GameplaySystem *g, const EnemyProjectile *p)
+{
+    float past = p->position.z - (g->player.position.z + 0.5f);
+    return past <= 0.0f ? 1.0f : fmaxf(0.0f, 1.0f - past / 2.5f);
+}
+
+// Crosshair: corner brackets on the tap-shot line at two depths (read the
+// angle from their offset). Charging, the near one opens into the real lock
+// cone at its depth, with a pip per lock; full charge turns it white.
+#define RETICLE_NEAR 18.0f
+#define RETICLE_FAR 40.0f
+
+static void reticle_corners(const Frame *f, float s, float w, Color c, float gain)
+{
+    for (int k = 0; k < 4; k++) {
+        float sx = (k & 1) ? 1.0f : -1.0f, sy = (k & 2) ? 1.0f : -1.0f;
+        Vector3 corner = fp(f, sx * s, sy * s, 0);
+        ribbon(corner, fp(f, sx * s * 0.5f, sy * s, 0), w, c, gain);
+        ribbon(corner, fp(f, sx * s, sy * s * 0.5f, 0), w, c, gain);
+        ribbon(corner, fp(f, sx * s * 0.75f, sy * s, 0), w * 0.4f, PLAYER_CORE, gain * 1.6f);
+        ribbon(corner, fp(f, sx * s, sy * s * 0.75f, 0), w * 0.4f, PLAYER_CORE, gain * 1.6f);
+    }
+}
+
+static void draw_reticle(const CtTunnel *ct, const ArenaMap *m, const double *o, const GameplaySystem *g, float time)
+{
+    if (g->gameOver) return;
+    Vector3 p = g->player.position;
+    Frame nearF = frame_at(ct, m, o, (Vector3){ p.x, p.y, p.z - RETICLE_NEAR });
+    Frame farF = frame_at(ct, m, o, (Vector3){ p.x, p.y, p.z - RETICLE_FAR });
+    reticle_corners(&farF, 0.9f, 0.08f, PLAYER_FIRE, 3.0f);
+    float charge = g->player.chargeTime;
+    if (charge <= 0.12f) { reticle_corners(&nearF, 1.2f, 0.09f, PLAYER_FIRE, 4.0f); return; }
+    // Same cone as UpdateLocks in gameplay.c, at the near reticle's depth.
+    float cone = 1.0f + fminf(charge, 1.2f) * 2.1f + RETICLE_NEAR * 0.035f;
+    bool full = charge > 0.72f;
+    Color c = full ? PLAYER_CORE : PLAYER_FIRE;
+    reticle_corners(&nearF, cone * 0.72f, 0.09f, c, full ? 5.0f + 1.5f * sinf(time * 20.0f) : 4.0f);
+    int maxLocks = g->weaponTier >= 2 ? 6 : 4;
+    for (int i = 0; i < maxLocks; i++) {
+        float a = PI * 0.5f + ((float)i - (float)(maxLocks - 1) * 0.5f) * 0.22f;
+        bool lit = i < g->lockedCount;
+        Vector3 c0 = fp(&nearF, cosf(a) * (cone * 0.72f + 0.35f), sinf(a) * (cone * 0.72f + 0.35f), 0);
+        Vector3 c1 = fp(&nearF, cosf(a) * (cone * 0.72f + 0.75f), sinf(a) * (cone * 0.72f + 0.75f), 0);
+        ribbon(c0, c1, lit ? 0.09f : 0.05f, lit ? PLAYER_CORE : PLAYER_FIRE, lit ? 6.0f : 1.5f);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Pickup weapons (player colours: they are ours)
 
 static uint32_t draw_hash(uint32_t v)
@@ -717,8 +778,16 @@ void combat_draw_scene(CombatDraw *d, CtTunnel *ct, const ArenaMap *m, const Gam
         for (int i = 0; i < MAX_ENEMY_PROJECTILES; i++) {
             const EnemyProjectile *p = &g->projectiles[i];
             if (!p->active) continue;
+            float a = shot_alpha(g, p);
+            if (a <= 0.02f) continue;
             Frame f = frame_at(ct, m, o, p->position);
-            disc(&f, 0.95f, 14, (Color){ 10, 2, 6, 255 }, 1.0f, 0.0f);
+            float s = shot_scale(&f, shot_radius(p->kind));
+            if (p->kind == SHOT_NEEDLE) {
+                Vector3 back = Vector3Subtract(p->position, Vector3Scale(Vector3Normalize(p->velocity), NEEDLE_LENGTH));
+                ribbon(frame_at(ct, m, o, back).c, f.c, 0.2f * s, (Color){ 10, 2, 6, 255 }, 1.0f);
+            } else {
+                disc(&f, (shot_radius(p->kind) + 0.2f) * s, 14, (Color){ 10, 2, 6, 255 }, 1.0f, 0.0f);
+            }
         }
     }
 
@@ -741,14 +810,40 @@ void combat_draw_scene(CombatDraw *d, CtTunnel *ct, const ArenaMap *m, const Gam
         for (int i = 0; i < MAX_ENEMY_PROJECTILES; i++) {
             const EnemyProjectile *p = &g->projectiles[i];
             if (!p->active) continue;
+            float a = shot_alpha(g, p);
+            if (a <= 0.02f) continue;
             Frame f = frame_at(ct, m, o, p->position);
-            float pulse = 0.85f + 0.15f * sinf(time * 18.0f + i);
-            disc(&f, 0.62f, 14, ENEMY_FIRE, 2.6f * pulse, 0.03f);
-            disc(&f, 0.30f, 10, ENEMY_FIRE_CORE, 5.5f, 0.06f);
-            ring(&f, 0.66f, 14, 0.0f, 0.05f, ENEMY_FIRE, 5.0f, 0.0f);
-            if (p->homing) ring(&f, 0.88f, 6, time * 7.0f + i, 0.05f, ENEMY_FIRE, 4.0f, 0.45f);
-            Vector3 back = Vector3Subtract(p->position, Vector3Scale(Vector3Normalize(p->velocity), p->homing ? 2.6f : 1.4f));
-            ribbon(frame_at(ct, m, o, back).c, f.c, 0.10f, ENEMY_FIRE, 1.8f);
+            float r = shot_radius(p->kind), s = shot_scale(&f, r);
+            Vector3 dir = Vector3Normalize(p->velocity);
+            if (p->kind == SHOT_NEEDLE) {
+                // A short needle along its flight: reads as a dash, not a blob.
+                Vector3 back = Vector3Subtract(p->position, Vector3Scale(dir, NEEDLE_LENGTH));
+                Vector3 b = frame_at(ct, m, o, back).c;
+                ribbon(b, f.c, 0.12f * s, ENEMY_FIRE, 3.0f * a);
+                ribbon(b, f.c, 0.04f * s, ENEMY_FIRE_CORE, 6.0f * a);
+            } else {
+                float pulse = 0.85f + 0.15f * sinf(time * 18.0f + i);
+                disc(&f, r * s, 14, ENEMY_FIRE, 2.6f * pulse * a, 0.03f);
+                disc(&f, r * 0.48f * s, 10, ENEMY_FIRE_CORE, 5.5f * a, 0.06f);
+                ring(&f, r * 1.06f * s, 14, 0.0f, 0.05f * s, ENEMY_FIRE, 5.0f * a, 0.0f);
+                Vector3 back = Vector3Subtract(p->position, Vector3Scale(dir, p->homing ? 2.6f : 1.0f));
+                ribbon(frame_at(ct, m, o, back).c, f.c, 0.07f * s, ENEMY_FIRE, 1.6f * a);
+            }
+            if (p->homing) ring(&f, (r + 0.26f) * s, 6, time * 7.0f + i, 0.05f * s, ENEMY_FIRE, 4.0f * a, 0.45f);
+        }
+        // Sniper rails: a white-hot line along the committed aim, past the ship's plane.
+        for (int i = 0; i < MAX_RAILS; i++) {
+            const RailShot *r = &g->rails[i];
+            if (!r->active) continue;
+            float a = r->life / RAIL_SHOW_SECONDS;
+            Vector3 dir = Vector3Subtract(r->aim, r->from);
+            Vector3 end = Vector3Add(r->aim, Vector3Scale(dir, 8.0f / fmaxf(fabsf(dir.z), 1.0f)));
+            for (int k = 0; k < 8; k++) {
+                Vector3 r0 = frame_at(ct, m, o, Vector3Lerp(r->from, end, k / 8.0f)).c;
+                Vector3 r1 = frame_at(ct, m, o, Vector3Lerp(r->from, end, (k + 1) / 8.0f)).c;
+                ribbon(r0, r1, 0.12f * a, ENEMY_FIRE, 4.0f * a);
+                ribbon(r0, r1, 0.035f, ENEMY_FIRE_CORE, 8.0f * a);
+            }
         }
         // Particles: debris streaks and shockwave rings.
         for (int i = 0; i < MAX_COMBAT_PARTICLES; i++) {
@@ -785,6 +880,7 @@ void combat_draw_scene(CombatDraw *d, CtTunnel *ct, const ArenaMap *m, const Gam
                 }
             }
         }
+        draw_reticle(ct, m, o, g, time);
         for (int i = 0; i < MAX_ARCS; i++) if (g->arcs[i].active) draw_arc(ct, m, o, g, &g->arcs[i], i);
         for (int i = 0; i < MAX_DRILLS; i++) if (g->drills[i].active) draw_drill(ct, m, o, g, &g->drills[i], time);
         draw_mirror(ct, m, o, g, time);
@@ -923,10 +1019,6 @@ void combat_draw_hud(const CombatDraw *d, const GameplaySystem *g, int w, int h)
     if (g->combo > 1) {
         const char *combo = TextFormat("x%d CHAIN", g->combo);
         DrawText(combo, w - MeasureText(combo, 20) - 24, 116, 20, g->hotColor);
-    }
-    if (g->player.chargeTime > 0.12f) {
-        const char *lock = TextFormat("LOCK %d", g->lockedCount);
-        DrawText(lock, w / 2 - MeasureText(lock, 16) / 2, h / 2 + 90, 16, g->hotColor);
     }
     // Boss: name, core integrity and phase at the top (the arrival title card is story.c).
     const BossState *b = &g->boss;

@@ -105,6 +105,15 @@ RECURSION_94.
         stages, reset on death; capsules from wiped groups (role groups
         always, others 25%, 12 s apart); notes in the seed's scale.
         Placeholder looks. Hand-play: drop rate, ammo, damage, sounds.
+  - [x] Clarity pass (playtest 2026-11-06): sniper railgun with a mark
+        that shortens on later levels; enemy shots smaller (hit radius
+        0.6), faster, fewer, a shape per source, size-capped, fading past
+        the ship; crosshair at two depths that opens into the lock cone
+        with lock pips; blink-only telegraphs; less ring clutter.
+        Hand-play: crowding, rail fairness, crosshair, the busy middle.
+  - [ ] Later levels: enemy fire that homes or aims where the ship is
+        heading (so weaving is not automatically safe). Decide the
+        tap-fire incentive after playing with the crosshair.
   - [ ] Specials rework (decisions 2026-11-05): beam and bomb at equal
         cost (50, pool of 2), no links from special kills, half-tempo time
         stretch (beam during, with position lock; bomb after), bomb as a

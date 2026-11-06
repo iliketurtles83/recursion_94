@@ -338,9 +338,9 @@ static void SpawnFormation(GameplaySystem *game) {
     EndGroup(game);
 }
 
-static void SpawnProjectile(GameplaySystem *game, Vector3 origin, float speed, float spread) {
+static EnemyProjectile *SpawnProjectile(GameplaySystem *game, Vector3 origin, float speed, float spread) {
     int slot = FindFreeProjectile(game);
-    if (slot < 0) return;
+    if (slot < 0) return NULL;
 
     float dx = game->player.position.x - origin.x + spread;
     float dy = game->player.position.y - origin.y;
@@ -353,14 +353,16 @@ static void SpawnProjectile(GameplaySystem *game, Vector3 origin, float speed, f
     projectile->position = origin;
     projectile->velocity = (Vector3){ dx / length * speed, dy / length * speed, dz / length * speed };
     projectile->life = 6.0f;
+    projectile->kind = SHOT_ORB;
     projectile->homing = game->overdriveActive;
+    return projectile;
 }
 
 // A shot from origin through an aim point on the player's plane. Never homes
 // (patterns keep their shape under boost).
-static void SpawnAimedProjectile(GameplaySystem *game, Vector3 origin, Vector3 aim, float speed) {
+static EnemyProjectile *SpawnAimedProjectile(GameplaySystem *game, Vector3 origin, Vector3 aim, float speed) {
     int slot = FindFreeProjectile(game);
-    if (slot < 0) return;
+    if (slot < 0) return NULL;
     float dx = aim.x - origin.x, dy = aim.y - origin.y, dz = aim.z - origin.z;
     float length = sqrtf(dx * dx + dy * dy + dz * dz);
     if (length < 0.001f) length = 1.0f;
@@ -369,7 +371,9 @@ static void SpawnAimedProjectile(GameplaySystem *game, Vector3 origin, Vector3 a
     projectile->position = origin;
     projectile->velocity = (Vector3){ dx / length * speed, dy / length * speed, dz / length * speed };
     projectile->life = 6.0f;
+    projectile->kind = SHOT_ORB;
     projectile->homing = false;
+    return projectile;
 }
 
 static int EnemySlot(const GameplaySystem *game, const Enemy *enemy) {
@@ -528,7 +532,8 @@ static int FireLattice(GameplaySystem *game, Vector3 origin) {
         if (fabsf(x - boss->latticeLane) < BOSS_LATTICE_GAP) continue;
         for (int r = 0; r < rows; r++) {
             float y = a->minY + h * (float)r / (float)(rows - 1);
-            SpawnAimedProjectile(game, origin, (Vector3){ x, y, game->player.position.z }, speed);
+            EnemyProjectile *p = SpawnAimedProjectile(game, origin, (Vector3){ x, y, game->player.position.z }, speed);
+            if (p) p->kind = SHOT_BOSS;
             fired++;
         }
     }
@@ -677,7 +682,8 @@ static void UpdateBoss(GameplaySystem *game, float dt, double virtualPlayerZ,
             shotOrigin.y += (5.2f + sinf((float)shot * 1.7f) * 1.1f) * scale;
             spread = -centered * 0.62f;
         }
-        SpawnProjectile(game, shotOrigin, projectileSpeed + (float)(shot % 3) * 1.8f, spread);
+        EnemyProjectile *p = SpawnProjectile(game, shotOrigin, projectileSpeed + (float)(shot % 3) * 1.8f, spread);
+        if (p) p->kind = SHOT_BOSS;
     }
     boss->attackPattern++;
 
@@ -905,7 +911,7 @@ static void RegisterKill(GameplaySystem *game, Enemy *enemy, bool charged,
 static void SpawnSparks(GameplaySystem *game, const Enemy *enemy) {
     uint32_t seed = game->runSeed ^ MixBits((uint32_t)enemy->identity * 0x9e3779b9u ^
                                             (uint32_t)(enemy->age * 977.0f));
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < 3; i++) {
         int slot = FindFreeParticle(game);
         if (slot < 0) return;
         float angle = Hash01(seed + (uint32_t)i * 3u) * 6.2831853f;
@@ -1426,7 +1432,34 @@ static void UpdateAbsorbed(GameplaySystem *game, Enemy *enemy, float dt, Gamepla
 #define SNIPER_HOLD_Z -48.0f
 #define CARRIER_HOLD_Z -37.0f
 #define SUPPORT_HOLD_Z -33.0f
-#define SNIPER_SHOT_SPEED 46.0f
+
+float GetSniperMarkSeconds(const GameplaySystem *game) {
+    float mark = SNIPER_MARK_SECONDS - 0.10f * (float)(GetGameplayRound(game) - 1)
+                                     - 0.08f * (float)(GetGameplayRecursionDepth(game) - 1);
+    return fmaxf(mark, 0.65f);
+}
+
+// Railgun: instant along the line from the sniper through its committed aim
+// point. It hits a ship within RAIL_HIT_RADIUS of that point (a roll's
+// i-frames pass through); a rolling ship with mirror charges returns it.
+static void FireRail(GameplaySystem *game, Enemy *sniper, GameplayEvents *events) {
+    int slot = 0;
+    for (int i = 0; i < MAX_RAILS; i++) if (!game->rails[i].active) { slot = i; break; }
+    game->rails[slot] = (RailShot){ sniper->position, sniper->aim, RAIL_SHOW_SECONDS, true };
+    events->railShots++;
+    events->enemyVolleys++;
+    events->enemyVolleyX = sniper->position.x;
+    float dx = sniper->aim.x - game->player.position.x, dy = sniper->aim.y - game->player.position.y;
+    float d2 = LengthSquared2D(dx, dy);
+    if (MirrorArmed(game) && d2 < MIRROR_CATCH_RADIUS * MIRROR_CATCH_RADIUS) {
+        if (!game->mirrorRollCaught) { game->mirrorRollCaught = true; game->ammo--; events->weaponFired = true; }
+        game->mirrorFlash = 1.0f;
+        AddWeaponNote(events, WEAPON_MIRROR, 14);
+        ApplyDamage(game, sniper, MIRROR_SHOT_DAMAGE, true, true, events);
+        return;
+    }
+    if (d2 < RAIL_HIT_RADIUS * RAIL_HIT_RADIUS) HitPlayer(game, sniper->aim, events);
+}
 
 static void UpdateRoleEnemy(GameplaySystem *game, Enemy *enemy, float dt, bool overdrive,
                             GameplayEvents *events) {
@@ -1456,12 +1489,12 @@ static void UpdateRoleEnemy(GameplaySystem *game, Enemy *enemy, float dt, bool o
             SetEnemyPhase(enemy, ENEMY_TELEGRAPH);
         }
     } else if (enemy->phase == ENEMY_TELEGRAPH) {
-        float delay = enemy->type == ENEMY_SNIPER ? SNIPER_MARK_SECONDS : CARRIER_BAY_SECONDS;
+        float delay = enemy->type == ENEMY_SNIPER ? GetSniperMarkSeconds(game) : CARRIER_BAY_SECONDS;
         if (TimerOnGrid(game, delay - enemy->phaseTime, MUSIC_STEP)) {
             if (enemy->type == ENEMY_SNIPER) {
                 events->enemyVolleys++;
                 events->enemyVolleyX = enemy->position.x;
-                SpawnAimedProjectile(game, enemy->position, enemy->aim, SNIPER_SHOT_SPEED);
+                FireRail(game, enemy, events);
                 enemy->fireTimer = 2.6f * (1.0f - game->difficulty * 0.25f);
             } else {
                 int room = 0;
@@ -1551,14 +1584,17 @@ static void UpdateEnemy(GameplaySystem *game, Enemy *enemy, float dt, bool overd
                     events->enemyVolleys++;
                     events->enemyVolleyX = enemy->position.x;
                     float pressure = overdrive ? 4.0f : 0.0f;
-                    SpawnProjectile(game, enemy->position, 21.0f + game->difficulty * 6.0f + pressure, -1.6f);
-                    SpawnProjectile(game, enemy->position, 23.0f + game->difficulty * 6.0f + pressure, 0.0f);
-                    SpawnProjectile(game, enemy->position, 21.0f + game->difficulty * 6.0f + pressure, 1.6f);
+                    // Clarity pass: faster shots spend less time on screen.
+                    for (int k = -1; k <= 1; k++) {
+                        EnemyProjectile *p = SpawnProjectile(game, enemy->position,
+                            (k ? 28.0f : 30.0f) + game->difficulty * 6.0f + pressure, 1.6f * (float)k);
+                        if (p) p->kind = SHOT_NEEDLE;
+                    }
                 } else {
                     events->enemyVolleys++;
                     events->enemyVolleyX = enemy->position.x;
                     SpawnProjectile(game, enemy->position,
-                                    22.0f + game->difficulty * 7.0f +
+                                    30.0f + game->difficulty * 7.0f +
                                     (overdrive ? 4.0f : 0.0f), 0.0f);
                 }
                 SetEnemyPhase(enemy, ENEMY_ATTACK);
@@ -1581,7 +1617,7 @@ static void UpdateEnemy(GameplaySystem *game, Enemy *enemy, float dt, bool overd
                     enemy->active = false;
                 }
             } else if (enemy->phaseTime > 0.35f) {
-                enemy->fireTimer = (0.95f + Hash01(game->runSeed ^
+                enemy->fireTimer = 1.35f * (0.95f + Hash01(game->runSeed ^   // clarity pass: fewer shots
                     (uint32_t)enemy->identity * 23u) * 1.0f) *
                     (1.0f - game->difficulty * 0.52f) *
                     (overdrive ? 0.62f : 1.0f);
@@ -1650,7 +1686,7 @@ static void UpdateProjectiles(GameplaySystem *game, float dt, GameplayEvents *ev
         float dy=hitY-game->player.position.y;
         bool crossing = previous.z <= game->player.position.z + 1.0f &&
                         projectile->position.z >= game->player.position.z - 1.0f;
-        float hitRadiusSquared=0.72f;
+        float hitRadiusSquared=ENEMY_SHOT_HIT_RADIUS*ENEMY_SHOT_HIT_RADIUS;
         if (crossing && LengthSquared2D(dx, dy) < hitRadiusSquared) {
             HitPlayer(game, projectile->position, events);
             projectile->active = false;
@@ -1749,6 +1785,10 @@ static void UpdateEffects(GameplaySystem *game, float dt) {
     game->hitFlash = fmaxf(0.0f, game->hitFlash - dt * 2.7f);
     game->cameraKick = fmaxf(0.0f, game->cameraKick - dt * 3.5f);
     game->weaponFlash = fmaxf(0.0f, game->weaponFlash - dt * 1.25f);
+    for (int i = 0; i < MAX_RAILS; i++) {
+        game->rails[i].life -= dt;
+        if (game->rails[i].life <= 0.0f) game->rails[i].active = false;
+    }
     game->beamTimer = fmaxf(0.0f, game->beamTimer - dt);
     game->bombTimer = fmaxf(0.0f, game->bombTimer - dt);
     game->loopTransitionTimer = fmaxf(0.0f, game->loopTransitionTimer - dt);
