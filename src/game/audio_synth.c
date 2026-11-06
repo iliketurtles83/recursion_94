@@ -439,6 +439,7 @@ static void RenderAudioFrames(SynthSystem *synth, short *output, unsigned int fr
     }
     atomic_store_explicit(&synth->controlRead, controlRead, memory_order_release);
     const float dt = 1.0f / (float)SAMPLE_RATE;
+    float slowTarget = BitsFloat(atomic_load_explicit(&synth->stretchTargetBits, memory_order_relaxed));
 
     for (unsigned int frame = 0; frame < frames; frame++) {
         synth->intensity += (synth->targetIntensity - synth->intensity) * 0.00065f;
@@ -467,7 +468,11 @@ static void RenderAudioFrames(SynthSystem *synth, short *output, unsigned int fr
         // Slow, musical glide (multi-second time constant) rather than a snap -
         // only ever moves during the intro's ambientBpm -> baseBpm ramp now.
         synth->currentBpm += (synth->targetBpm - synth->currentBpm) * 0.00003f;
-        const float secondsPerStep = (60.0f / synth->currentBpm) * 0.25f;
+        if (synth->tempoSlow != slowTarget) {
+            synth->tempoSlow += (slowTarget - synth->tempoSlow) * 0.0004f;
+            if (fabsf(synth->tempoSlow - slowTarget) < 1e-5f) synth->tempoSlow = slowTarget;
+        }
+        const float secondsPerStep = (60.0f / (synth->currentBpm * (1.0f - synth->tempoSlow))) * 0.25f;
         synth->beatPulse = fmaxf(0.0f, synth->beatPulse - dt * 3.8f);
         synth->drumGate += (synth->targetDrumGate - synth->drumGate) * 0.00004f;
         float drumDrive = synth->musicState == SYNTH_STATE_AMBIENT ? 0.0f :
@@ -961,9 +966,9 @@ static void PublishSynthTelemetry(SynthSystem *synth, unsigned int frames,
                           memory_order_relaxed);
     atomic_store_explicit(&synth->telemetryDrumGate, FloatBits(synth->drumGate),
                           memory_order_relaxed);
-    atomic_store_explicit(&synth->telemetryBpm, FloatBits(synth->currentBpm),
-                          memory_order_relaxed);
-    float stepPhase = fminf(fmaxf(synth->stepTimer * synth->currentBpm / 15.0f, 0.0f), 0.999f);
+    float heardBpm = synth->currentBpm * (1.0f - synth->tempoSlow);   // stretched tempo
+    atomic_store_explicit(&synth->telemetryBpm, FloatBits(heardBpm), memory_order_relaxed);
+    float stepPhase = fminf(fmaxf(synth->stepTimer * heardBpm / 15.0f, 0.0f), 0.999f);
     atomic_store_explicit(&synth->telemetryStepCount, synth->stepCount, memory_order_relaxed);
     atomic_store_explicit(&synth->telemetryStepPhase, FloatBits(stepPhase), memory_order_relaxed);
     atomic_store_explicit(&synth->lastCallbackFrames, frames, memory_order_relaxed);
@@ -1308,6 +1313,11 @@ static void StartSynthSFX(SynthSystem *synth, SFXCommand command) {
         }
         voice->active = true;
     }
+}
+
+void SetAudioSynthTimeStretch(SynthSystem *synth, float scale) {
+    float slow = 1.0f - fminf(fmaxf(scale, 0.25f), 1.0f);
+    atomic_store_explicit(&synth->stretchTargetBits, FloatBits(slow), memory_order_relaxed);
 }
 
 void TriggerSynthSFX(SynthSystem *synth, SFXType type) {

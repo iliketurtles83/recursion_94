@@ -308,6 +308,8 @@ typedef struct {
     atomic_uint telemetryBeatPulse;
     atomic_uint telemetryDrumGate;
     atomic_uint telemetryBpm;
+    atomic_uint stretchTargetBits;   // game -> audio: tempo slowdown target (0 = none, 0.5 = half time)
+    float tempoSlow;                 // audio thread: glides to the target; 0 leaves every sample unchanged
     atomic_uint telemetryStepCount;
     atomic_uint telemetryStepPhase;
     atomic_uint maxCallbackMicros;
@@ -335,6 +337,10 @@ void TriggerSynthSFXAt(SynthSystem *synth, SFXType type, float pan);
 // A pitched effect on a degree of the seed's scale (SFX_ARC_NOTE, _DRILL_TICK, _MIRROR).
 void TriggerSynthSFXNote(SynthSystem *synth, SFXType type, float pan, int degree);
 void UnloadAudioSynth(SynthSystem *synth);
+// Time stretch for the specials: the arrangement plays at `scale` x tempo
+// (0.5 = half time; pitch unchanged), gliding in and out over ~60 ms.
+// Telemetry reports the stretched tempo, so the music clock follows it.
+void SetAudioSynthTimeStretch(SynthSystem *synth, float scale);
 
 float GetSynthSeedBpm(uint32_t runSeed);
 const char *GetSynthSeedKeyName(uint32_t runSeed);

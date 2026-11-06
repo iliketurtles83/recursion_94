@@ -215,6 +215,9 @@ static void play_events(Game *g, const GameplayEvents *e)
         TriggerSynthSFXNote(&g->synth, type, shipPan, e->weaponNoteDegree[i]);
     }
     for (int i = 0; i < e->drillDetonations; i++) TriggerSynthSFX(&g->synth, SFX_EXPLOSION);
+    // Beam: a data-stream pulse on each 16th it burns, root and fifth alternating.
+    static int beamPulse = 0;
+    for (int i = 0; i < e->beamTicks; i++) TriggerSynthSFXNote(&g->synth, SFX_DRILL_TICK, 0.0f, (beamPulse++ & 1) ? 4 : 0);
     if (e->weaponCollected) TriggerSynthSFX(&g->synth, SFX_POWER_UP);
     if (e->weaponFired && g->play.weapon == WEAPON_DRILL) TriggerSynthSFX(&g->synth, SFX_LASER_CHARGE);
 }
@@ -261,6 +264,10 @@ static void update_music(Game *g, bool boosting, float dt)
 static void update_clock(Game *g, float dt)
 {
     if (!g->audioOn) {
+        // Free-running: the specials' time stretch slows the clock as it slows the synth.
+        float stretch = GetGameplayTimeScale(&g->play);
+        float sps = GetSynthSeedBpm(g->runSeed) / 15.0f;
+        g->music.stepsPerSecond = sps * stretch;
         music_clock_advance(&g->music, dt);
     } else {
         SynthTelemetry t = GetSynthTelemetry(&g->synth);
@@ -309,9 +316,12 @@ static void update_run(Game *g, float dt, const Controls *c)
     if (g->havePlayer && dt > 0.0f) { vx = (px - g->lastPlayerX) / dt; vy = (py - g->lastPlayerY) / dt; }
     g->lastPlayerX = px; g->lastPlayerY = py; g->havePlayer = true;
 
-    bool boosting = c->flight.boost && CanGameplayBoost(&g->play);
+    // The beam holds the ship: no steering, rolls or boost while it fires.
+    bool locked = IsGameplayBeamLocked(&g->play);
+    bool boosting = c->flight.boost && CanGameplayBoost(&g->play) && !locked;
     CtInput flight = c->flight;
     flight.boost = boosting;
+    if (locked) { flight.steerX = flight.steerY = 0.0f; flight.rollLeft = flight.rollRight = false; }
     // Gravity from the previous gameplay step (one frame behind; it changes slowly).
     float vmax = ct_param_get(g->ct, "steerAccel") / fmaxf(ct_param_get(g->ct, "steerDamping"), 0.1f);
     flight.driftX = g->play.player.pull.x / ORIGINAL_STEER_SPEED_X * vmax;
@@ -332,6 +342,7 @@ static void update_run(Game *g, float dt, const Controls *c)
     titles_update(&g->titles, &g->play, &events, &g->music);
     ct_set_ship_damage(g->ct, 1.0f - g->play.player.energy / 100.0f);
     update_music(g, boosting, dt);
+    if (g->audioOn) SetAudioSynthTimeStretch(&g->synth, GetGameplayTimeScale(&g->play));
     update_push(g, dt);
     ct_set_beat(g->ct, g->beatPulse);
 }

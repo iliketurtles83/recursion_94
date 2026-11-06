@@ -30,8 +30,23 @@ This log is the source of truth for architectural choices, visual uplift milesto
 
 ## [Combat] Weapon set: pickup weapons and link specials
 
-- Date: 2026-11-05. Status: CONFIRMED design (user). Pickups built
-  (PROVISIONAL: tests and shots; hand-play); specials rework not started.
+- Date: 2026-11-05. Status: CONFIRMED design (user). Pickups and specials
+  built (PROVISIONAL: tests and shots; hand-play).
+- Specials as built (2026-11-06): both cost 50, the pool holds 2 (HUD
+  "SPECIALS n/2"). Kills by specials give score only: no links, no chain or
+  weapon tier, no capsules. Time stretch = enemies, their shots, boss and
+  spawns at half speed and the synth at half tempo (gliding ~60 ms, pitch
+  unchanged; the music clock follows), measured in 16ths of stretched music.
+  Beam: half a bar (8 16ths, ~3.7 s at 129 BPM), stretch during, steering /
+  rolls / boost locked; a tick per 16th: 3 to ordinary enemies in the lane,
+  1 to nodes, 1.25 to the core (10 per beam), and it burns enemy shots in its
+  lane; a root/fifth pulse per tick. Data-stream look: tapered sheath, rings
+  racing out, packets. Bomb: a sphere from the launch point at 200 u/s to
+  135; enemies it touches freeze white and are deleted on the next 16th
+  (bursting into white dots); shots it touches vanish; boss core 1.5 and
+  nodes 1 once per bomb; then one bar of stretch. Moire shell of dashed ring
+  slices and a screen ripple as it passes the camera. Names (INJECT etc.)
+  not chosen; the HUD says BOMB.
 - Pickups as built: capsules drop where a group is wiped (every member
   killed; one that escapes spoils it; splitter children join the group).
   Role groups always drop, ordinary groups of 2+ at 25%, at most one drop

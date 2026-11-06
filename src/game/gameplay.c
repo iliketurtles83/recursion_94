@@ -849,9 +849,11 @@ static void RegisterKill(GameplaySystem *game, Enemy *enemy, bool charged,
     }
 
     int previousTier = game->weaponTier;
-    game->combo = game->comboTimer > 0.0f ? game->combo + 1 : 1;
-    game->comboTimer = 2.6f;
-    game->weaponTier = WeaponTierForChain(game->combo);
+    if (!game->suppressLinkRewards) {   // special kills do not build the chain either
+        game->combo = game->comboTimer > 0.0f ? game->combo + 1 : 1;
+        game->comboTimer = 2.6f;
+        game->weaponTier = WeaponTierForChain(game->combo);
+    }
     if (game->weaponTier > previousTier) {
         game->weaponFlash = 1.0f;
         events->weaponTierAdvanced = true;
@@ -860,7 +862,7 @@ static void RegisterKill(GameplaySystem *game, Enemy *enemy, bool charged,
     int worth = deadType == ENEMY_CARRIER ? 4
               : (deadType == ENEMY_SNIPER || deadType == ENEMY_SUPPORT) ? 3
               : deadType == ENEMY_SPLITTER ? 2 : 1;
-    game->score += 100 * game->combo * worth * overdriveMultiplier;
+    game->score += 100 * (game->combo > 0 ? game->combo : 1) * worth * overdriveMultiplier;
     if (!game->suppressLinkRewards) {
         int linkReward = deadType == ENEMY_BOSS_CORE ? 10
                        : deadType == ENEMY_BOSS_NODE ? 5
@@ -978,8 +980,11 @@ static void DamageEnemy(GameplaySystem *game, Enemy *enemy, float damage, bool c
 #define MIRROR_SHOT_SPEED 75.0f
 #define MIRROR_SHOT_DAMAGE 2.5f
 
+// Seconds per 16th. The clock's rate already includes a time stretch; with no
+// clock a 16th is 0.125 s, stretched by hand.
 static float StepSeconds(const GameplaySystem *game) {
-    return game->music.valid && game->music.stepsPerSecond > 0.0f ? 1.0f / game->music.stepsPerSecond : 0.125f;
+    if (game->music.valid && game->music.stepsPerSecond > 0.0f) return 1.0f / game->music.stepsPerSecond;
+    return 0.125f / (game->stretchSteps > 0.0f ? STRETCH_SCALE : 1.0f);
 }
 
 static void AddWeaponNote(GameplayEvents *events, PickupWeapon kind, int degree) {
@@ -1260,45 +1265,151 @@ static void FireCharge(GameplaySystem *game, GameplayEvents *events) {
     ClearLocks(game);
 }
 
+// ---------------------------------------------------------------------------
+// Specials. Kills by specials give score but no chain links and drop no
+// capsules (suppressLinkRewards around their damage).
+
+#define BEAM_DAMAGE 3.0f          // per 16th to ordinary enemies in the lane
+#define BEAM_NODE_DAMAGE 1.0f
+#define BEAM_CORE_DAMAGE 1.25f    // 8 ticks = 10: the stronger special
+#define BEAM_LANE 1.3f
+#define BOMB_NODE_CHIP 1.0f
+#define BOMB_CORE_CHIP 1.5f       // about 15% of a beam
+
+float GetGameplayTimeScale(const GameplaySystem *game) {
+    return game->stretchSteps > 0.0f ? STRETCH_SCALE : 1.0f;
+}
+
+bool IsGameplayBeamLocked(const GameplaySystem *game) { return game->beamSteps > 0.0f; }
+
+// 16ths of music that passed this frame (the clock is already stretched).
+static float StepsElapsed(const GameplaySystem *game, float dt) {
+    if (game->music.valid) return (float)(game->music.step - game->music.prevStep);
+    return dt * 8.0f * GetGameplayTimeScale(game);
+}
+
+static void Stretch(GameplaySystem *game, float steps) {
+    game->stretchSteps = fmaxf(game->stretchSteps, steps);   // extends, never stacks
+}
+
 static void FireLinkBeam(GameplaySystem *game, GameplayEvents *events) {
-    if (game->chainLinks < BEAM_LINK_COST) return;
+    if (game->chainLinks < BEAM_LINK_COST || game->beamSteps > 0.0f) return;
     game->chainLinks -= BEAM_LINK_COST;
-    game->beamTimer = 0.34f;
+    game->beamSteps = BEAM_STEPS;
+    game->beamTickTimer = 0.0f;
+    game->beamTimer = 0.0f;
     game->cameraKick = fmaxf(game->cameraKick, 0.85f);
-    game->suppressLinkRewards = true;
-    for (int i = 0; i < MAX_ENEMIES; i++) {
-        Enemy *enemy = &game->enemies[i];
-        if (!IsEnemyTargetable(game, enemy)) continue;
-        float dx = enemy->position.x - game->player.position.x;
-        float dy = enemy->position.y - game->player.position.y;
-        float radius = 1.1f + enemy->size.x * 0.35f;
-        if (LengthSquared2D(dx, dy) > radius * radius) continue;
-        float damage = enemy->type == ENEMY_BOSS_CORE ? 8.0f
-                     : enemy->type == ENEMY_BOSS_NODE ? 4.0f : 1000.0f;
-        DamageEnemy(game, enemy, damage, true, events);
-    }
-    game->suppressLinkRewards = false;
+    Stretch(game, BEAM_STEPS);
     events->beamFired = true;
 }
 
 static void FireLinkBomb(GameplaySystem *game, GameplayEvents *events) {
-    if (game->chainLinks < BOMB_LINK_COST) return;
+    if (game->chainLinks < BOMB_LINK_COST || game->bombActive) return;
     game->chainLinks -= BOMB_LINK_COST;
-    game->bombTimer = 0.72f;
+    game->bombActive = true;
+    game->bombOrigin = game->player.position;
+    game->bombRadius = 0.0f;
+    game->bombTimer = 0.0f;
+    game->bombTickTimer = 0.0f;
+    game->bombSerial++;
     game->cameraKick = fmaxf(game->cameraKick, 1.4f);
-    for (int i = 0; i < MAX_ENEMY_PROJECTILES; i++) {
-        game->projectiles[i].active = false;
-    }
+    events->bombFired = true;
+}
+
+static void BeamTick(GameplaySystem *game, GameplayEvents *events) {
+    Vector3 p = game->player.position;
     game->suppressLinkRewards = true;
     for (int i = 0; i < MAX_ENEMIES; i++) {
-        Enemy *enemy = &game->enemies[i];
-        if (!IsEnemyTargetable(game, enemy)) continue;
-        float damage = enemy->type == ENEMY_BOSS_CORE ? 12.0f
-                     : enemy->type == ENEMY_BOSS_NODE ? 7.0f : 1000.0f;
-        DamageEnemy(game, enemy, damage, true, events);
+        Enemy *e = &game->enemies[i];
+        if (!IsEnemyTargetable(game, e) || e->position.z >= p.z) continue;
+        float radius = BEAM_LANE + e->size.x * 0.35f;
+        if (LengthSquared2D(e->position.x - p.x, e->position.y - p.y) > radius * radius) continue;
+        float damage = e->type == ENEMY_BOSS_CORE ? BEAM_CORE_DAMAGE
+                     : e->type == ENEMY_BOSS_NODE ? BEAM_NODE_DAMAGE : BEAM_DAMAGE;
+        ApplyDamage(game, e, damage, true, false, events);
     }
     game->suppressLinkRewards = false;
-    events->bombFired = true;
+    // It burns enemy shots in its own lane only.
+    for (int i = 0; i < MAX_ENEMY_PROJECTILES; i++) {
+        EnemyProjectile *s = &game->projectiles[i];
+        if (s->active && s->position.z < p.z + 1.0f &&
+            LengthSquared2D(s->position.x - p.x, s->position.y - p.y) < BEAM_LANE * BEAM_LANE)
+            s->active = false;
+    }
+    events->beamTicks++;
+}
+
+static void UpdateSpecials(GameplaySystem *game, float dt, GameplayEvents *events) {
+    float steps = StepsElapsed(game, dt);
+    game->stretchSteps = fmaxf(0.0f, game->stretchSteps - steps);
+    game->beamTimer += dt;
+    game->bombTimer += dt;
+
+    if (game->beamSteps > 0.0f) {
+        game->beamTickTimer -= dt;
+        if (TimerOnGrid(game, game->beamTickTimer, MUSIC_STEP)) {
+            BeamTick(game, events);
+            game->beamTickTimer = StepSeconds(game);
+        }
+        game->beamSteps = fmaxf(0.0f, game->beamSteps - steps);
+    }
+
+    // Bomb: code injection. The wave deletes every enemy program and enemy
+    // shot it reaches; touched enemies freeze white and are deleted on the
+    // next 16th, so a full screen goes in a rhythmic ripple. Boss parts are
+    // root processes: they take a chip once per bomb.
+    if (game->bombActive) {
+        game->bombRadius += BOMB_WAVE_SPEED * dt;
+        float r2 = game->bombRadius * game->bombRadius;
+        Vector3 o = game->bombOrigin;
+        for (int i = 0; i < MAX_ENEMIES; i++) {
+            Enemy *e = &game->enemies[i];
+            if (!e->active || e->deleting || e->phase == ENEMY_ABSORBED) continue;
+            Vector3 d = Vector3Subtract(e->position, o);
+            if (Vector3LengthSqr(d) > r2) continue;
+            if (e->type == ENEMY_BOSS_CORE || e->type == ENEMY_BOSS_NODE) {
+                if (e->bombMark != game->bombSerial && IsEnemyTargetable(game, e)) {
+                    e->bombMark = game->bombSerial;
+                    game->suppressLinkRewards = true;
+                    ApplyDamage(game, e, e->type == ENEMY_BOSS_CORE ? BOMB_CORE_CHIP : BOMB_NODE_CHIP,
+                                true, false, events);
+                    game->suppressLinkRewards = false;
+                }
+                continue;
+            }
+            e->deleting = true;
+            e->locked = false;
+            // Deleted on the next 16th, not this frame: it shows frozen and white first.
+            if (game->bombTickTimer <= 0.0f) game->bombTickTimer = 0.5f * StepSeconds(game);
+        }
+        for (int i = 0; i < MAX_ENEMY_PROJECTILES; i++) {
+            EnemyProjectile *s = &game->projectiles[i];
+            if (s->active && Vector3LengthSqr(Vector3Subtract(s->position, o)) <= r2) s->active = false;
+        }
+        if (game->bombRadius >= BOMB_WAVE_REACH) {
+            game->bombActive = false;
+            Stretch(game, BOMB_STRETCH_STEPS);
+        }
+    }
+    bool pending = false;
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        if (game->enemies[i].active && game->enemies[i].deleting) { pending = true; game->enemies[i].hurt = 1.0f; }
+    }
+    if (pending) {
+        game->bombTickTimer -= dt;
+        if (TimerOnGrid(game, game->bombTickTimer, MUSIC_STEP)) {
+            game->suppressLinkRewards = true;
+            for (int i = 0; i < MAX_ENEMIES; i++) {
+                Enemy *e = &game->enemies[i];
+                if (!e->active || !e->deleting) continue;
+                Vector3 at = e->position;
+                RegisterKill(game, e, true, events);
+                SpawnBurst(game, at, (Color){ 235, 248, 255, 255 }, 6);   // unravels into white dots
+            }
+            game->suppressLinkRewards = false;
+            game->bombTickTimer = StepSeconds(game);
+        }
+    }
 }
 
 static void UpdateLocks(GameplaySystem *game) {
@@ -1789,8 +1900,6 @@ static void UpdateEffects(GameplaySystem *game, float dt) {
         game->rails[i].life -= dt;
         if (game->rails[i].life <= 0.0f) game->rails[i].active = false;
     }
-    game->beamTimer = fmaxf(0.0f, game->beamTimer - dt);
-    game->bombTimer = fmaxf(0.0f, game->bombTimer - dt);
     game->loopTransitionTimer = fmaxf(0.0f, game->loopTransitionTimer - dt);
     game->boss.introFlash = fmaxf(0.0f, game->boss.introFlash - dt * 0.48f);
     game->boss.defeatFlash = fmaxf(0.0f, game->boss.defeatFlash - dt * 0.42f);
@@ -1821,6 +1930,9 @@ void AdvanceGameplayLoop(GameplaySystem *game, uint32_t runSeed, double virtualP
     for (int i = 0; i < MAX_ARCS; i++) game->arcs[i].active = false;
     for (int i = 0; i < MAX_DRILLS; i++) game->drills[i].active = false;
     ClearLocks(game);   // the pickup weapon and its ammo carry over
+    game->beamSteps = 0.0f;
+    game->stretchSteps = 0.0f;
+    game->bombActive = false;
 
     game->boss.coreSlot = -1;
     for (int node = 0; node < 4; node++) game->boss.nodeSlots[node] = -1;
@@ -1843,15 +1955,30 @@ bool ValidateGameplaySpecials(void) {
     target->size = (Vector3){ 1.0f, 1.0f, 1.0f };
     target->position = (Vector3){ game.player.position.x, game.player.position.y, -24.0f };
 
+    const float sdt = 1.0f / 60.0f;
     game.chainLinks = BEAM_LINK_COST - 1;
     FireLinkBeam(&game, &events);
     bool insufficientFunds = game.chainLinks == BEAM_LINK_COST - 1 &&
-                             target->active && !events.beamFired;
+                             target->active && !events.beamFired && game.beamSteps == 0.0f;
 
+    // Beam: half a bar of stretched music (2 s with no clock), a tick per
+    // 16th, the ship held, enemies at half tempo, no links from its kills.
     game.chainLinks = BEAM_LINK_COST;
     FireLinkBeam(&game, &events);
-    bool beamValid = game.chainLinks == 0 && !target->active && events.beamFired &&
-                     events.enemiesDestroyed == 1;
+    bool beamStarted = events.beamFired && game.chainLinks == 0 && IsGameplayBeamLocked(&game) &&
+                       GetGameplayTimeScale(&game) == STRETCH_SCALE;
+    int beamTicks = 0, beamKills = 0;
+    float beamSeconds = 0.0f;
+    for (int f = 0; f < 600 && game.beamSteps > 0.0f; f++) {
+        events = (GameplayEvents){ 0 };
+        UpdateSpecials(&game, sdt, &events);
+        beamTicks += events.beamTicks;
+        beamKills += events.enemiesDestroyed;
+        beamSeconds += sdt;
+    }
+    bool beamValid = beamStarted && !target->active && beamKills == 1 && game.chainLinks == 0 &&
+                     beamTicks >= 8 && beamTicks <= 9 && fabsf(beamSeconds - 2.0f) < 0.05f &&
+                     !IsGameplayBeamLocked(&game) && GetGameplayTimeScale(&game) == 1.0f;
 
     game.chainLinks = 73;
     AdvanceGameplayLoop(&game, 1337u, 2000.0);
@@ -1880,19 +2007,31 @@ bool ValidateGameplaySpecials(void) {
         enemy->size = (Vector3){ 1.0f, 1.0f, 1.0f };
         enemy->position = (Vector3){ (float)i * 4.0f, 2.0f, -30.0f };
     }
-    game.projectiles[0].active = true;
+    game.projectiles[0] = (EnemyProjectile){ .position = { 2.0f, 2.4f, -10.0f }, .active = true, .life = 5.0f };
     game.chainLinks = BOMB_LINK_COST;
     events = (GameplayEvents){ 0 };
     FireLinkBomb(&game, &events);
-    bool bombValid = game.chainLinks == 0 && !game.enemies[0].active &&
-                     !game.enemies[1].active && !game.projectiles[0].active &&
-                     events.bombFired && events.enemiesDestroyed == 2;
+    bool bombFired = events.bombFired && game.chainLinks == 0;
+    int bombKills = 0;
+    bool stretchAfter = false, frozen = false;
+    for (int f = 0; f < 120; f++) {
+        bool wasActive = game.bombActive;
+        events = (GameplayEvents){ 0 };
+        UpdateSpecials(&game, sdt, &events);
+        bombKills += events.enemiesDestroyed;
+        frozen |= game.enemies[0].active && game.enemies[0].deleting;
+        if (wasActive && !game.bombActive) stretchAfter = GetGameplayTimeScale(&game) == STRETCH_SCALE;
+    }
+    bool bombValid = bombFired && frozen && !game.enemies[0].active && !game.enemies[1].active &&
+                     !game.projectiles[0].active && bombKills == 2 && game.chainLinks == 0 && stretchAfter;
 
     Enemy *core = &game.enemies[0];
+    *core = (Enemy){ 0 };
     core->active = true;
     core->type = ENEMY_BOSS_CORE;
     core->health = 30.0f;
     core->size = (Vector3){ 7.0f, 7.0f, 7.0f };
+    core->position = (Vector3){ 0.0f, 3.0f, -40.0f };
     game.boss.active = true;
     game.boss.phase = BOSS_EXPOSED;
     game.boss.shieldNodes = 0;
@@ -1901,8 +2040,10 @@ bool ValidateGameplaySpecials(void) {
     game.chainLinks = BOMB_LINK_COST;
     events = (GameplayEvents){ 0 };
     FireLinkBomb(&game, &events);
-    bool bossCapValid = fabsf(core->health - 18.0f) < 0.001f && core->active &&
-                        game.chainLinks == 0;
+    for (int f = 0; f < 120; f++) UpdateSpecials(&game, sdt, &events);
+    bool bossCapValid = fabsf(core->health - (30.0f - BOMB_CORE_CHIP)) < 0.001f && core->active &&
+                        !core->deleting && game.chainLinks == 0;
+    game.boss.active = false;
 
     core->active = false;
     Enemy *rewardTarget = &game.enemies[1];
@@ -2122,9 +2263,12 @@ GameplayEvents UpdateGameplay(GameplaySystem *game, float dt, double virtualPlay
     UpdatePlayer(game, dt, boosting, input, &events);
     game->difficulty = ClampFloat(log1pf((float)(fmax(virtualPlayerZ, 0.0) / 350.0)) *
                                   0.43429448f, 0.0f, 1.0f);
-    if (game->bossesEnabled) UpdateBoss(game, dt, virtualPlayerZ, &events);
+    // Time stretch: enemies, their shots and the boss run slower; the ship,
+    // its shots and the pickups do not.
+    float edt = dt * GetGameplayTimeScale(game);
+    if (game->bossesEnabled) UpdateBoss(game, edt, virtualPlayerZ, &events);
     if (!game->boss.active && !game->boss.clearing) {
-        game->spawnTimer -= dt * (boosting ? 1.8f : 1.0f);
+        game->spawnTimer -= edt * (boosting ? 1.8f : 1.0f);
         if (TimerOnGrid(game, game->spawnTimer, MUSIC_BEAT)) {
             SpawnFormation(game);
             game->spawnTimer = (1.18f - game->difficulty * 0.68f) *
@@ -2134,13 +2278,14 @@ GameplayEvents UpdateGameplay(GameplaySystem *game, float dt, double virtualPlay
     }
 
     for (int i = 0; i < MAX_ENEMIES; i++) {
-        if (game->enemies[i].active) {
+        if (game->enemies[i].active && !game->enemies[i].deleting) {   // deleting: frozen until deleted
             game->enemies[i].hurt = fmaxf(0.0f, game->enemies[i].hurt - dt * 9.0f);
-            UpdateEnemy(game, &game->enemies[i], dt, boosting, &events);
+            UpdateEnemy(game, &game->enemies[i], edt, boosting, &events);
         }
     }
-    UpdateProjectiles(game, dt, &events);
+    UpdateProjectiles(game, edt, &events);
     UpdatePlayerProjectiles(game, dt, &events);
+    UpdateSpecials(game, dt, &events);
     UpdateArcs(game, dt, &events);
     UpdateDrills(game, dt, &events);
     UpdateCapsules(game, dt, &events);

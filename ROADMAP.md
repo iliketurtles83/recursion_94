@@ -114,7 +114,10 @@ RECURSION_94.
   - [ ] Later levels: enemy fire that homes or aims where the ship is
         heading (so weaving is not automatically safe). Decide the
         tap-fire incentive after playing with the crosshair.
-  - [ ] Specials rework (decisions 2026-11-05): beam and bomb at equal
+  - [x] Specials rework (decisions 2026-11-05; built 2026-11-06, values in
+        the decisions log). Hand-play: beam length and lock, stretch feel
+        (music in half time), bomb wave speed and deletion ripple.
+        Earlier spec: beam and bomb at equal
         cost (50, pool of 2), no links from special kills, half-tempo time
         stretch (beam during, with position lock; bomb after), bomb as a
         code-injection wave with demoscene visuals.

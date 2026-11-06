@@ -884,25 +884,61 @@ void combat_draw_scene(CombatDraw *d, CtTunnel *ct, const ArenaMap *m, const Gam
         for (int i = 0; i < MAX_ARCS; i++) if (g->arcs[i].active) draw_arc(ct, m, o, g, &g->arcs[i], i);
         for (int i = 0; i < MAX_DRILLS; i++) if (g->drills[i].active) draw_drill(ct, m, o, g, &g->drills[i], time);
         draw_mirror(ct, m, o, g, time);
-        // Chain-link beam: a lance down the player's lane.
-        if (g->beamTimer > 0.0f) {
-            float a = g->beamTimer / 0.34f;
+        // Beam: a data stream down the ship's lane. A wide sheath and white core,
+        // rings racing out along it, and packets streaming forward.
+        if (g->beamSteps > 0.0f) {
+            float t = g->beamTimer;
+            float a = fminf(t / 0.08f, 1.0f) * fminf(g->beamSteps, 1.0f);
             Vector3 p0 = g->player.position, p1 = p0;
             p0.z -= 1.0f;
             p1.z = -140.0f;
-            for (int k = 0; k < 8; k++) {   // segmented so the lance follows the path's curve
-                Vector3 s0 = Vector3Lerp(p0, p1, k / 8.0f), s1 = Vector3Lerp(p0, p1, (k + 1) / 8.0f);
-                Vector3 r0 = frame_at(ct, m, o, s0).c, r1 = frame_at(ct, m, o, s1).c;
-                ribbon(r0, r1, 0.9f * a, PLAYER_FIRE, 3.0f * a);
-                ribbon(r0, r1, 0.22f * a, PLAYER_CORE, 8.0f * a);
+            // Segmented so it follows the path's curve; the first stretch tapers
+            // from a thread at the nose, so it does not white out the ship.
+            const float edges[13] = { 0, 0.01f, 0.025f, 0.05f, 0.09f, 0.14f, 0.2f, 0.3f, 0.42f, 0.56f, 0.7f, 0.85f, 1.0f };
+            for (int k = 0; k < 12; k++) {
+                Vector3 r0 = frame_at(ct, m, o, Vector3Lerp(p0, p1, edges[k])).c;
+                Vector3 r1 = frame_at(ct, m, o, Vector3Lerp(p0, p1, edges[k + 1])).c;
+                float taper = fminf(edges[k + 1] / 0.14f, 1.0f);
+                taper = 0.15f + 0.85f * taper * taper;
+                ribbon(r0, r1, 1.0f * a * taper, PLAYER_FIRE, 1.5f * a * taper);
+                ribbon(r0, r1, 0.4f * a * taper, PLAYER_FIRE, 3.5f * a);
+                ribbon(r0, r1, 0.12f * a * taper, PLAYER_CORE, 8.0f * a);
+            }
+            for (int k = 0; k < 6; k++) {
+                float z = p0.z - fmodf(t * 90.0f + k * 22.0f, 132.0f);
+                Frame f = frame_at(ct, m, o, (Vector3){ p0.x, p0.y, z });
+                ring(&f, 1.7f, 8, t * 4.0f + k, 0.06f, PLAYER_CORE, 5.0f * a, 0.3f);
+            }
+            for (int k = 0; k < 28; k++) {
+                uint32_t h = draw_hash((uint32_t)k * 2654435761u + 17u);
+                float ox = ((float)(h & 255u) / 127.5f - 1.0f) * 1.1f;
+                float oy = ((float)((h >> 8) & 255u) / 127.5f - 1.0f) * 1.1f;
+                float z = p0.z - fmodf(t * 140.0f + (float)((h >> 16) % 130u), 130.0f);
+                Vector3 q0 = { p0.x + ox, p0.y + oy, z }, q1 = q0;
+                q1.z -= 3.0f;
+                ribbon(frame_at(ct, m, o, q0).c, frame_at(ct, m, o, q1).c, 0.05f, PLAYER_CORE, 7.0f * a);
             }
         }
-        // Chain-link bomb: three expanding rings around the ship.
-        if (g->bombTimer > 0.0f) {
-            float a = g->bombTimer / 0.72f;
-            Frame f = frame_at(ct, m, o, g->player.position);
-            for (int k = 0; k < 3; k++)
-                ring(&f, (1.0f - a) * (26.0f + k * 9.0f), 40, k * 0.4f, 0.12f, k == 1 ? PLAYER_CORE : PLAYER_FIRE, 6.0f * a, 0.0f);
+        // Bomb: code injection. A sphere expanding from where it was launched;
+        // its shell is drawn as slices (rings) toward the front cap, two dashed
+        // sets with different counts turning against each other, so they moire.
+        if (g->bombActive) {
+            float R = g->bombRadius, t = g->bombTimer;
+            Vector3 c0 = g->bombOrigin;
+            for (int k = 0; k < 9; k++) {
+                float d = R - 2.0f - (float)k * 5.0f;
+                if (d < 0.0f) break;
+                float rr = sqrtf(fmaxf(R * R - d * d, 0.0f));
+                Frame f = frame_at(ct, m, o, (Vector3){ c0.x, c0.y, c0.z - d });
+                float fade = 1.0f - (float)k / 9.0f;
+                ring(&f, rr, 48, t * 1.5f + k * 0.3f, 0.08f, (k & 1) ? PLAYER_CORE : PLAYER_FIRE, 5.0f * fade, 0.45f);
+                ring(&f, rr * 0.985f, 41, -t * 1.9f - k * 0.2f, 0.05f, mix_color(PLAYER_FIRE, gPal.secondary, 0.5f),
+                     3.0f * fade, 0.5f);
+            }
+            if (R < 40.0f) {   // the side of the shell sweeping past the ship
+                Frame f = frame_at(ct, m, o, c0);
+                ring(&f, R, 48, t * 2.0f, 0.1f, PLAYER_CORE, 6.0f * (1.0f - R / 40.0f), 0.3f);
+            }
         }
     }
 
@@ -991,10 +1027,10 @@ void combat_draw_hud(const CombatDraw *d, const GameplaySystem *g, int w, int h)
     DrawText("CHAIN LINKS", x, y, 13, dim);
     DrawText(TextFormat("%03d", g->chainLinks), x + bw - 34, y, 15, g->secondaryColor);
     meter(x, y + 18, bw, 9, (float)g->chainLinks / MAX_CHAIN_LINKS, 20, g->secondaryColor, off);
-    const char *special = g->chainLinks >= BOMB_LINK_COST ? "K BEAM READY // L BOMB READY"
-                        : g->chainLinks >= BEAM_LINK_COST ? "K BEAM READY // L BOMB 100"
-                        : "K BEAM 50 // L BOMB 100";
-    DrawText(special, x, y + 32, 11, dim);
+    // Specials: beam and bomb cost the same; the pool holds two.
+    int ready = g->chainLinks / BEAM_LINK_COST;
+    const char *special = TextFormat("SPECIALS %d/2   K BEAM   L BOMB", ready);
+    DrawText(special, x, y + 32, 11, ready > 0 ? g->secondaryColor : dim);
     // Pickup weapon: name and ammo (one slot, I to fire; the mirror works on rolls).
     if (g->weapon != WEAPON_NONE) {
         int full = GetWeaponAmmoFull(g->weapon);
@@ -1042,6 +1078,17 @@ void combat_draw_hud(const CombatDraw *d, const GameplaySystem *g, int w, int h)
         DrawText(t, w / 2 - MeasureText(t, 44) / 2, h / 7, 44, (Color){ g->hotColor.r, g->hotColor.g, g->hotColor.b, a });
         const char *sub = "ENERGY RESTORED";
         DrawText(sub, w / 2 - MeasureText(sub, 16) / 2, h / 7 + 54, 16, (Color){ dim.r, dim.g, dim.b, a });
+    }
+    // Bomb wave passing the camera: a screen-space ripple from the centre.
+    if (g->bombActive && g->bombTimer < 0.3f) {
+        float k = g->bombTimer / 0.3f;
+        float r = k * 0.75f * (float)w;
+        DrawRing((Vector2){ w * 0.5f, h * 0.5f }, r, r + 6.0f + 20.0f * (1.0f - k), 0, 360, 72,
+                 (Color){ PLAYER_CORE.r, PLAYER_CORE.g, PLAYER_CORE.b, (unsigned char)(200.0f * (1.0f - k)) });
+    }
+    if (g->stretchSteps > 0.0f) {
+        const char *st = g->beamSteps > 0.0f ? "BEAM // HALF TIME" : "HALF TIME";
+        DrawText(st, w / 2 - MeasureText(st, 14) / 2, 22, 14, PLAYER_FIRE);
     }
     if (g->overdriveActive) {
         const char *warn = "BOOST // GUIDED FIRE // HIT DAMAGE +15%";

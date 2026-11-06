@@ -14,8 +14,16 @@
 #define CORE_TRANSITION_DURATION 5.2f
 #define BOSSES_PER_RECURSION 5
 #define MAX_CHAIN_LINKS 100
+// Specials (decisions 2026-11-05): beam and bomb cost the same, so the pool
+// holds two. Both slow enemies and their shots to half tempo with the music
+// (the beam during, the bomb after); the ship is not slowed.
 #define BEAM_LINK_COST 50
-#define BOMB_LINK_COST 100
+#define BOMB_LINK_COST 50
+#define STRETCH_SCALE 0.5f          // enemy and music tempo during a time stretch
+#define BEAM_STEPS 8.0f             // beam length in 16ths of (stretched) music: half a bar
+#define BOMB_STRETCH_STEPS 16.0f    // stretch after the bomb's wave: one bar
+#define BOMB_WAVE_SPEED 200.0f      // arena units/s
+#define BOMB_WAVE_REACH 135.0f
 #define BOSS_LATTICE_GAP 3.0f       // Core wall: no shot centre within this of the lane
 #define ENEMY_SHOT_HIT_RADIUS 0.6f  // enemy shot vs ship (clarity pass 2026-11-06: was 0.85)
 #define SNIPER_MARK_SECONDS 1.05f   // sniper: aim committed, then the rail (level 1; shorter later)
@@ -80,6 +88,8 @@ typedef struct {
     int identity;
     int generation;
     int group;      // formation / role group id (0 = none: bosses); wiping a group can drop a capsule
+    int bombMark;   // the bomb that last touched it (boss parts take its chip once)
+    bool deleting;  // touched by the bomb's wave: frozen, white, deleted on the next 16th
     bool active;
     bool locked;
 } Enemy;
@@ -219,6 +229,7 @@ typedef struct {
     bool weaponEmpty;      // I pressed with nothing to fire
     int drillDetonations;
     int railShots;
+    int beamTicks;
     int capsulesDropped;
     int enemyVolleys;      // enemy and boss volleys fired this step (one sound each)
     float enemyVolleyX;    // arena x of the last volley, for stereo placement
@@ -300,8 +311,16 @@ typedef struct {
     float hitFlash;
     float cameraKick;
     float weaponFlash;
-    float beamTimer;
-    float bombTimer;
+    float beamTimer;       // seconds since the beam started (visuals)
+    float bombTimer;       // seconds since the bomb's wave started (visuals)
+    float beamSteps;       // > 0: the beam is firing (16ths left); the ship is held in place
+    float beamTickTimer;
+    float stretchSteps;    // > 0: time stretch (16ths of stretched music left)
+    bool bombActive;       // the wave is expanding
+    Vector3 bombOrigin;
+    float bombRadius;
+    float bombTickTimer;
+    int bombSerial;
     float loopTransitionTimer;
     float runTime;
     int weaponTier;
@@ -329,6 +348,10 @@ void SetGameplayMusicClock(GameplaySystem *game, const MusicClock *clock);
 GameplayEvents UpdateGameplay(GameplaySystem *game, float dt, double virtualPlayerZ,
                               bool boosting, const GameplayInput *input);
 bool ValidateGameplaySpecials(void);
+// 1, or STRETCH_SCALE during a time stretch: enemies, their shots and the music.
+float GetGameplayTimeScale(const GameplaySystem *game);
+// The beam holds the ship in place while it fires (no steering, rolls or boost).
+bool IsGameplayBeamLocked(const GameplaySystem *game);
 // Full magazine of a pickup weapon; a top-up adds this, up to twice it.
 int GetWeaponAmmoFull(PickupWeapon weapon);
 // The sniper's mark before the rail: 1.05 s on level 1, shorter on later levels and depths.
