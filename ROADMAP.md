@@ -1,7 +1,7 @@
 # Roadmap
 
-Working task list for the unified game. Branch: `unify-engine` (do not merge to
-master unless asked). Decisions and results go in `RECURSION_94_decisions_log.md`;
+Working task list for the unified game (on `master` since 2026-11-06; the
+collaborator's last build before the merge is tag `r94-collab-886ba1b`). Decisions and results go in `RECURSION_94_decisions_log.md`;
 engine-only items live in `docs/engine/BACKLOG.md`.
 
 Target: five levels, each with its own environment, song and boss. Engine and
