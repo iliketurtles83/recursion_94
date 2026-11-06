@@ -773,7 +773,7 @@ void combat_draw_scene(CombatDraw *d, CtTunnel *ct, const ArenaMap *m, const Gam
         if (g->capsules[i].active) draw_capsule(ct, m, o, g, &g->capsules[i], time, emissive);
 
     // Enemy shots, opaque pass: a dark rim disc that cuts the shot out of the bright
-    // corridor behind it. Rim + orb ~ the hit radius (0.85 arena units).
+    // corridor behind it. Sizes per shot kind (shot_radius); one hit radius, ENEMY_SHOT_HIT_RADIUS.
     if (!emissive) {
         for (int i = 0; i < MAX_ENEMY_PROJECTILES; i++) {
             const EnemyProjectile *p = &g->projectiles[i];

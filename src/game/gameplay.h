@@ -33,7 +33,7 @@
 #define ARC_MAX_HITS 6              // first target + 5 jumps, one per 16th
 #define ARC_JUMP_RADIUS 13.0f       // arena units from the last target
 #define MAX_DRILLS 6
-#define MIRROR_CATCH_RADIUS 2.0f    // a rolling ship catches shots this close (hit radius is 0.85)
+#define MIRROR_CATCH_RADIUS 2.0f    // a rolling ship catches shots this close (hit radius is 0.6)
 
 typedef enum {
     WEAPON_NONE = 0,
