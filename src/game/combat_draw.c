@@ -1104,13 +1104,4 @@ void combat_draw_hud(const CombatDraw *d, const GameplaySystem *g, int w, int h)
         DrawRectangleGradientH(0, 0, band, h, edge, clear);
         DrawRectangleGradientH(w - band, 0, band, h, clear, edge);
     }
-    if (g->gameOver) {
-        DrawRectangle(0, 0, w, h, (Color){ 0, 0, 0, 120 });
-        const char *t = "SIGNAL LOST";
-        DrawText(t, w / 2 - MeasureText(t, 56) / 2, h / 2 - 70, 56, g->threatColor);
-        const char *s = TextFormat("SCORE %08d", g->score);
-        DrawText(s, w / 2 - MeasureText(s, 24) / 2, h / 2, 24, (Color){ 225, 240, 250, 255 });
-        const char *r = "R RECOMPILE RUN    ESC SEED SELECT";
-        DrawText(r, w / 2 - MeasureText(r, 18) / 2, h / 2 + 44, 18, dim);
-    }
 }

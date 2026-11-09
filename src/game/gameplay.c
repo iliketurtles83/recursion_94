@@ -2355,7 +2355,7 @@ GameplayEvents UpdateGameplay(GameplaySystem *game, float dt, double virtualPlay
     // its shots and the pickups do not.
     float edt = dt * GetGameplayTimeScale(game);
     if (game->bossesEnabled) UpdateBoss(game, edt, virtualPlayerZ, &events);
-    if (!game->boss.active && !game->boss.clearing) {
+    if (!game->boss.active && !game->boss.clearing && !game->held) {
         game->spawnTimer -= edt * (boosting ? 1.8f : 1.0f);
         if (TimerOnGrid(game, game->spawnTimer, MUSIC_BEAT)) {
             SpawnFormation(game);

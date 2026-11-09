@@ -17,7 +17,8 @@ typedef struct GameOptions {
     int         depth;         // --depth N: start the run at recursion depth N (story, difficulty; 0 = 1)
     bool        steerHold;     // --steer X,Y: the shot pilot holds this stick (no weave)
     float       steerX, steerY;
-    double      rollAt;        // --roll T: the shot pilot starts a right barrel roll at T s (< 0 = never)
+    double      rollAt;
+    double      stageEndAt;    // --stage-end T: shots end the frame as cleared at T s (result screen check; < 0 = never)        // --roll T: the shot pilot starts a right barrel roll at T s (< 0 = never)
     bool        steerBox;      // --steer-box: show the steering box in shots (always toggleable with F4)
     int         ship;          // --ship N: initial ship, 1 dart, 2 probe, 3 jet (0 = 1)
 } GameOptions;

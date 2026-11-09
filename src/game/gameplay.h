@@ -350,6 +350,7 @@ typedef struct {
     bool bossesEnabled;    // validation and the game enable them; tests may switch them off
     bool suppressLinkRewards;
     bool overdriveActive;
+    bool held;             // stage result: no new formations (the game also holds the distance)
     bool gameOver;
 } GameplaySystem;
 

@@ -11,8 +11,8 @@ is five levels, each with its own environment, song and boss.
   `src/game/` is the RECURSION_94 game layer: seed selector and run loop
   (`game.c`), combat logic (`gameplay.c`, ported), its neon presentation and HUD
   (`combat_draw.c`), the procedural synth (`audio_synth.c`, ported), the level
-  songs (`songs.c`), the story scroller and boss title cards (`story.c`), the run intro
-  and level transitions (`titles.c`), the curve timeline (`timeline.h`) and the selector art and seed palettes (`demoscene.c`, `palette.h`). `./build/recursion94` starts
+  songs (`songs.c`), the story scroller and boss title cards (`story.c`), the run intro,
+  stage result screen and level transitions (`titles.c`), the curve timeline (`timeline.h`) and the selector art and seed palettes (`demoscene.c`, `palette.h`). `./build/recursion94` starts
   the game in the server corridor (preset `r94_corridor`); `--sandbox` gives the
   environment harness.
 - The original game lives in git history only (tag `r94-floppy`; `legacy/`
@@ -85,6 +85,8 @@ ctest --test-dir build --output-on-failure         # engine_core/_ship/_vectorin
 ./build/recursion94 --seed 94 --ship N      # ship 1 dart (default), 2 probe, 3 jet (also chosen in the selector)
 ./build/recursion94 --seed 94 --game-shot 3 --steer 1,-1 --roll 2.5 --steer-box --out FILE --hidden
     # shot pilot holds the stick / rolls right at 2.5 s; draw the steering box (F4 in play)
+./build/recursion94 --seed 94 --game-shot 44 --stage-end 35 --out FILE --hidden
+    # end the frame as cleared at 35 s: the result screen (tally) in a shot
 ./build/recursion94 --sandbox --env N [--seed N] [--preset NAME] [--set name=value ...]
     [--shot DISTANCE --out FILE] [--bench SECONDS] [--list-params] [--write-preset NAME]
     [--boost] [--noship] [--hdr8] [--hidden]

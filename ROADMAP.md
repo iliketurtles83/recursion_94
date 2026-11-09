@@ -60,6 +60,21 @@ RECURSION_94.
         the kick, not ahead of or behind it. F5 in a run flashes the beat
         from the game clock; `[` `]` move it live (0.25 callback steps).
 
+- [ ] **Step 8: finish the stage (2026-11-09).** No new systems until the
+      corridor stage plays start to finish as something you'd hand to a stranger.
+  - [x] Result screen (`titles.c`, `end_stage` in `game.c`): a boss kill
+        holds formations and distance, and on a bar line 1-2 bars later
+        `> RETURN FRAME n` types in with the frame's tally (time, kills /
+        spawned, max chain, hits taken, grazes, frame score, score), one line
+        per beat with a note climbing the seed's scale, while the ship glides
+        hands-off through the old level. No keys: it holds 4 bars, fades and
+        continues on its own (`> CALL FRAME n+1` on the next bar line, the
+        story scroll after it). Death gives the same panel under SIGNAL LOST,
+        with R / Esc. `--stage-end T` fakes a clear
+        in shots. Hand-play: glide length, wording, the continue flow, death.
+  - [ ] Playtest loops on the step 5 and 7 hand-play items (readability first).
+  - [ ] Cut mechanics that muddy the stage.
+
 - [ ] **Step 7: readability (playtest reviews, 2026-11-04).**
   - [x] Visual roles, fixed on every seed: player fire = white-core
         streaks with one cool tint; enemy fire = one reserved hot colour

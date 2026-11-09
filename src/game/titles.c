@@ -89,14 +89,17 @@ void titles_reset(Titles *t, uint32_t seed, int depth, const MusicClock *c)
 
 void titles_update(Titles *t, const GameplaySystem *g, const GameplayEvents *e, const MusicClock *c)
 {
-    if (e->bossDefeated) {
-        // Entering the next frame, from the next bar line.
-        t->transRound = (g->boss.encounterIndex) % BOSSES_PER_RECURSION;
-        t->transDepth = GetGameplayRecursionDepth(g);
-        t->transRecurse = e->recursionCompleted;
-        t->transStart = c->valid ? (floor(c->step / MUSIC_BAR) + 1.0) * MUSIC_BAR : c->step;
-    }
     if (t->transRound >= 0 && c->step - t->transStart > TITLES_TRANSITION_STEPS) t->transRound = -1;
+}
+
+void titles_continue(Titles *t, const GameplaySystem *g, const MusicClock *c)
+{
+    // Entering the next frame, from the next bar line.
+    t->resultUp = false;
+    t->transRound = g->boss.encounterIndex % BOSSES_PER_RECURSION;
+    t->transDepth = GetGameplayRecursionDepth(g);
+    t->transRecurse = t->result.recursion;
+    t->transStart = c->valid ? (floor(c->step / MUSIC_BAR) + 1.0) * MUSIC_BAR : c->step;
 }
 
 bool titles_logo_settled(const Titles *t, const MusicClock *c)
@@ -235,9 +238,136 @@ static void draw_transition(const Titles *t, const GameplaySystem *g, const Musi
     draw_centered(name, cx, y + size * 1.3f, ns, ns * tl_eval(TL_TRACK(TR_SPREAD), s), with_alpha(g->primaryColor, sub));
 }
 
+// ---------------------------------------------------------------------------
+// Result: the frame's tally
+
+#define RESULT_HEAD_STEPS 8.0     // the header types in over half a bar
+#define RESULT_COUNT_STEPS 4.0    // each value counts up over a beat
+#define RESULT_KEYS_STEPS (RESULT_HEAD_STEPS + TITLES_RESULT_LINES * MUSIC_BEAT)
+#define RESULT_HOLD_STEPS (4.0 * MUSIC_BAR)   // a cleared tally: up this long, fading over the last beat
+
+static const TlKey RS_FADE[] = { { 0, 0, TL_SMOOTH }, { 4, 1, TL_STEP } };
+static const TlKey RS_TYPE[] = { { 0, 0, TL_LINEAR }, { RESULT_HEAD_STEPS, 1, TL_STEP } };
+
+void titles_show_result(Titles *t, const StageResult *r, double start)
+{
+    t->result = *r;
+    t->resultStart = start;
+    t->resultUp = true;
+}
+
+int titles_result_revealed(const Titles *t, const MusicClock *c)
+{
+    if (!t->resultUp) return 0;
+    double s = c->step - t->resultStart - RESULT_HEAD_STEPS;
+    if (s < 0.0) return 0;
+    int n = (int)floor(s / MUSIC_BEAT) + 1;
+    return n > TITLES_RESULT_LINES ? TITLES_RESULT_LINES : n;
+}
+
+bool titles_result_done(const Titles *t, const MusicClock *c)
+{
+    return t->resultUp && t->result.cleared && c->step - t->resultStart >= RESULT_HOLD_STEPS;
+}
+
+// Label left, value right, a row of dots between them (a register dump).
+static void draw_tally_line(const char *label, const char *value, float xl, float xr, float y, float size,
+                            Color labelColor, Color valueColor, Color dots)
+{
+    float sp = text_spacing(size);
+    float lw = spaced_width(label, size, sp), vw = spaced_width(value, size, sp);
+    draw_centered(label, xl + lw * 0.5f, y, size, sp, labelColor);
+    draw_centered(value, xr - vw * 0.5f, y, size, sp, valueColor);
+    float dot = fmaxf(2.0f, floorf(size / 8.0f)), step = size * 0.5f;
+    for (float x = xl + lw + step; x + dot < xr - vw - step * 0.5f; x += step)
+        DrawRectangle((int)x, (int)(y + size * 0.7f), (int)dot, (int)dot, dots);
+}
+
+static void draw_result(const Titles *t, const GameplaySystem *g, const MusicClock *c, int w, int h)
+{
+    if (!t->resultUp) return;
+    double s = c->step - t->resultStart;
+    if (s < 0.0) return;
+    const StageResult *r = &t->result;
+    float fade = tl_eval(TL_TRACK(RS_FADE), s);
+    if (r->cleared) fade *= 1.0f - (float)fmin(fmax((s - (RESULT_HOLD_STEPS - MUSIC_BEAT)) / MUSIC_BEAT, 0.0), 1.0);
+    float size = fmaxf(28.0f, (float)h / 15.0f);
+    float cx = (float)w * 0.5f, y = (float)h * 0.2f;
+    // Dark band with raster edges.
+    float top = y - size * 0.6f, bottom = (float)h * 0.86f;
+    DrawRectangle(0, (int)top, w, (int)(bottom - top), (Color){ 0, 0, 0, (unsigned char)(170.0f * fade) });
+    Color edge = r->cleared ? g->secondaryColor : g->threatColor;
+    DrawRectangle(0, (int)top, w, 2, with_alpha(edge, 0.7f * fade));
+    DrawRectangle(0, (int)bottom - 2, w, 2, with_alpha(edge, 0.7f * fade));
+
+    // Header, typed like the frame transition.
+    char line[64], name[64];
+    const char *src = r->cleared ? (r->recursion ? "> RETURN RECURSION_94" : TextFormat("> RETURN FRAME %d", r->round + 1))
+                                 : "SIGNAL LOST";
+    int len = story_corrupt(src, t->seed ^ 0x3a13u, r->depth, line, sizeof(line));
+    float sp = text_spacing(size);
+    float x = cx - spaced_width(line, size, sp) * 0.5f;
+    int shown = (int)(tl_eval(TL_TRACK(RS_TYPE), s) * (float)len + 0.999f);
+    Color head = r->cleared ? g->hotColor : g->threatColor;
+    for (int i = 0; i < len && i < shown; i++) {
+        if (line[i] != ' ') draw_glyph(line[i], x, y, size, with_alpha(head, fade));
+        x += glyph_width(line[i], size) + sp;
+    }
+    if (((int)floor(c->step / MUSIC_EIGHTH) & 1) == 0)
+        DrawRectangle((int)(x + sp), (int)y, (int)(size * 0.5f), (int)size, with_alpha(g->primaryColor, fade));
+    const char *nsrc = r->cleared ? story_level_name(r->round)
+                                  : TextFormat("CRASHED IN FRAME %d  //  %s", r->round + 1, story_level_name(r->round));
+    story_corrupt(nsrc, t->seed ^ 0x3a14u, r->depth, name, sizeof(name));
+    float ns = size * 0.5f;
+    draw_centered(name, cx, y + size * 1.3f, ns, ns * 0.25f, with_alpha(g->primaryColor, 0.8f * fade));
+
+    // Tally: one line per beat, each value counting up over the beat.
+    float ls = fmaxf(16.0f, (float)h / 34.0f);
+    float half = fminf((float)w * 0.42f, ls * 15.0f);
+    float xl = cx - half, xr = cx + half, ly = y + size * 2.6f, gap = ls * 1.75f;
+    Color label = with_alpha(g->primaryColor, 0.85f), value = { 235, 245, 252, 255 };
+    Color dots = with_alpha(g->primaryColor, 0.35f);
+    for (int i = 0; i < TITLES_RESULT_LINES; i++) {
+        double ts = s - RESULT_HEAD_STEPS - i * MUSIC_BEAT;
+        if (ts < 0.0) break;
+        float k = (float)fmin(ts / RESULT_COUNT_STEPS, 1.0);
+        k = k * k * (3.0f - 2.0f * k);
+        const char *lab = "", *val = "";
+        Color vc = value;
+        switch (i) {
+            case 0: {
+                float sec = r->seconds * k;
+                lab = "TIME"; val = TextFormat("%d:%04.1f", (int)(sec / 60.0f), fmodf(sec, 60.0f));
+            } break;
+            case 1: {
+                int kills = (int)((float)r->kills * k + 0.5f);
+                int pct = r->spawned > 0 ? (int)(100.0f * (float)kills / (float)r->spawned + 0.5f) : 0;
+                lab = "KILLS"; val = TextFormat("%d / %d   %d%%", kills, r->spawned, pct);
+            } break;
+            case 2: lab = "MAX CHAIN"; val = TextFormat("x%d", (int)((float)r->maxChain * k + 0.5f)); break;
+            case 3:
+                lab = "HITS TAKEN";
+                val = r->hits == 0 ? "0   CLEAN" : TextFormat("%d", (int)((float)r->hits * k + 0.5f));
+                if (r->hits == 0) vc = g->hotColor;
+                break;
+            case 4: lab = "GRAZES"; val = TextFormat("%d", (int)((float)r->grazes * k + 0.5f)); break;
+            case 5: lab = "FRAME SCORE"; val = TextFormat("+%d", (int)((float)r->frameScore * k + 0.5f)); break;
+            default: lab = "SCORE"; val = TextFormat("%08d", r->score); vc = g->hotColor; break;
+        }
+        float lyi = ly + (float)i * gap + (i == TITLES_RESULT_LINES - 1 ? gap * 0.4f : 0.0f);
+        draw_tally_line(lab, val, xl, xr, lyi, ls, label, vc, dots);
+    }
+
+    if (r->cleared || s < RESULT_KEYS_STEPS) return;
+    const char *keys = "R RECOMPILE RUN     ESC SEED SELECT";
+    float ks = fmaxf(14.0f, ls * 0.75f);
+    draw_centered(keys, cx, bottom - ks * 2.2f, ks, text_spacing(ks), with_alpha(g->primaryColor, 0.9f));
+}
+
 void titles_draw(const Titles *t, const GameplaySystem *g, const MusicClock *c, int w, int h,
                  const char *keyName, float bpm)
 {
     draw_intro(t, g, c, w, h, keyName, bpm);
+    draw_result(t, g, c, w, h);
     if (!g->gameOver) draw_transition(t, g, c, w, h);
 }

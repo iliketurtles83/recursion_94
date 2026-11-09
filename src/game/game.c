@@ -82,6 +82,12 @@ typedef struct Game {
     MusicClock     music;
     Story          story;
     Titles         titles;
+    // Stage tally (the result screen), counted from the frame's start or the last continue.
+    bool           stageEnded;   // the boss fell or the ship did: the tally is coming or up
+    float          stageStartTime;
+    int            stageStartSpawn, stageStartScore, stageDepth;
+    int            stageKills, stageMaxChain, stageHits, stageGrazes;
+    int            resultNotes;  // tally lines already sounded
 } Game;
 
 static void stop_audio(Game *g)
@@ -122,6 +128,53 @@ static void scene_draw(void *user, const CtSceneView *view, bool emissive)
     if (g->state == STATE_RUN && emissive) combat_draw_story(&g->draw, g->ct, &g->map, &g->play, &g->story, view);
 }
 
+static void reset_stage(Game *g)
+{
+    g->stageEnded = false;
+    g->play.held = false;
+    g->stageStartTime = g->play.runTime;
+    g->stageStartSpawn = g->play.spawnSerial;
+    g->stageStartScore = g->play.score;
+    g->stageDepth = GetGameplayRecursionDepth(&g->play);
+    g->stageKills = g->stageMaxChain = g->stageHits = g->stageGrazes = 0;
+    g->resultNotes = 0;
+}
+
+// The boss fell (cleared) or the ship did. Formations and distance hold; the tally
+// comes up on a bar line after the explosion (a bar or two), or after half a bar
+// of the crash.
+static void end_stage(Game *g, bool cleared, bool recursion)
+{
+    const GameplaySystem *p = &g->play;
+    int index = cleared && p->boss.encounterIndex > 0 ? p->boss.encounterIndex - 1 : p->boss.encounterIndex;
+    StageResult r = { .cleared = cleared, .recursion = recursion,
+                      .round = index % BOSSES_PER_RECURSION, .depth = g->stageDepth,
+                      .seconds = p->runTime - g->stageStartTime,
+                      .kills = g->stageKills, .spawned = p->spawnSerial - g->stageStartSpawn,
+                      .maxChain = g->stageMaxChain, .hits = g->stageHits, .grazes = g->stageGrazes,
+                      .frameScore = p->score - g->stageStartScore, .score = p->score };
+    double wait = cleared ? MUSIC_BAR : MUSIC_EIGHTH * 4.0;
+    double start = ceil((g->music.step + wait) / MUSIC_BAR) * MUSIC_BAR;
+    g->stageEnded = true;
+    g->play.held = true;
+    g->resultNotes = 0;
+    titles_show_result(&g->titles, &r, start);
+}
+
+static bool result_shown(const Game *g)
+{
+    return g->stageEnded && g->titles.resultUp && g->music.step >= g->titles.resultStart;
+}
+
+// A cleared tally has played out: into the next frame. The frame title types in from the
+// next bar line and the story scroll follows two bars after it, as before.
+static void continue_stage(Game *g)
+{
+    titles_continue(&g->titles, &g->play, &g->music);
+    g->story.waitUntil = g->titles.transStart + 2.0 * MUSIC_BAR;
+    reset_stage(g);
+}
+
 static void start_run(Game *g, uint32_t seed, bool withAudio)
 {
     stop_audio(g);
@@ -141,6 +194,7 @@ static void start_run(Game *g, uint32_t seed, bool withAudio)
     story_reset(&g->story, seed, GetGameplayRecursionDepth(&g->play), g->music.stepsPerSecond,
                 LEGEND_SECONDS - 1.5f);
     titles_reset(&g->titles, seed, GetGameplayRecursionDepth(&g->play), &g->music);
+    reset_stage(g);
     ct_param_set(g->ct, "baseSpeed", g->baseSpeed);
     ct_param_set(g->ct, "fovBase", g->baseFov);
     ct_param_set(g->ct, "shipModel", (float)SHIPS[g->ship].model);
@@ -242,6 +296,7 @@ static void update_music(Game *g, bool boosting, float dt)
         if (toBoss > 0.0 && toBoss < BOSS_HUSH_WINDOW) hush = (float)(1.0 - toBoss / BOSS_HUSH_WINDOW);
         if (b->clearing) hush = 1.0f;
     }
+    if (g->stageEnded && !p->gameOver) hush = fmaxf(hush, 0.7f);   // the tally: a breather
     intensity *= 1.0f - hush * 0.5f;
     if (p->gameOver) intensity = 0.10f;
     g->musicIntensity = fmaxf(0.0f, fminf(intensity, 1.0f));
@@ -327,21 +382,40 @@ static void update_run(Game *g, float dt, const Controls *c)
     float vmax = ct_param_get(g->ct, "steerAccel") / fmaxf(ct_param_get(g->ct, "steerDamping"), 0.1f);
     flight.driftX = g->play.player.pull.x / ORIGINAL_STEER_SPEED_X * vmax;
     flight.driftY = g->play.player.pull.y / ORIGINAL_STEER_SPEED_Y * vmax;
-    if (g->play.gameOver) flight = (CtInput){ 0 };
+    bool tally = result_shown(g);
+    if (g->play.gameOver || tally) flight = (CtInput){ 0 };
     ct_set_input(g->ct, &flight);
 
-    if (!g->play.gameOver) g->virtualZ += GetGameplayTravelSpeed(&g->play, g->virtualZ, boosting) * dt;
+    if (!g->play.gameOver && !g->stageEnded) g->virtualZ += GetGameplayTravelSpeed(&g->play, g->virtualZ, boosting) * dt;
     // The engine slows with the original travel speed during boss fights (about a
     // quarter of cruise), so the corridor drifts while the arena holds.
     float factor = GetGameplayTravelSpeed(&g->play, g->virtualZ, false) / GetGameplayCruiseSpeed(&g->play, g->virtualZ);
     ct_param_set(g->ct, "baseSpeed", g->baseSpeed * factor);
-    GameplayInput in = { px, py, vx, vy, c->fire && !g->play.gameOver, c->beam, c->bomb,
+    bool live = !g->play.gameOver && !tally;
+    GameplayInput in = { px, py, vx, vy, c->fire && live, c->beam && live, c->bomb && live,
                          ct_ship_roll_progress(g->ct) >= 0.0f, ct_ship_roll_progress(g->ct),
-                         c->weapon && !g->play.gameOver };
+                         c->weapon && live };
     GameplayEvents events = UpdateGameplay(&g->play, dt, g->virtualZ, boosting, &in);
     play_events(g, &events);
-    story_update(&g->story, &g->play, &events, &g->music);
+    if (!g->stageEnded) {
+        g->stageKills += events.enemiesDestroyed;
+        g->stageHits += events.playerHit ? 1 : 0;
+        g->stageGrazes += events.grazes;
+        if (g->play.combo > g->stageMaxChain) g->stageMaxChain = g->play.combo;
+        if (events.bossDefeated) end_stage(g, true, events.recursionCompleted);
+        else if (g->play.gameOver) end_stage(g, false, false);
+        // The story still hears the boss fall (it queues the next text), then waits for Continue.
+        story_update(&g->story, &g->play, &events, &g->music);
+    }
     titles_update(&g->titles, &g->play, &events, &g->music);
+    // A note per tally line, climbing the seed's scale; the score lands an octave up.
+    int revealed = titles_result_revealed(&g->titles, &g->music);
+    for (; g->resultNotes < revealed; g->resultNotes++) {
+        if (!g->audioOn) continue;
+        int degree = g->resultNotes == TITLES_RESULT_LINES - 1 ? 7 : g->resultNotes;
+        TriggerSynthSFXNote(&g->synth, SFX_ARC_NOTE, 0.0f, degree);
+    }
+    if (titles_result_done(&g->titles, &g->music)) continue_stage(g);
     ct_set_ship_damage(g->ct, 1.0f - g->play.player.energy / 100.0f);
     update_music(g, boosting, dt);
     if (g->audioOn) SetAudioSynthTimeStretch(&g->synth, GetGameplayTimeScale(&g->play));
@@ -521,6 +595,7 @@ int game_run(CtTunnel *ct, const GameOptions *o)
     // Shot mode is deterministic: no audio thread, fixed step, scripted pilot.
     if (o->skipSelector || shotMode) start_run(&g, o->seed, !shotMode);
     int frames = 0;
+    bool fakedClear = false;   // --stage-end has fired
 
     while (!WindowShouldClose()) {
         float dt = shotMode ? 1.0f / 60.0f : GetFrameTime();
@@ -592,6 +667,14 @@ int game_run(CtTunnel *ct, const GameOptions *o)
         if (!g.paused) {
             Controls c = shotMode ? scripted_controls(o, g.play.runTime, dt) : read_controls();
             update_run(&g, dt, &c);
+            if (shotMode && !fakedClear && o->stageEndAt >= 0.0 && g.play.runTime >= o->stageEndAt) {
+                // As a boss kill does: the field empties and the frame counts as cleared.
+                for (int i = 0; i < MAX_ENEMIES; i++) g.play.enemies[i].active = false;
+                for (int i = 0; i < MAX_ENEMY_PROJECTILES; i++) g.play.projectiles[i].active = false;
+                g.play.boss.encounterIndex++;
+                end_stage(&g, true, false);
+                fakedClear = true;
+            }
         }
         ct_update(ct, g.paused ? 0.0f : dt);
 
