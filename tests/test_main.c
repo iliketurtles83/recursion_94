@@ -829,6 +829,50 @@ static void test_crystal_field(void)
     env.unload(&env);
 }
 
+static void test_platter(void)
+{
+    Environment env = env_platter_create();
+    ParamRegistry reg;
+    params_clear(&reg);
+    env.registerParams(&env, &reg);
+    env.init(&env, 11, NULL);
+    PathStyle st = env.pathStyle(&env);
+    CHECK(!st.hasWalls && st.floorDepth > 0.0f && st.spiralStart > st.spiralEnd, "platter style is an open inward spiral");
+    double len = path_spiral_length(&st);
+    // Archimedean spiral: length ~ 2 pi * mean radius * laps.
+    double approx = 2.0 * 3.14159265358979 * 0.5 * (st.spiralStart + st.spiralEnd) * st.spiralLaps;
+    CHECK(fabs(len - approx) < 0.01 * approx, "spiral length %.1f close to 2 pi r_mean laps %.1f", len, approx);
+    DVec3 c = path_spiral_centre(&st);
+    double worstY = 0.0, minUp = 1.0, maxCurv = 0.0, maxRadErr = 0.0, maxRise = 0.0, prevR = 1e9, minCross = 1.0;
+    PathSystem p;
+    path_init(&p, 5, st);
+    for (double s = 0.0; s <= len + 3000.0; s += PATH_DS) {
+        path_ensure(&p, s - 100.0, s + 50.0);
+        PathSample q = path_sample(&p, s);
+        if (fabs(q.pos.y) > worstY) worstY = fabs(q.pos.y);
+        if (q.N.y < minUp) minUp = q.N.y;
+        if (q.curvature > maxCurv) maxCurv = q.curvature;
+        DVec3 d = dv_sub(q.pos, c);
+        double r = sqrt(d.x * d.x + d.z * d.z);
+        if (r - prevR > maxRise) maxRise = r - prevR;
+        prevR = r;
+        // Travel is clockwise seen from above: the centre stays on the left (-B).
+        double left = -(q.B.x * d.x + q.B.z * d.z) / r;
+        if (-left < minCross) minCross = -left;
+        if (s >= len + 200.0 && fabs(r - st.spiralEnd) > maxRadErr) maxRadErr = fabs(r - st.spiralEnd);
+    }
+    path_free(&p);
+    printf("  platter spiral: length %.1f, max |y| %.1e, min N.y %.9f, maxCurv %.5f (limit %.5f), end-circle radius err %.3f, max outward step %.2e\n",
+           len, worstY, minUp, maxCurv, path_curvature_limit(&st), maxRadErr, maxRise);
+    CHECK(worstY < 1e-9, "platter path stays level");
+    CHECK(minUp > 0.999999, "platter path N is world up");
+    CHECK(maxCurv <= path_curvature_limit(&st), "platter curvature within limit");
+    CHECK(maxRise < 1e-3, "platter radius never grows (max outward step %g)", maxRise);
+    CHECK(maxRadErr < 0.1, "platter circles at spiralEnd after the spiral (err %.3f)", maxRadErr);
+    CHECK(minCross > 0.95, "spindle stays on the left of the heading (min %.3f)", minCross);
+    env.unload(&env);
+}
+
 static void test_corridor(void)
 {
     Environment env = env_corridor_create();
@@ -1254,6 +1298,7 @@ int main(void)
     test_city_towers();
     test_city_decor();
     test_corridor();
+    test_platter();
     test_corridor_pillars();
     test_corridor_decor();
     test_corridor_beams();

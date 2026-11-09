@@ -47,6 +47,7 @@ const char *ct_environment_name(int id)
     case ENV_CORRIDOR: return "Server Corridor";
     case ENV_GREYBOX: return "Greybox";
     case ENV_CRYSTAL: return "Crystal Field";
+    case ENV_PLATTER: return "Platter";
     }
     return "?";
 }
@@ -462,6 +463,7 @@ CtTunnel *ct_create(const CtConfig *cfg)
     ct->envs[ENV_CORRIDOR] = env_corridor_create();
     ct->envs[ENV_GREYBOX] = env_greybox_create();
     ct->envs[ENV_CRYSTAL] = env_crystal_create();
+    ct->envs[ENV_PLATTER] = env_platter_create();
     ct->envId = (cfg->environment >= 0 && cfg->environment < ENV_COUNT) ? cfg->environment : ENV_VORTEX;
     ct->env = &ct->envs[ct->envId];
     register_env_params(ct);

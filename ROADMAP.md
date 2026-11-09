@@ -130,6 +130,18 @@ RECURSION_94.
 
 ## After the slice
 
+- [ ] Level 2 environment: PLATTER (a floppy disk flown as an inward spiral to the
+      boss on the spindle; concept images in ComfyUI `recursion94-env/`).
+  - [x] Greybox (2026-11-07): spiral path style, per-pixel sector map
+        (`platter.fs`), grey spindle. `--sandbox --env 6 --preset platter`.
+  - [ ] Hand-fly: spiral size and laps (level length), track width against the
+        steering box, floor brightness under combat.
+  - [ ] Music response: sector headers lit on 16ths, index-line flash per lap or
+        bar, read-head glow under the ship; Chladni patterns in the free space
+        near the hub during the boss.
+  - [ ] Spindle and arena (the Bastion's throne), something beside the path
+        (low sorted-block structures?), sky.
+  - [ ] Game hookup: level 2 runs on `platter` after the Recursive Core.
 - [ ] The other four levels (environment, song, boss each). Boss chassis
       reference: `git show 1a7c6ca:legacy/src/gameplay.c`, `Draw*Boss`.
 - [x] Apply Leviathan gravity (`player.pull`) to flight (level 5 boss):

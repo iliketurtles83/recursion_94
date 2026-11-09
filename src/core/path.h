@@ -24,6 +24,11 @@ typedef struct PathStyle {
     // yawAxisDeg, so the path weaves around world axes (e.g. along a world-aligned grid).
     float yawSpring;         // fraction of the heading error removed per control point
     float yawAxisDeg;        // axis spacing, e.g. 90
+    // Optional Archimedean spiral (spiralStart > 0, level paths only): replaces the noise
+    // walk. The path starts at the origin heading -z with the spiral centre spiralStart to
+    // its left (path_spiral_centre), closes in to spiralEnd over spiralLaps turns at a
+    // constant radial step per turn, then circles at spiralEnd for good.
+    float spiralStart, spiralEnd, spiralLaps;
 } PathStyle;
 
 typedef struct PathSample {
@@ -52,6 +57,7 @@ typedef struct PathSystem {
     // control point generator
     int    ctrlCount;        // number of control points generated
     double yaw, pitch;
+    double spiralTurn;       // spiral angle of the last control point (radians)
     DVec3  ctrl[PATH_CTRL_CAP];
 
     // spline walker
@@ -78,5 +84,11 @@ double     path_s_min(const PathSystem *ps);
 double     path_s_max(const PathSystem *ps);
 // Theoretical curvature bound implied by the style (used by tests/debug).
 double     path_curvature_limit(const PathStyle *style);
+// Spiral paths: the fixed centre (world, y = 0), the radius at spiral angle `turn` (radians
+// from the start; eased into spiralEnd over +-0.5 rad, constant after), and the arc length
+// of the linear spiral from the start to spiralEnd (where the path settles on the end circle).
+DVec3      path_spiral_centre(const PathStyle *style);
+double     path_spiral_radius(const PathStyle *style, double turn);
+double     path_spiral_length(const PathStyle *style);
 
 #endif

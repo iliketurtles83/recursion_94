@@ -91,7 +91,8 @@ ctest --test-dir build --output-on-failure         # engine_core/_ship/_vectorin
 ```
 
 - Environments: 0 vortex, 1 template, 2 grid city, 3 server corridor, 4 greybox
-  (use `--preset greybox`), 5 crystal field. Presets: `city`, `corridor`, `crystal`,
+  (use `--preset greybox`), 5 crystal field, 6 platter (level 2 greybox, `--preset platter`).
+  Presets: `city`, `corridor`, `crystal`, `platter`,
   etc. `mission` and `mission_tunnel` carry the flight tuning (thrust vectoring,
   courier scale) inherited from rec_tunnel's game layer.
 - `--game-shot S` runs the game for S seconds on a fixed 1/60 s step with no

@@ -895,3 +895,28 @@ clear centre; four pacing archetypes (DRIFT / SHOAL / GIANTS / VOID); `presets/c
 Shapes keep out of the steering box with their whole bounding sphere; no collision. Open: the
 fly-through giant set piece (concept review first), more scenery (user undecided), destructible
 crystals (deliberately deferred).
+
+# Environment #6 — Platter (level 2 greybox, 2026-11-07)
+
+A giant floppy disk, flown as an inward spiral from the rim to the spindle, where the level 2
+boss will sit. Concept: concentric tracks (as on a real floppy), the ship's path is the spiral
+that crosses them, and the hub slides in from the left as the bend tightens.
+
+- **Spiral path** (`PathStyle.spiralStart/End/Laps`, `core/path.c`): replaces the noise walk.
+  Control points every 8 units (40-unit chords rippled the spline on the r = 70 end circle)
+  on r = start - k*turn, k = (start - end) / (2 pi laps), clockwise seen from above so the
+  centre stays on the left. The radius eases into the end circle over +-0.5 rad (quadratic
+  blend); without it the slope jump spiked the curvature to 1.7/r. `path_spiral_length` is
+  the exact Archimedean arc length (5817 units for 300 -> 70 over 5 laps, about 3 min at
+  cruise). Test: level, N up, curvature <= 1.1/end, radius never grows, end circle exact.
+- **Sector map** (`platter.fs`), one fullscreen pass like `grid.fs`: track from radius, sector
+  from angle plus track skew, header / gap / data along the sector, LBA as on a 1.44 MB disk
+  (head 0), boot + FATs + root dir amber on track 0, 4-sector file blocks owned by the nearest
+  hashed file start (16-step backward search), free space growing inward, fragments, bad
+  sectors, MFM flux lines (random for data, the regular format fill when free) and the index
+  mark. Filtering: footprint from `fwidth` of the hit point; the angle footprint is
+  footprint / r, so the atan seam never shows. Detail settles to a mean colour once tracks
+  are sub-pixel. Prototyped first as a numpy "shader" for top-down and chase renders.
+- Scale: data band from spiralEnd - 20 to spiralStart + 30, 80 tracks = 3.5 units per track,
+  so the steering box spans about four tracks.
+- Open: brightness under combat, music response, spindle/arena, side structures, sky.

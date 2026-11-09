@@ -17,10 +17,93 @@ static DVec3 dir_from(double yaw, double pitch)
 
 static DVec3 ctrl_at(const PathSystem *ps, int i) { return ps->ctrl[i % PATH_CTRL_CAP]; }
 
+static bool is_spiral(const PathStyle *st) { return st->spiralStart > 0.0f; }
+
+// Spiral control points are denser than the noise walk's: the end circle is tight, and
+// 40-unit chords on it would ripple the spline's radius and curvature.
+#define SPIRAL_CTRL_SPACING 8.0
+
+static double spiral_k(const PathStyle *st)
+{
+    double laps = st->spiralLaps > 0.01f ? st->spiralLaps : 0.01;
+    double drop = (double)st->spiralStart - (double)st->spiralEnd;
+    return drop > 0.0 ? drop / (2.0 * 3.14159265358979323846 * laps) : 0.0;
+}
+
+DVec3 path_spiral_centre(const PathStyle *style) { return dv3(-(double)style->spiralStart, 0.0, 0.0); }
+
+// r(turn) = spiralStart - k turn, eased into the end circle over +-SPIRAL_BLEND radians
+// around turnEnd (quadratic blend: radius and slope continuous, so no curvature spike).
+#define SPIRAL_BLEND 0.5
+
+static double spiral_turn_end(const PathStyle *st)
+{
+    double k = spiral_k(st);
+    return k > 0.0 ? ((double)st->spiralStart - st->spiralEnd) / k : 0.0;
+}
+
+double path_spiral_radius(const PathStyle *style, double turn)
+{
+    double k = spiral_k(style), x = turn - spiral_turn_end(style), D = SPIRAL_BLEND;
+    double g = x <= -D ? -x : (x >= D ? 0.0 : (x - D) * (x - D) / (4.0 * D));
+    return (double)style->spiralEnd + k * g;
+}
+
+static double spiral_slope(const PathStyle *st, double turn)   // dr/dturn
+{
+    double k = spiral_k(st), x = turn - spiral_turn_end(st), D = SPIRAL_BLEND;
+    return x <= -D ? -k : (x >= D ? 0.0 : k * (x - D) / (2.0 * D));
+}
+
+static DVec3 spiral_point(const PathStyle *st, double turn)
+{
+    double r = path_spiral_radius(st, turn);
+    // Angle grows clockwise seen from above (+y): at turn 0 the heading is -z, centre on the left.
+    return dv_add(path_spiral_centre(st), dv3(r * cos(turn), 0.0, -r * sin(turn)));
+}
+
+// Spiral angle reached after `len` more units of arc from `turn` (ds = sqrt(r^2 + r'^2) dturn).
+static double spiral_advance(const PathStyle *st, double turn, double len)
+{
+    const int steps = 16;
+    double h = len / steps;
+    for (int i = 0; i < steps; i++) {
+        double r0 = path_spiral_radius(st, turn), d0 = spiral_slope(st, turn);
+        double mid = turn + 0.5 * h / sqrt(r0 * r0 + d0 * d0);
+        double r1 = path_spiral_radius(st, mid), d1 = spiral_slope(st, mid);
+        turn += h / sqrt(r1 * r1 + d1 * d1);
+    }
+    return turn;
+}
+
+double path_spiral_length(const PathStyle *style)
+{
+    // Exact arc length of r = a - k t from t = 0 to the end radius.
+    double k = spiral_k(style);
+    if (k <= 0.0) return 0.0;
+    double a = style->spiralStart, t1 = (a - style->spiralEnd) / k;
+    double F1 = 0.0, F0 = 0.0;
+    for (int e = 0; e < 2; e++) {
+        double r = a - k * (e ? t1 : 0.0), q = sqrt(r * r + k * k);
+        double F = 0.5 * (r * q + k * k * log(r + q)) / k;   // integral of sqrt(r^2+k^2) dr / k
+        if (e) F1 = F; else F0 = F;
+    }
+    return F0 - F1;
+}
+
 // Point i+1 from point i.
 static void gen_ctrl(PathSystem *ps)
 {
     int i = ps->ctrlCount;
+    if (is_spiral(&ps->style)) {
+        // Point 0 one spacing behind the start on the outer circle, point 1 at the origin.
+        if (i == 0) ps->spiralTurn = -SPIRAL_CTRL_SPACING / ps->style.spiralStart;
+        else if (i == 1) ps->spiralTurn = 0.0;
+        else ps->spiralTurn = spiral_advance(&ps->style, ps->spiralTurn, SPIRAL_CTRL_SPACING);
+        ps->ctrl[i % PATH_CTRL_CAP] = i == 1 ? dv3(0.0, 0.0, 0.0) : spiral_point(&ps->style, ps->spiralTurn);
+        ps->ctrlCount++;
+        return;
+    }
     if (i == 0) {
         // Point 0 sits one spacing behind the origin so segment 1 starts at s = 0.
         ps->ctrl[0] = dv3(0.0, 0.0, PATH_CTRL_SPACING);
@@ -214,5 +297,11 @@ double path_curvature_limit(const PathStyle *style)
     // Heading can change by at most maxYawStep (+ a pitch step) per control spacing;
     // the spline spreads that over the segment but may concentrate it ~2.5x.
     double turn = style->maxYawStepDeg * DEG2RADD + style->maxPitchDeg * DEG2RADD * 0.5;
-    return 2.5 * turn / PATH_CTRL_SPACING;
+    double lim = 2.5 * turn / PATH_CTRL_SPACING;
+    // A spiral's tightest bend is its end circle; allow a margin for the spline's ripple.
+    if (is_spiral(style) && style->spiralEnd > 0.0f) {
+        double sp = 1.1 / style->spiralEnd;
+        if (sp > lim) lim = sp;
+    }
+    return lim;
 }

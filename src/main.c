@@ -36,7 +36,7 @@ typedef struct Cli {
 
 static void usage(void)
 {
-    printf("recursion94 [--seed N] [--w W --h H] [--vsync 0|1] [--fps N] [--env 0..5] [--game-shot SECONDS [--out FILE]] [--boss [1..5]] [--depth N] [--ship 1..3]\n"
+    printf("recursion94 [--seed N] [--w W --h H] [--vsync 0|1] [--fps N] [--env 0..6] [--game-shot SECONDS [--out FILE]] [--boss [1..5]] [--depth N] [--ship 1..3]\n"
            "            [--steer X,Y] [--roll SECONDS] [--steer-box]\n"
            "            [--bench SECONDS [--speed U]] [--shot S [--out FILE]] [--preset NAME] [--write-preset NAME] [--list-params] [--hdr8] [--noship] [--ui] [--whiteout] [--boost]\n"
            "            [--set NAME=VALUE ...] [--hidden] [--sandbox]\n");
